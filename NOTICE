@@ -1,0 +1,12 @@
+AILA — 面向嵌入式、以区域内存模型与模块级热替换为核心的编程语言
+Copyright 2026 陈汐胤
+
+本产品以 Apache License 2.0 发布，全文见本目录 LICENSE 文件。
+
+本产品的发布包内含 LLVM/Clang 组件，按 "Apache-2.0 WITH LLVM-exception" 再分发：
+  - 许可证原文见发布包内 toolchain/<triple>/LICENSE.TXT
+  - LLVM 项目主页：https://llvm.org/
+  - 上游版权：Copyright (c) 2003-2026 University of Illinois at Urbana-Champaign.
+
+若发布包内含 MinGW-w64 运行时组件，则其按各自的许可证再分发
+（MinGW-w64 runtime：public domain / ZPL 等，详见发布包内对应 LICENSE 文件）。

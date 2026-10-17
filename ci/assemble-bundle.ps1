@@ -7,7 +7,7 @@
 #     share/aila/stdlib/*.aila
 #     share/aila/data/*.json
 #     toolchain/<triple>/{bin,lib,VERSION,LICENSE.TXT}
-#     README.md  VERSION  NOTICES.md
+#     README.md  LICENSE  NOTICE  VERSION  NOTICES.md
 #
 # 用法：assemble-bundle.ps1 -Platform windows-x64 -Version 0.1.0
 param(
@@ -57,6 +57,8 @@ if (Test-Path $tc) {
 
 # 4) 文档与法律
 Copy-Item (Join-Path $Root "README.md") $Bundle
+Copy-Item (Join-Path $Root "LICENSE") $Bundle
+Copy-Item (Join-Path $Root "NOTICE") $Bundle
 Set-Content -Path (Join-Path $Bundle "VERSION") -Value $Version -Encoding utf8
 $notice = @"
 AILA $Version ($Platform)

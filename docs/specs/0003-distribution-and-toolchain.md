@@ -23,8 +23,35 @@ aila-<version>-<platform>/
     lib/libclang* | libLLVM*                          ← 必要动态库（平台相关）
     VERSION                                            ← 该 bundle 的 LLVM 版本
     LICENSE.TXT                                        ← Apache-2.0 WITH LLVM-exception
-  VERSION  NOTICES.md  README.md
+  VERSION  NOTICES.md  README.md  LICENSE
 ```
+
+### 1.1 三个角色，别混为一谈（常见误解）
+
+「AILA 用 LLVM + Clang」说的是**后端**，不是全部。一次 `aila build` 需要三件东西：
+
+| 角色（role） | 干什么 | 典型提供者 | 缺了会怎样 |
+|---|---|---|---|
+| **LLVM 后端**（`llc` / `clang -c`） | 把前端产出的 **LLVM IR 文本**降成目标文件 `.o` | 随包 `llc`/`clang`；系统 llc/clang | `E8010`（IR 已落在 `build/` 里） |
+| **C 编译器 + 链接器**（`clang` / `gcc`） | 编 `runtime/aila_rt.c` 与 `import cc` 的 cpack 源；把全部 `.o` **链接**成可执行文件 | 随包 clang；系统 clang/gcc | `E8011` |
+| **C 运行时 / 系统导入库（决定 ABI）** | 提供 `crt2.o`、`libmingw32`、`msvcrt`（gnu ABI）或 MSVC CRT（msvc ABI） | **MinGW-w64**（w64devkit 的 gcc，或 llvm-mingw 自带的 MinGW 运行时）；MSVC 侧为 Windows SDK | 链接期报未定义符号（如 `_GLOBAL_OFFSET_TABLE_`） |
+
+**所以 MinGW 不是 LLVM 的替代品，而是 Windows 上 `*-w64-windows-gnu` 这个 ABI 的「C 运行时 + 链接器 + 系统导入库」提供者。**
+Clang 只是**编译器前端**：它能把 C 编成 `.o`，但**不带** Windows CRT/import 库，也不自己实现链接
+（`lld` 是链接器，仍需要那些库才能产出 `.exe`）。这正是缺陷 11 的由来：三元组写成 `x86_64-pc-windows-msvc`、
+却用 MinGW 系链接器，会缺 `_GLOBAL_OFFSET_TABLE_`；统一到 `x86_64-w64-windows-gnu` 后两边才对得上
+（见 [rfcs/0002 缺陷 11](../rfcs/0002-design-defects.md)）。
+
+两条自洽的路线（二选一，**不要混**）：
+
+| 路线 | 随包内容 | 三元组 | 说明 |
+|---|---|---|---|
+| **A. llvm-mingw（推荐）** | clang + lld + MinGW-w64 运行时与头文件（llvm-mingw 发行版自带） | `x86_64-w64-windows-gnu` | 单包自包含、解压即用；AILA 现在的默认三元组就是按它定的 |
+| B. 官方 LLVM + 系统 MinGW | clang + lld（官方 win64 发行版**不含** MinGW 运行时） | 同上 | 用户机必须另有 MinGW-w64（如 w64devkit）；缺了 `aila doctor` 报 `E8011` |
+
+> **现状（如实记录）**：`ci/fetch-llvm.ps1` 目前拉的是**官方 LLVM**（路线 B），`toolchain/` 里没有 MinGW 运行时，
+> 因此用当前脚本打出的 Windows 包在**没有 MinGW 的机器上链接会失败**。要兑现「解压即用」，
+> 该脚本需要换成 llvm-mingw（路线 A）——已登记为 plans/0001 的遗留项。
 
 `AILA_HOME` 解析顺序（`internal/home`）：
 

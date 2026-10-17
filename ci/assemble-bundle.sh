@@ -48,6 +48,8 @@ else
 fi
 
 cp "$ROOT/README.md" "$BUNDLE/"
+cp "$ROOT/LICENSE" "$BUNDLE/"
+cp "$ROOT/NOTICE" "$BUNDLE/"
 echo "$VERSION" > "$BUNDLE/VERSION"
 cat > "$BUNDLE/NOTICES.md" <<EOF
 AILA $VERSION ($PLATFORM)

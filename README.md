@@ -126,3 +126,10 @@ go run ./tools/goldengen -check     # 只校验快照是否与实现一致（CI 
 
 测试面覆盖：词法/语法（token 与 AST 逐字节）、语义错误码与绑定类型、布局与 C `sizeof` 实测对齐、
 C 绑定映射、生成 IR 的逐字节快照（含六个示例的每模块 IR）、六个示例的端到端运行输出。
+
+## 许可证
+
+AILA 以 [Apache License 2.0](LICENSE) 发布，版权声明与第三方组件说明见 [`NOTICE`](NOTICE)。
+
+发布包内的工具链组件按各自许可证再分发：LLVM/Clang 为
+`Apache-2.0 WITH LLVM-exception`（原文随包放在 `toolchain/<triple>/LICENSE.TXT`）。

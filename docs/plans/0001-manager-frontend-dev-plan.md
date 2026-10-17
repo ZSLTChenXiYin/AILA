@@ -274,3 +274,15 @@ M1 冻结条件（**四条全绿才算完**）：
 | 文档 | `README.md` 改成 Go 单文件的说明；`rfcs/0001` 标注为历史决策记录（并说明被误删后已据可见片段重建）；`rfcs/0002` 顶部加「实现落点 → Go 包」映射表；`specs/0001–0003` 里的 `src/aila/*.py` 全部指向 `internal/*` |
 | 判据 | `go vet`/`go build`/`go test ./...` 全绿（16 个包）；`go run ./tools/goldengen -check` 报「全部快照与当前实现一致」 |
 | 遗留 | 端到端运行判据（`TestExamplesEndToEnd`）在本机因无 LLVM 后端跳过，由 CI 的 llvm/clang 环境真跑；协程/通道/线程代码生成、热替换 MLO、NLL 精确检查仍在 M2+ 计划内 |
+
+## 18. 遗留项（下一批要么做、要么明确不做）
+
+| 项 | 现状 | 影响 | 建议 |
+|---|---|---|---|
+| **Windows 发布包的 ABI 供给** | `ci/fetch-llvm.ps1` 拉的是**官方 LLVM**（clang + lld），`toolchain/` 里没有 MinGW-w64 运行时 | 打出来的包在**没有 MinGW 的机器上链接失败**（缺 `_GLOBAL_OFFSET_TABLE_` / CRT），「解压即用」打折扣 | 把脚本换成 **llvm-mingw**（clang + lld + MinGW 运行时一体），三元组保持 `x86_64-w64-windows-gnu`；细节见 [specs/0003 §1.1](../specs/0003-distribution-and-toolchain.md) |
+| 协程 / 通道 / 线程代码生成 | 语义检查到位，codegen 报 `E9002` | 这三个特性还编不出目标文件 | M2+ 批次 |
+| 热替换 MLO 与分派表 | 未开始 | `hot module` 仍走普通链接 | M3 |
+| 借用区间（NLL）精确检查 / 区域配额静态证明 | 未开始，`aila check` 以 `W9001` 明示未校验 | 不静默通过，但也没有保护 | M2+ |
+| `aila bindgen` 单独命令 | 报「尚未实现」；绑定目前由 `import ch`/`import cc` 在构建流水线里自动生成 | 想单独产出绑定要进 `build/.cache/bindgen/` 取 | 需要时补一个命令（`internal/bindgen` 已就绪） |
+| `docs/rfcs/0001` 原稿 | 上一轮被误清空后**据可见片段重建**（文首已标注） | 措辞可能与原版有差异 | 有原稿副本时覆盖回去 |
+| 设计稿回写 | `rfcs/0002` 登记了 13 条缺陷裁决，`designs/0001` 尚未回改 | 权威文档与实现口径仍有文字层面的差异 | 设计批次统一修订 |
