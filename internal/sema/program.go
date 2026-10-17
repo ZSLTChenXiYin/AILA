@@ -75,6 +75,11 @@ func BuildProgram(mods map[string]*ast.Module, order []string, entry string, bag
 		for _, imp := range u.Mod.Imports {
 			target := importTarget(imp)
 			if target == "" {
+				// 非 `_` / `std` 根 = 外部包（designs/0001 §2.3 规则 1 为跨项目依赖预留）：
+				// 依赖解析尚未实现，必须显式报错，绝不静默忽略（否则只会看到「未定义的名字」）
+				bag.Error("E7010", imp.Span,
+					"跨项目依赖 `"+imp.Root+"` 尚未支持（M1 只有 `_` 与 `std` 两个导入根）",
+					"依赖根", "v0 暂不支持外部包；把依赖的模块放进本项目，或等依赖解析批次")
 				continue
 			}
 			binding := importBinding(imp)

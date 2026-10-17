@@ -178,3 +178,22 @@ func TestCheckReportsBasicErrors(t *testing.T) {
 
 var _ = strings.TrimSpace
 var _ = runtime.Caller
+
+// TestExternalPackageRootRejected 守护「非 `_` / `std` 根 = 外部包」这条边界：
+// 依赖解析尚未实现时，必须显式报 E7010，不能静默当成「没有导入」（那只会变成
+// 「未定义的名字」这种误导性诊断）。
+func TestExternalPackageRootRejected(t *testing.T) {
+	src := "import mylib.utils;\n\nfunc main() {\n    utils.greet();\n}\n"
+	bag := &diag.Bag{}
+	mod, pbag := parser.Parse("main.aila", src)
+	bag.Items = append(bag.Items, pbag.Items...)
+	mod.Name = "_.main"
+	BuildProgram(map[string]*ast.Module{"_.main": mod}, []string{"_.main"}, "_.main", bag)
+	codes := map[string]bool{}
+	for _, d := range bag.Items {
+		codes[d.Code] = true
+	}
+	if !codes["E7010"] {
+		t.Fatalf("外部包根应报 E7010，实得 %v", codes)
+	}
+}
