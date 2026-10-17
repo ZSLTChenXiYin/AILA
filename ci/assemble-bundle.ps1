@@ -6,6 +6,7 @@
 #     share/aila/runtime/aila_rt.c
 #     share/aila/stdlib/*.aila
 #     share/aila/data/*.json
+#     examples/                     ← 可直接 `aila run examples/hello` 的示例工程
 #     toolchain/<triple>/{bin,lib,VERSION,LICENSE.TXT}
 #     README.md  LICENSE  NOTICE  VERSION  NOTICES.md
 #
@@ -55,7 +56,10 @@ if (Test-Path $tc) {
     Write-Warning "没有 toolchain/ 目录：先跑 ci/fetch-llvm.ps1"
 }
 
-# 4) 文档与法律
+# 4) 示例工程（`aila doctor` 的提示与「解压即用」体验都靠它）
+Copy-Item (Join-Path $Root "examples") $Bundle -Recurse
+
+# 5) 文档与法律
 Copy-Item (Join-Path $Root "README.md") $Bundle
 Copy-Item (Join-Path $Root "LICENSE") $Bundle
 Copy-Item (Join-Path $Root "NOTICE") $Bundle
@@ -63,7 +67,8 @@ Set-Content -Path (Join-Path $Bundle "VERSION") -Value $Version -Encoding utf8
 $notice = @"
 AILA $Version ($Platform)
 
-本发布包内含 LLVM/Clang 组件，按 Apache-2.0 WITH LLVM-exception 再分发，
+本发布包内含 llvm-mingw（clang + lld + MinGW-w64 运行时），
+LLVM/Clang 部分按 Apache-2.0 WITH LLVM-exception 再分发，
 许可证原文见 toolchain/<triple>/LICENSE.TXT。AILA 自身同样以 Apache-2.0 发布。
 
 工具链解析规则（docs/specs/0003 §2）：默认只使用本包 toolchain/ 下的 clang/llc；

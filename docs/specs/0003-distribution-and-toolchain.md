@@ -49,9 +49,23 @@ Clang 只是**编译器前端**：它能把 C 编成 `.o`，但**不带** Window
 | **A. llvm-mingw（推荐）** | clang + lld + MinGW-w64 运行时与头文件（llvm-mingw 发行版自带） | `x86_64-w64-windows-gnu` | 单包自包含、解压即用；AILA 现在的默认三元组就是按它定的 |
 | B. 官方 LLVM + 系统 MinGW | clang + lld（官方 win64 发行版**不含** MinGW 运行时） | 同上 | 用户机必须另有 MinGW-w64（如 w64devkit）；缺了 `aila doctor` 报 `E8011` |
 
-> **现状（如实记录）**：`ci/fetch-llvm.ps1` 目前拉的是**官方 LLVM**（路线 B），`toolchain/` 里没有 MinGW 运行时，
-> 因此用当前脚本打出的 Windows 包在**没有 MinGW 的机器上链接会失败**。要兑现「解压即用」，
-> 该脚本需要换成 llvm-mingw（路线 A）——已登记为 plans/0001 的遗留项。
+> **现状（已落地）**：`ci/fetch-llvm.{ps1,sh}` 走的就是**路线 A（llvm-mingw）**：
+> 下载 → 解包 → 按固定规则裁剪到 `toolchain/<triple>/`。裁剪规则（脚本即规格）：
+>
+> | 保留 | 丢掉的 |
+> |---|---|
+> | `bin/` 里的 clang 系（`clang`/`clang++`）、`lld`/`ld.lld`、`llvm-{ar,nm,objcopy,objdump,ranlib,readobj,strip,windres}` 与小包装器，以及 **clang 自己依赖的 `libLLVM-*.dll`、`libclang-cpp.dll`、`libc++.dll`、`libunwind.dll`、`libwinpthread-1.dll`** | `lldb*`、`python*`、`clangd`/`clang-tidy`/`clang-format`/`scan-build`、sanitizer 动态库、`libomp.dll` |
+> | `lib/clang/<ver>/include`（内建头）+ `lib/clang/<ver>/lib/windows/` 里的 `*builtins*`/`*profile*`（仅宿主 x86_64） | `lib/clang/<ver>/lib/linux` 与其它架构、fuzzer/ubsan/asan 等运行时 |
+> | `include/`（C 头，sysroot）+ `x86_64-w64-mingw32/lib/`（CRT、导入库、运行时） | `include/c++`、`ddk`、`gdiplus`、`GL`、`KHR`、`wrl`、`x86_64-w64-mingw32/{bin,share}` |
+> | `LICENSE.TXT`、`VERSION`（首段是 LLVM 版本，doctor 按它判版本带） | `share/`、`busybox/`、`python/` |
+>
+> 实测（llvm-mingw 20261006 / LLVM 23.1.3 / ucrt）：裁剪后 **313 MB**，压缩包 **85 MB**；
+> 解压到与仓库无关的目录、`PATH` 只留 `C:\Windows\System32;C:\Windows` 时，
+> `aila version/doctor/run/new/build` 全部可用，六个示例全部编译并跑出与快照一致的输出。
+>
+> **踩过的坑（写进脚本注释）**：clang.exe 是用 libc++ 构建并动态链接的，丢掉 `libc++.dll`/`libunwind.dll`/
+> `libwinpthread-1.dll` 会让它直接 `STATUS_DLL_NOT_FOUND`（0xC0000135）；`lib/clang/<ver>/lib/windows/` 里
+> **只留 builtins/profile 的宿主架构**，别的一律不要。
 
 `AILA_HOME` 解析顺序（`internal/home`）：
 

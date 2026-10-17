@@ -190,8 +190,10 @@ func bindCpack(prj *project.Project, imp *ast.Import, res *Result, target bindge
 		return "", "", false
 	}
 	text := br.Header(name, target) + "\n\n" + br.Text
-	// 缓存：同一份头（哈希）复用同一份绑定
-	header := fmt.Sprintf("%s-%08x.ail", name, fnv32(br.HashInput+br.Backend+target.Triple))
+	// 缓存：同一份头（哈希）+ 同一档位 + 同一映射规则版本才复用同一份绑定
+	// （映射规则改了就换 schema，避免拿旧缓存装作成功）
+	const bindgenSchema = "v2"
+	header := fmt.Sprintf("%s-%08x.ail", name, fnv32(bindgenSchema+br.HashInput+br.Backend+target.Triple))
 	cacheDir := filepath.Join(prj.Root, "build", ".cache", "bindgen")
 	if err := os.MkdirAll(cacheDir, 0777); err == nil {
 		_ = os.WriteFile(filepath.Join(cacheDir, header), []byte(text), 0666)

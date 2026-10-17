@@ -279,10 +279,25 @@ M1 冻结条件（**四条全绿才算完**）：
 
 | 项 | 现状 | 影响 | 建议 |
 |---|---|---|---|
-| **Windows 发布包的 ABI 供给** | `ci/fetch-llvm.ps1` 拉的是**官方 LLVM**（clang + lld），`toolchain/` 里没有 MinGW-w64 运行时 | 打出来的包在**没有 MinGW 的机器上链接失败**（缺 `_GLOBAL_OFFSET_TABLE_` / CRT），「解压即用」打折扣 | 把脚本换成 **llvm-mingw**（clang + lld + MinGW 运行时一体），三元组保持 `x86_64-w64-windows-gnu`；细节见 [specs/0003 §1.1](../specs/0003-distribution-and-toolchain.md) |
+| ~~**Windows 发布包的 ABI 供给**~~ | ✅ 已解决（§19）：脚本换成 llvm-mingw，随包自带 MinGW 运行时与 lld | — | 实测「干净 PATH + 与仓库无关目录」下六个示例全部可编译运行 |
 | 协程 / 通道 / 线程代码生成 | 语义检查到位，codegen 报 `E9002` | 这三个特性还编不出目标文件 | M2+ 批次 |
 | 热替换 MLO 与分派表 | 未开始 | `hot module` 仍走普通链接 | M3 |
 | 借用区间（NLL）精确检查 / 区域配额静态证明 | 未开始，`aila check` 以 `W9001` 明示未校验 | 不静默通过，但也没有保护 | M2+ |
 | `aila bindgen` 单独命令 | 报「尚未实现」；绑定目前由 `import ch`/`import cc` 在构建流水线里自动生成 | 想单独产出绑定要进 `build/.cache/bindgen/` 取 | 需要时补一个命令（`internal/bindgen` 已就绪） |
 | `docs/rfcs/0001` 原稿 | 上一轮被误清空后**据可见片段重建**（文首已标注） | 措辞可能与原版有差异 | 有原稿副本时覆盖回去 |
 | 设计稿回写 | `rfcs/0002` 登记了 13 条缺陷裁决，`designs/0001` 尚未回改 | 权威文档与实现口径仍有文字层面的差异 | 设计批次统一修订 |
+
+## 19. 路线 A 落地（llvm-mingw 随包 → 真正的「解压即用」）
+
+| 项 | 结论 |
+|---|---|
+| 为什么换 | 官方 LLVM win64 发行版只有 clang + lld，**不带** MinGW 运行时；AILA 的 Windows 三元组是 `x86_64-w64-windows-gnu`，链接必须有 CRT/导入库 → 之前打出的包在没有 MinGW 的机器上链接失败 |
+| 做法 | `ci/fetch-llvm.{ps1,sh}` 改为拉 **llvm-mingw**（20261006 / LLVM 23.1.3 / ucrt），按固定规则裁剪到 `toolchain/<triple>/`：clang 系 + lld + clang 资源目录（只留宿主架构 builtins）+ C 头 + `x86_64-w64-mingw32/lib`；丢掉 lldb/python/clangd/sanitizer/C++ 头 |
+| 坑 1 | `clang.exe` 用 libc++ 构建并动态链接：丢掉 `libc++.dll`/`libunwind.dll`/`libwinpthread-1.dll` → `STATUS_DLL_NOT_FOUND`（0xC0000135）。这三件必须随包 |
+| 坑 2 | `VERSION` 首段必须是 LLVM 版本（doctor 按它判 `18..23` 版本带），否则误报 `W8012` |
+| 坑 3 | 有了随包 clang 后 bindgen 会走 **clang 档**：clang 的 JSON AST 会把系统头与内建 typedef（`__int128_t` 等）一起吐出来。修法：按「声明所在文件是否在 cpack 目录内」过滤（`declInCpack`），并把宏常量映射抽成两档共用的 `collectMacroConsts`（`#define` 只在预处理阶段可见） |
+| 坑 4 | bindgen 缓存键没带「映射规则版本」，改了映射仍读旧缓存 → 现在键里带 `bindgenSchema` |
+| 实测 | 裁剪后 **313 MB**、压缩包 **85 MB**；`PATH` 只留 `C:\Windows\System32;C:\Windows`（无 clang/gcc/Go/Python/MinGW）时，把 zip 解压到与仓库无关的临时目录后：`aila version` / `doctor`（6 项含链接冒烟全绿）/ `run examples/hello` / `new demo` + `run demo` / 六个示例 `build`+运行输出与 `expected.out` 逐字节一致 —— **零安装** |
+| 新判据 | `internal/toolchain/TestBundledToolchainSmoke`：仓库里有 `toolchain/<triple>/` 时，`bundled` 偏好下 doctor 不得有 fail（无随包工具链的机器上跳过） |
+| 发布包内容 | 新增 `examples/`（`aila doctor` 的提示与「解压即用」体验要用），外加 `LICENSE`/`NOTICE`/`NOTICES.md`/`README.md`/`VERSION`/`share/aila/**`/`toolchain/**` |
+| 遗留 | `fetch-llvm.sh` 的 Linux/macOS 分支只做了静态审阅与逐条对齐 ps1 规则，**没在真机上跑过**（本机是 Windows）；首次 release 前需要在 CI 上跑一次并修差异。sha256 需要在发行前用 `LLVM_MINGW_SHA256` 固定 |

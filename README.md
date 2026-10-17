@@ -25,6 +25,10 @@ GOOS=linux GOARCH=amd64 go build -o bin/aila-linux ./cmd/aila
 
 ## 工具链从哪来（默认：只看随包目录）
 
+发布包里自带 **llvm-mingw**（clang + lld + MinGW-w64 运行时一体，约 300 MB，压缩后 ~85 MB），
+所以 Windows 上**不需要另装 MinGW / Clang / LLVM**：`aila build` 用的就是包内那一份。
+（角色分工与「为什么是 MinGW 而不是官方 LLVM」见 [specs/0003 §1.1](docs/specs/0003-distribution-and-toolchain.md)。）
+
 发布形态是 zip 解压即用，工具链**随包分发**，解析规则固定：
 
 ```text
@@ -55,9 +59,9 @@ aila version                                        # 三行：版本 + AILA_HOM
 | 件 | 用途 | 最低要求 |
 |---|---|---|
 | Go 1.22+ | 只用来**构建** `aila` 本身（产物是单文件，终端用户不需要 Go） | 必需（开发） |
-| LLVM 后端 | IR → 目标 `.o` | 随包 `llc`/`clang`；开发期装 `clang`/`llvm` 并放进 PATH |
-| C 编译器/链接器 | 编运行时与 `import cc`，并做最终链接 | 随包 `clang`；开发期 `clang`/`gcc` |
-| Clang | `import ch` 的 bindgen 首选档 | 可选（缺失时降级 builtin 兜底档） |
+| LLVM 后端 | IR → 目标 `.o` | 随包 `clang`（llvm-mingw）；开发期可装 clang/llvm 或跑 `ci/fetch-llvm.*` |
+| C 编译器/链接器 | 编运行时与 `import cc`，并做最终链接 | 随包 `clang`（带 lld 与 MinGW 运行时）；开发期 `clang`/`gcc` |
+| Clang | `import ch` 的 bindgen 首选档 | 随包自带；缺失时降级 builtin 兜底档 |
 
 `aila doctor` 逐项测并用「链接冒烟测试」验证 IR → `.o` → 链接 → 运行整条链路。
 
@@ -103,7 +107,8 @@ runtime/    语言运行时（C 薄层：区域账本 + trap 通道 + 打印出�
 examples/   六个可运行示例（hello / control / region / struct / result / cinterop）
 tests/corpus/  黄金语料与契约快照（token / AST / 布局 / 签名 / 绑定 / IR / 示例输出）
 tools/goldengen/  快照生成器（`go run ./tools/goldengen [-check]`）
-ci/         打包脚本（拉取裁剪 LLVM、拼发布目录）
+ci/         打包脚本（拉 llvm-mingw 并裁剪到 toolchain/、拼发布目录）
+toolchain/  随包工具链（ci/fetch-llvm.* 生成，不进版本库；发布时随 zip 分发）
 ```
 
 ## 当前实现范围（M1）

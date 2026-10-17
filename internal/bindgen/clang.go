@@ -34,9 +34,14 @@ type clangType struct {
 }
 
 type clangLoc struct {
-	Line int `json:"line"`
-	Col  int `json:"col"`
+	File string `json:"file"`
+	Line int    `json:"line"`
+	Col  int    `json:"col"`
 }
+
+// TypeRefFile 取节点的源文件（clang 的 JSON 只在「文件变化时」打印 `file`，
+// 所以调用方要按顺序累积）。
+func (n *clangNode) TypeRefFile() string { return n.Loc.File }
 
 // runClang 用 clang 的 JSON AST 生成绑定；失败返回 nil（调用方回退 builtin 档）。
 func runClang(cpack, cpackDir string, target Target, bag *diag.Bag, clangPath string) *Result {
@@ -45,14 +50,28 @@ func runClang(cpack, cpackDir string, target Target, bag *diag.Bag, clangPath st
 		return nil
 	}
 	res := &Result{Backend: "clang"}
+	// 宏常量只能由预处理器看见（clang AST 里没有 `#define`），两档共用同一段逻辑
+	constLines, headerNotes, macroNotes := collectMacroConsts(headers)
+	res.Notes = append(res.Notes, headerNotes...)
+	res.Notes = append(res.Notes, macroNotes...)
+
 	declared := map[string]string{}
-	out := []string{}
+	out := append([]string{}, constLines...)
 	for _, header := range headers {
 		ast, ok := clangAST(header, cpackDir, bag, clangPath)
 		if !ok {
 			return nil
 		}
+		// clang 的 JSON 只在文件变化时打印 `loc.file`：按顺序累积当前文件，
+		// 并且**只保留定义在 cpack 目录里的声明**（系统头 / 内建 typedef 一律跳过）。
+		curFile := ""
 		for _, node := range ast.Inner {
+			if node.Loc.File != "" {
+				curFile = node.Loc.File
+			}
+			if !declInCpack(node, curFile, cpackDir) {
+				continue
+			}
 			walkClang(node, &out, declared, target, bag, cpack)
 		}
 	}
@@ -315,4 +334,40 @@ func valueText(v any) string {
 		return "0"
 	}
 	return ""
+}
+// declInCpack 判断一条顶层声明是否来自 cpack 自己的头文件。
+//
+// 三条规则（按顺序）：
+//  1. 名字以 `__` 开头的是编译器内建 typedef/变量，永远跳过；
+//  2. 有文件信息且路径在 cpack 目录之外 → 系统头，跳过；
+//  3. 其余（含 clang 省略 `file` 的「同一文件续行」）保留。
+func declInCpack(node *clangNode, curFile, cpackDir string) bool {
+	if strings.HasPrefix(node.Name, "__") {
+		return false
+	}
+	if curFile == "" {
+		return true
+	}
+	if underDir(curFile, cpackDir) {
+		return true
+	}
+	// clang 对主文件有时只给短名（如 `mathkit.h`）：按文件名兜底匹配
+	base := baseName(curFile)
+	if base == "" || !strings.Contains(base, ".") {
+		return true
+	}
+	for _, h := range FindHeaders(cpackDir) {
+		if strings.EqualFold(baseName(h), base) {
+			return true
+		}
+	}
+	return false
+}
+
+// underDir 判断 path 是否在 dir 之下（Windows 大小写不敏感）。
+func underDir(path, dir string) bool {
+	p := strings.ToLower(strings.ReplaceAll(path, "\\", "/"))
+	d := strings.ToLower(strings.ReplaceAll(dir, "\\", "/"))
+	d = strings.TrimSuffix(d, "/")
+	return strings.HasPrefix(p, d+"/")
 }

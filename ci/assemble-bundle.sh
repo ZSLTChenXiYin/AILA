@@ -47,6 +47,7 @@ else
   echo "警告：没有 toolchain/ 目录（先跑 ci/fetch-llvm.sh）" >&2
 fi
 
+cp -r "$ROOT/examples" "$BUNDLE/examples"
 cp "$ROOT/README.md" "$BUNDLE/"
 cp "$ROOT/LICENSE" "$BUNDLE/"
 cp "$ROOT/NOTICE" "$BUNDLE/"
@@ -54,7 +55,8 @@ echo "$VERSION" > "$BUNDLE/VERSION"
 cat > "$BUNDLE/NOTICES.md" <<EOF
 AILA $VERSION ($PLATFORM)
 
-本发布包内含 LLVM/Clang 组件，按 Apache-2.0 WITH LLVM-exception 再分发，
+本发布包内含 llvm-mingw（clang + lld + MinGW-w64 运行时），
+LLVM/Clang 部分按 Apache-2.0 WITH LLVM-exception 再分发，
 许可证原文见 toolchain/<triple>/LICENSE.TXT。AILA 自身同样以 Apache-2.0 发布。
 
 工具链解析规则（docs/specs/0003 §2）：默认只使用本包 toolchain/ 下的 clang/llc；

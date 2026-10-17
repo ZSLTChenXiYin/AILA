@@ -284,6 +284,7 @@ func runBuiltin(cpack, cpackDir string, target Target, bag *diag.Bag) *Result {
 	macros := map[string]string{}
 	macroOrder := []string{}
 	chunks := []string{}
+	var headerNotes []string
 	for _, header := range headers {
 		data, err := os.ReadFile(header)
 		if err != nil {
@@ -292,12 +293,13 @@ func runBuiltin(cpack, cpackDir string, target Target, bag *diag.Bag) *Result {
 		notes := []string{}
 		chunks = append(chunks, StripPreprocessor(string(data), macros, &macroOrder, &notes))
 		for _, note := range notes {
-			if !contains(res.Notes, note) {
-				res.Notes = append(res.Notes, note)
+			if !contains(headerNotes, note) {
+				headerNotes = append(headerNotes, note)
 			}
 		}
-		res.Notes = append(res.Notes, "头文件："+baseName(header))
+		headerNotes = append(headerNotes, "头文件："+baseName(header))
 	}
+	res.Notes = append(res.Notes, headerNotes...)
 	// 宏常量映射（designs/0001 §11.7：能在 C 侧求值成常量 → 映射为 `const`）
 	constLines := []string{}
 	for _, k := range macroOrder {
@@ -912,3 +914,45 @@ func indexOf(list []string, want string) int {
 func itoa(n int) string { return strconv.Itoa(n) }
 
 func formatFloat(f float64) string { return strconv.FormatFloat(f, 'f', 8, 64) }
+// collectMacroConsts 收集头文件里的对象式宏并渲染成 `const` 行。
+//
+// 返回：const 行、头文件级提示（预处理警告 + 「头文件：x」）、宏定型提示。
+// clang 档与 builtin 档共用这一段——`#define` 只存在于预处理阶段，AST 里看不到。
+func collectMacroConsts(headers []string) (constLines, headerNotes, macroNotes []string) {
+	macros := map[string]string{}
+	macroOrder := []string{}
+	for _, header := range headers {
+		data, err := os.ReadFile(header)
+		if err != nil {
+			continue
+		}
+		notes := []string{}
+		StripPreprocessor(string(data), macros, &macroOrder, &notes)
+		for _, note := range notes {
+			if !contains(headerNotes, note) {
+				headerNotes = append(headerNotes, note)
+			}
+		}
+		headerNotes = append(headerNotes, "头文件："+baseName(header))
+	}
+	for _, k := range macroOrder {
+		v := macros[k]
+		if strings.Contains(k, "(") {
+			continue
+		}
+		lit := macroLiteral(v)
+		if lit == nil {
+			if strings.TrimSpace(v) != "" {
+				macroNotes = append(macroNotes, "宏无法求值，已跳过："+k+" = "+v)
+			}
+			continue
+		}
+		if strings.HasSuffix(k, "_H") {
+			macroNotes = append(macroNotes, "包含守卫宏跳过："+k)
+			continue
+		}
+		constLines = append(constLines, "const "+ValueName(k)+": "+lit[0]+" = "+lit[1]+";")
+		macroNotes = append(macroNotes, "宏定型："+k+" = "+lit[1]+" ("+lit[0]+")")
+	}
+	return constLines, headerNotes, macroNotes
+}

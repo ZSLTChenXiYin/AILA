@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aila-lang/aila/internal/home"
 	"github.com/aila-lang/aila/internal/resolve"
 )
 
@@ -75,4 +76,26 @@ func TestFirstLine(t *testing.T) {
 		t.Fatal("长输出应被截断")
 	}
 	_ = os.TempDir()
+}
+
+// TestBundledToolchainSmoke 守护「随包工具链能真跑」这条交付判据：
+// 仓库里存在 toolchain/<triple>/ 时，doctor 全项不得有 fail（含链接冒烟测试）；
+// 没有随包工具链的机器上跳过（开发机常态）。
+func TestBundledToolchainSmoke(t *testing.T) {
+	if len(home.InstalledTriples()) == 0 {
+		t.Skip("本机没有随包工具链（toolchain/<triple>/），跳过")
+	}
+	cc := resolve.ResolveCC("bundled")
+	llvm := resolve.ResolveLLVM("bundled")
+	if !cc.OK() || !llvm.OK() {
+		t.Fatalf("随包工具链不全：cc=%s llvm=%s", cc.Describe(), llvm.Describe())
+	}
+	if cc.Source != resolve.SourceBundled || llvm.Source != resolve.SourceBundled {
+		t.Fatalf("bundled 偏好下不应回退系统工具：cc=%s llvm=%s", cc.Describe(), llvm.Describe())
+	}
+	for _, c := range Doctor("test", "bundled", "bundled") {
+		if c.Level == "fail" {
+			t.Fatalf("doctor 有失败项：%s —— %s（修法：%s）", c.Name, c.Detail, c.Fix)
+		}
+	}
 }
