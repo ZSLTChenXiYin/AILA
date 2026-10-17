@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aila-lang/aila/internal/parser"
-	"github.com/aila-lang/aila/internal/sema"
-	"github.com/aila-lang/aila/internal/types"
+	"github.com/ailang/aila/internal/parser"
+	"github.com/ailang/aila/internal/sema"
+	"github.com/ailang/aila/internal/types"
 )
 
 // irSubset 与 tools/goldengen 的 irCorpus 保持一致：只比对 Go 已实现的语料。

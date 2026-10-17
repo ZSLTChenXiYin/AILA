@@ -23,3 +23,8 @@ build/**/*.ll
 .idea/
 .DS_Store
 Thumbs.db
+
+# VSCode 扩展构建产物
+editors/vscode/node_modules/
+editors/vscode/out/
+*.vsix

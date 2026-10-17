@@ -1,61 +1,217 @@
-// AILA 标准库 · std.io（M1 最小面）
+// AILA 标准库 · std.io
 //
-// 设计纪律（designs/0001 §13.1）：std 纯 AILA 实现，零编译器特办。
-// 运行时打印出口是 C 侧薄层（runtime/aila_rt.c），在 AILA 侧只以 `#[c]` 声明出现。
+// 纪律：**标准库必须用 AILA 自己实现**，不得为了省事去封装 C——
+// 一旦标准库依赖 C，跨目标平台（宿主 / xtensa / riscv32 / aarch64）维护就会失控。
+//
+// 所以这里只有两条**语言原语**（`#[intrinsic]`，由运行时提供，是唯一的 OS 边界）：
+//   write(bytes, n)  把 n 个字节写到标准输出
+//   flush()          冲刷输出缓冲
+// 其余全部是 AILA：十进制转换、UTF-8 编码、浮点小数位、换行与组合函数。
+//
+// 缓冲区用 `region` 块就地分配：打印一次、回收一次，不占全局状态。
 
-#[c] func aila_print_i32(v: I32);
-#[c] func aila_print_u32(v: U32);
-#[c] func aila_print_f64(v: F64);
-#[c] func aila_print_bool(v: Bool);
-#[c] func aila_print_char(v: C32);
-#[c] func aila_print_nl();
-#[c] func aila_print_bytes(p: [U8], n: USize);
-#[c] func aila_print_cstr(p: [U8]?);
+#[intrinsic] func write(bytes: [U8], n: USize);
+#[intrinsic] func flush();
 
-// ---- 面向用户的包装（普通 AILA 函数，零特权） ----
+// ---- 对外接口（壳里 public = 包外可见） ----
 
-public func print_i32(v: I32) {
-    aila_print_i32(v);
-}
+public func print_text(t: Text);
 
-public func print_u32(v: U32) {
-    aila_print_u32(v);
-}
+public func print_bytes(b: [U8]);
 
-public func print_usize(v: USize) {
-    aila_print_u32(v trunc U32);
-}
+public func print_u32(v: U32);
 
-public func print_f64(v: F64) {
-    aila_print_f64(v);
-}
+public func print_i32(v: I32);
 
-public func print_f32(v: F32) {
-    aila_print_f64(v as F64);
-}
+public func print_usize(v: USize);
 
-public func print_bool(v: Bool) {
-    aila_print_bool(v);
-}
+public func print_f32(v: F32);
 
-public func print_char(c: C32) {
-    aila_print_char(c);
-}
+public func print_f64(v: F64);
 
-public func print_nl() {
-    aila_print_nl();
-}
+public func print_bool(v: Bool);
 
-public func print_text(t: Text) {
-    view bytes: [U8] = t;
-    aila_print_bytes(bytes, len bytes);
-}
+public func print_char(c: C32);
 
-public func print_bytes(b: [U8]) {
-    aila_print_bytes(b, len b);
-}
+public func print_nl();
 
-public func print_i32_nl(v: I32) {
-    aila_print_i32(v);
-    aila_print_nl();
+public func print_i32_nl(v: I32);
+
+public func print_u32_nl(v: U32);
+
+module {
+    // 单个字节（换行等）
+    func put_byte(b: U8) {
+        region one {
+            var buf: [U8] = [0; 1]@one;
+            buf[0] = b;
+            write(buf, 1);
+        }
+    }
+
+    // fill_u64 把 v 的十进制数字写进 buf[0..n)，返回位数。
+    func fill_u64(v: U64, buf: [U8]) @mut[buf] -> USize {
+        var x: U64 = v;
+        var n: USize = 1;
+        for !(x < 10) {
+            x = x / 10;
+            n = n + 1;
+        }
+        // 从末尾往前填（AILA 没有指针偏移，所以先算位数再倒着写）
+        var y: U64 = v;
+        var i: USize = n;
+        for !(i == 0) {
+            i = i - 1;
+            let d: U64 = y % 10;
+            buf[i] = (d trunc U32 + 48) trunc U8;
+            y = y / 10;
+        }
+        return n;
+    }
+
+    // fill_i64 处理符号；负数在 I64 里取反（避开 I32 的 MIN 陷阱）。
+    func fill_i64(v: I64, buf: [U8]) @mut[buf] -> USize {
+        if v < 0 {
+            let mag: U64 = (0 - v) trunc U64;
+            let n: USize = fill_u64(mag, buf) + 1;
+            var k: USize = n;
+            for !(k == 1) {
+                k = k - 1;
+                buf[k] = buf[k - 1];
+            }
+            buf[0] = 45;
+            return n;
+        }
+        return fill_u64(v trunc U64, buf);
+    }
+
+    func print_u32(v: U32) {
+        region fmt {
+            var buf: [U8] = [0; 24]@fmt;
+            let n: USize = fill_u64(v trunc U64, buf);
+            write(buf, n);
+        }
+    }
+
+    func print_i32(v: I32) {
+        region fmt {
+            var buf: [U8] = [0; 24]@fmt;
+            let n: USize = fill_i64(v as I64, buf);
+            write(buf, n);
+        }
+    }
+
+    func print_usize(v: USize) {
+        region fmt {
+            var buf: [U8] = [0; 24]@fmt;
+            let n: USize = fill_u64(v trunc U64, buf);
+            write(buf, n);
+        }
+    }
+
+    // 浮点：整数部分 + 最多 6 位小数（去尾零）。嵌入式场景够用且完全可移植。
+    func print_f64(v: F64) {
+        region fmt {
+            var buf: [U8] = [0; 40]@fmt;
+            var w: F64 = v;
+            if w < 0.0 {
+                put_byte(45);
+                w = 0.0 - w;
+            }
+            let ip: I64 = w trunc I64;
+            let pos: USize = fill_u64(ip trunc U64, buf);
+            let frac: F64 = w - (ip trunc F64);
+            if frac > 0.0 {
+                var digits: USize = 0;
+                var f: F64 = frac;
+                for digits < 6 {
+                    f = f * 10.0;
+                    let d: U32 = f trunc U32;
+                    buf[pos + 1 + digits] = (d + 48) trunc U8;
+                    digits = digits + 1;
+                    f = f - (d trunc F64);
+                }
+                var last: USize = digits;
+                for last > 0 {
+                    if buf[pos + last] != 48 {
+                        break;
+                    }
+                    last = last - 1;
+                }
+                if last > 0 {
+                    buf[pos] = 46;
+                    write(buf, pos + 1 + last);
+                    return;
+                }
+            }
+            write(buf, pos);
+        }
+    }
+
+    func print_f32(v: F32) {
+        print_f64(v as F64);
+    }
+
+    func print_bool(v: Bool) {
+        if v {
+            print_text("true");
+        } else {
+            print_text("false");
+        }
+    }
+
+    // UTF-8 编码
+    func print_char(c: C32) {
+        region fmt {
+            var buf: [U8] = [0; 4]@fmt;
+            let cp: U32 = c as U32;
+            if cp < 128 {
+                buf[0] = cp trunc U8;
+                write(buf, 1);
+                return;
+            }
+            if cp < 2048 {
+                buf[0] = (192 + (cp >> 6)) trunc U8;
+                buf[1] = (128 + (cp & 63)) trunc U8;
+                write(buf, 2);
+                return;
+            }
+            if cp < 65536 {
+                buf[0] = (224 + (cp >> 12)) trunc U8;
+                buf[1] = (128 + ((cp >> 6) & 63)) trunc U8;
+                buf[2] = (128 + (cp & 63)) trunc U8;
+                write(buf, 3);
+                return;
+            }
+            buf[0] = (240 + (cp >> 18)) trunc U8;
+            buf[1] = (128 + ((cp >> 12) & 63)) trunc U8;
+            buf[2] = (128 + ((cp >> 6) & 63)) trunc U8;
+            buf[3] = (128 + (cp & 63)) trunc U8;
+            write(buf, 4);
+        }
+    }
+
+    func print_nl() {
+        put_byte(10);
+        flush();
+    }
+
+    func print_text(t: Text) {
+        view bytes: [U8] = t;
+        write(bytes, len bytes);
+    }
+
+    func print_bytes(b: [U8]) {
+        write(b, len b);
+    }
+
+    func print_i32_nl(v: I32) {
+        print_i32(v);
+        print_nl();
+    }
+
+    func print_u32_nl(v: U32) {
+        print_u32(v);
+        print_nl();
+    }
 }

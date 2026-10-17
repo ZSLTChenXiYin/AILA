@@ -81,4 +81,4 @@ G4 之前**两条实现并存**，任何行为差异都以**黄金测试**判胜
 | 共享数据表 | `share/aila/data/diag_codes.json`（80 个码）与 `targets.json` —— **Python 与 Go 读同一份**；Python 侧新增守卫测试「源码里出现的每个错误码都必须已登记」，本轮据此补回了 bindgen 漏登记的 `W3001/W3002/W3003`（原本是潜在崩溃点） |
 | 测试 | `go test ./...`：diag / home / targets / resolve / manifest / cli 六个包全绿；Python 侧 71 条全绿 |
 | 构建 | `go build -o bin/aila ./cmd/aila`；交叉编译 `GOOS=windows\|linux\|darwin go build ./cmd/aila` 均无 cgo 依赖 |
-| 版本注入 | `-ldflags "-X github.com/aila-lang/aila/internal/cli.Version=<ver>"`（`ci/assemble-bundle.*` 已接好） |
+| 版本注入 | `-ldflags "-X github.com/ailang/aila/internal/cli.Version=<ver>"`（`ci/assemble-bundle.*` 已接好） |

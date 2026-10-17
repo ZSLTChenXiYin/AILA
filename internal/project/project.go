@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/aila-lang/aila/internal/diag"
-	"github.com/aila-lang/aila/internal/home"
+	"github.com/ailang/aila/internal/diag"
+	"github.com/ailang/aila/internal/home"
 )
 
 var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)

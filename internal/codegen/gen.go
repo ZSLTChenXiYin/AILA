@@ -12,10 +12,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/aila-lang/aila/internal/ast"
-	"github.com/aila-lang/aila/internal/diag"
-	"github.com/aila-lang/aila/internal/sema"
-	"github.com/aila-lang/aila/internal/types"
+	"github.com/ailang/aila/internal/ast"
+	"github.com/ailang/aila/internal/diag"
+	"github.com/ailang/aila/internal/sema"
+	"github.com/ailang/aila/internal/types"
 )
 
 // Lowerer 生成单个模块的 IR。
@@ -236,7 +236,11 @@ func (l *Lowerer) fileConst() string { return l.stringConst(l.srcPath) }
 //
 // 跨模块调用要用**声明模块**的名字做修饰（`io.print_text` → `aila_std_io__print_text`）。
 func (l *Lowerer) symbolOf(sig *sema.FuncSig) string {
-	if sig.IsExtern {
+	if sig.IsIntrinsic {
+		// 语言原语：符号固定为运行时的 `aila_rt_<名字>`（标准库源码里不出现 C）
+		return "aila_rt_" + sig.Name
+	}
+	if sig.IsExtern || sig.IsIntrinsic {
 		return sig.Name
 	}
 	mod := sig.Module
@@ -421,7 +425,7 @@ func (l *Lowerer) zero(t types.Type) string {
 
 // paramLLType 是 C 边界上的参数类型：视图家族只传 ptr，len 丢弃（designs/0001 §11.3）。
 func (l *Lowerer) paramLLType(sig *sema.FuncSig, t types.Type) string {
-	if sig.IsExtern {
+	if sig.IsExtern || sig.IsIntrinsic {
 		if p, ok := t.(types.Prim); ok && p.K == "bool" {
 			return "i8"
 		}

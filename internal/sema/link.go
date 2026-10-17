@@ -1,8 +1,8 @@
 package sema
 
 import (
-	"github.com/aila-lang/aila/internal/ast"
-	"github.com/aila-lang/aila/internal/types"
+	"github.com/ailang/aila/internal/ast"
+	"github.com/ailang/aila/internal/types"
 )
 
 // 本文件处理「壳内前向声明 + 块内实现」的配对检查（designs/0001 §2.1 壳/块分工）。
@@ -29,8 +29,8 @@ func (c *Checker) sigForDecl(fn *ast.FuncDecl) *FuncSig {
 func (c *Checker) checkForwardDeclarations() {
 	for _, d := range c.mod.AllDecls() {
 		fn, ok := d.(*ast.FuncDecl)
-		if !ok || fn.Body != nil || fn.IsExtern || !fn.InShell {
-			continue // 只关心壳里的非 #[c] 前向声明
+		if !ok || fn.Body != nil || fn.IsExtern || fn.IsIntrinsic || !fn.InShell {
+			continue // 只关心壳里的非 #[c] / 非 #[intrinsic] 前向声明
 		}
 		sig := c.sigForDecl(fn)
 		if sig == nil || sig.Decl != fn {

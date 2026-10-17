@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aila-lang/aila/internal/diag"
+	"github.com/ailang/aila/internal/diag"
 )
 
 // writePkg 造一个最小包（清单 + 一个模块）。

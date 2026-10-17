@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/aila-lang/aila/internal/diag"
+	"github.com/ailang/aila/internal/diag"
 )
 
 // --------------------------------------------------------------------------- //

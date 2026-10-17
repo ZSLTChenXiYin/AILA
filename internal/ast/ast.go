@@ -7,7 +7,7 @@
 //  3. 位置信息在 Span 里，不参与序列化。
 package ast
 
-import "github.com/aila-lang/aila/internal/diag"
+import "github.com/ailang/aila/internal/diag"
 
 // Node 是语法树节点。
 type Node interface {
@@ -195,6 +195,8 @@ type FuncDecl struct {
 	IsCoroutine bool
 	IsThread    bool
 	IsExtern    bool
+	// IsIntrinsic 表示这是语言原语（#[intrinsic]）：由运行时实现，标准库不出现 C 
+	IsIntrinsic bool
 	Params      []*Param
 	Effects     []*Effect
 	Ret         *TypeRef

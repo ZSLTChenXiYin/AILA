@@ -7,9 +7,9 @@ package parser
 import (
 	"strings"
 
-	"github.com/aila-lang/aila/internal/ast"
-	"github.com/aila-lang/aila/internal/diag"
-	"github.com/aila-lang/aila/internal/lexer"
+	"github.com/ailang/aila/internal/ast"
+	"github.com/ailang/aila/internal/diag"
+	"github.com/ailang/aila/internal/lexer"
 )
 
 // primTypes 是内置标量类型字（C32/Text 等族名见 lexer.TypeWords）。
@@ -487,4 +487,15 @@ func (p *Parser) parseTypeAlias() ast.Node {
 	target := p.parseType()
 	end := p.expectPunct(";", "类型别名结束")
 	return &ast.TypeAlias{Span: p.spanTo(start, p.spanOf(end)), Name: name.Text, Target: target}
+}
+
+// hasIntrinsicAttr 判断是否是语言原语声明（`#[intrinsic]`）：
+// 与 `#[c]` 一样允许无体，但符号来自运行时（afa_rt_<名字>），标准库源码里不出现 C。
+func hasIntrinsicAttr(attrs []*ast.Attr) bool {
+	for _, a := range attrs {
+		if a.Name == "intrinsic" {
+			return true
+		}
+	}
+	return false
 }

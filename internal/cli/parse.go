@@ -7,10 +7,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/aila-lang/aila/internal/ast"
-	"github.com/aila-lang/aila/internal/diag"
-	"github.com/aila-lang/aila/internal/lexer"
-	"github.com/aila-lang/aila/internal/parser"
+	"github.com/ailang/aila/internal/ast"
+	"github.com/ailang/aila/internal/diag"
+	"github.com/ailang/aila/internal/lexer"
+	"github.com/ailang/aila/internal/parser"
 )
 
 // newParseCmd 是 G2 落地的可见入口：把一份 `.aila` 的词法 / 语法结果打出来。

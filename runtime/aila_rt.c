@@ -1,7 +1,6 @@
 // AILA 语言运行时（M1 薄层）
 //
 // 依据 designs/0001 §12.3「薄层四件套」：本文件提供其中两件的宿主实现 +
-// 最小 std.io 的打印出口。设计纪律：运行时不抢向量表、不含调度器、不含 GC。
 //
 // 注意（实现口径，写在这里防止误读）：
 //   * 区域在**宿主侧**用「块链表 + bump 记账」实现：region_leave 会把本区域内
@@ -111,38 +110,15 @@ void aila_rt_region_leave(void* region) {
 }
 
 // --------------------------------------------------------------------------- //
-// 最小 std.io 的打印出口（AILA 侧以 `#[c]` 声明，stdlib/io.aila 里是普通包装函数）
 // --------------------------------------------------------------------------- //
-void aila_print_i32(int32_t v) { printf("%d", (int)v); }
-void aila_print_u32(uint32_t v) { printf("%u", (unsigned)v); }
-void aila_print_f64(double v) { printf("%g", v); }
-void aila_print_bool(int8_t v) { printf("%s", v ? "true" : "false"); }
-void aila_print_nl(void) { printf("\n"); fflush(stdout); }
-
-void aila_print_char(uint32_t cp) {
-    unsigned char buf[4];
-    int n = 0;
-    if (cp < 0x80) { buf[n++] = (unsigned char)cp; }
-    else if (cp < 0x800) {
-        buf[n++] = (unsigned char)(0xC0 | (cp >> 6));
-        buf[n++] = (unsigned char)(0x80 | (cp & 0x3F));
-    } else if (cp < 0x10000) {
-        buf[n++] = (unsigned char)(0xE0 | (cp >> 12));
-        buf[n++] = (unsigned char)(0x80 | ((cp >> 6) & 0x3F));
-        buf[n++] = (unsigned char)(0x80 | (cp & 0x3F));
-    } else {
-        buf[n++] = (unsigned char)(0xF0 | (cp >> 18));
-        buf[n++] = (unsigned char)(0x80 | ((cp >> 12) & 0x3F));
-        buf[n++] = (unsigned char)(0x80 | ((cp >> 6) & 0x3F));
-        buf[n++] = (unsigned char)(0x80 | (cp & 0x3F));
-    }
-    fwrite(buf, 1, (size_t)n, stdout);
-}
-
-void aila_print_bytes(const uint8_t* p, int64_t n) {
+// 标准输出原语：**唯一**的 OS 边界
+//
+// 纪律（docs/rfcs/0005）：标准库必须用 AILA 自己实现，stdlib 里不出现任何 C；
+// 这里只留两个语言原语（`#[intrinsic]`）：数字格式化 / UTF-8 编码 / 浮点打印全在 stdlib/io.aila。
+// --------------------------------------------------------------------------- //
+void aila_rt_write(const uint8_t* p, int64_t n) {
     if (p && n > 0) fwrite(p, 1, (size_t)n, stdout);
 }
 
-void aila_print_cstr(const uint8_t* p) {
-    if (p) fputs((const char*)p, stdout);
-}
+void aila_rt_flush(void) { fflush(stdout); }
+

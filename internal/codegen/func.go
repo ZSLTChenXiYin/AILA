@@ -4,9 +4,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/aila-lang/aila/internal/ast"
-	"github.com/aila-lang/aila/internal/sema"
-	"github.com/aila-lang/aila/internal/types"
+	"github.com/ailang/aila/internal/ast"
+	"github.com/ailang/aila/internal/sema"
+	"github.com/ailang/aila/internal/types"
 )
 
 // slot 是一个栈槽：LLVM 类型 + 槽名（`%slot_名字_N`）。

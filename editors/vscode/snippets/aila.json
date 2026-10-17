@@ -1,0 +1,90 @@
+{
+  "函数（壳内 public + 块内实现）": {
+    "prefix": "pubfunc",
+    "body": [
+      "public func ${1:name}(${2})${3: -> ${4:I32}};",
+      "",
+      "module {",
+      "    func ${1:name}(${2})${3} {",
+      "        ${0}",
+      "    }",
+      "}"
+    ],
+    "description": "对外导出的函数：壳里写声明（包外可见），块里写实现"
+  },
+  "函数": {
+    "prefix": "func",
+    "body": ["func ${1:name}(${2})${3: -> ${4:I32}} {", "    ${0}", "}"],
+    "description": "模块内函数"
+  },
+  "方法": {
+    "prefix": "method",
+    "body": ["func ${1:Type}.${2:name}(self${3:, ${4:x: I32}})${5: -> ${6:I32}} {", "    ${0}", "}"],
+    "description": "类型前缀式方法"
+  },
+  "结构体": {
+    "prefix": "struct",
+    "body": ["struct ${1:Name} {", "    ${2:field}: ${3:I32},", "};"],
+    "description": "结构体定义"
+  },
+  "枚举": {
+    "prefix": "enum",
+    "body": ["enum ${1:Name} {", "    ${2:Variant},", "};"],
+    "description": "枚举定义"
+  },
+  "枚举（带载荷）": {
+    "prefix": "enump",
+    "body": ["enum ${1:Name} {", "    ${2:Variant} { ${3:field}: ${4:I32} },", "    ${5:Empty},", "};"],
+    "description": "带载荷的枚举"
+  },
+  "可恢复错误结果": {
+    "prefix": "result",
+    "body": ["func ${1:name}(${2}) -> ${3:I32} ! ${4:Err} {", "    if ${5:cond} {", "        return _ ! ${4:Err}.${6:Bad};", "    }", "    return ${0:value};", "}"],
+    "description": "T ! E 错误通道"
+  },
+  "可空结果": {
+    "prefix": "opt",
+    "body": ["let ${1:x}: ${2:[U8]}? = None;", "match ${1:x} {", "    Some { v } => { ${3} },", "    None => { ${0} },", "}"],
+    "description": "T? 的 match 解包"
+  },
+  "区域块": {
+    "prefix": "region",
+    "body": ["region ${1:work} {", "    var ${2:buf}: [U8] = [0; ${3:16}]@${1:work};", "    ${0}", "}"],
+    "description": "区域块与区域分配"
+  },
+  "match 取值": {
+    "prefix": "match",
+    "body": ["return match ${1:value} {", "    ${2:pattern} => ${3:result},", "    _ => ${0:fallback},", "};"],
+    "description": "match 表达式"
+  },
+  "for 计数循环": {
+    "prefix": "forc",
+    "body": ["for var ${1:i}: I32 = ${2:0}; ${1:i} < ${3:n}; ${1:i} = ${1:i} + 1 {", "    ${0}", "}"],
+    "description": "三段式 for"
+  },
+  "for-in 遍历": {
+    "prefix": "forin",
+    "body": ["for ${1:i}, ${2:x} in ${3:items} {", "    ${0}", "}"],
+    "description": "遍历视图 / 定长数组"
+  },
+  "模块骨架": {
+    "prefix": "module",
+    "body": ["module {", "    ${0}", "}"],
+    "description": "显式 module 块"
+  },
+  "热替换模块骨架": {
+    "prefix": "hotmodule",
+    "body": ["import ${1:_.core.logger};", "", "module hot {", "    state ${2:tick}: U32 = 0;", "    public func on_load() {", "        ${0}", "    }", "}"],
+    "description": "hot module 骨架（state 跨版本存活）"
+  },
+  "C 互操作声明": {
+    "prefix": "cop",
+    "body": ["#[c] public func ${1:c_func}(${2})${3: -> I32};"],
+    "description": "C 函数绑定声明"
+  },
+  "清单": {
+    "prefix": "toml",
+    "body": ["[package]", "name = \"${1:demo}\"", "version = \"0.1.0\"", "entry = \"_.main\"", "", "[target]", "board = \"${2:host}\""],
+    "description": "aila.toml 骨架（在 TOML 文件里手写可用）"
+  }
+}

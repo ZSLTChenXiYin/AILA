@@ -1,9 +1,9 @@
 package sema
 
 import (
-	"github.com/aila-lang/aila/internal/ast"
-	"github.com/aila-lang/aila/internal/diag"
-	"github.com/aila-lang/aila/internal/types"
+	"github.com/ailang/aila/internal/ast"
+	"github.com/ailang/aila/internal/diag"
+	"github.com/ailang/aila/internal/types"
 )
 
 // --------------------------------------------------------------------------- //

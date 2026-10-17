@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aila-lang/aila/internal/ast"
-	"github.com/aila-lang/aila/internal/diag"
-	"github.com/aila-lang/aila/internal/parser"
-	"github.com/aila-lang/aila/internal/types"
+	"github.com/ailang/aila/internal/ast"
+	"github.com/ailang/aila/internal/diag"
+	"github.com/ailang/aila/internal/parser"
+	"github.com/ailang/aila/internal/types"
 )
 
 type bindingsSnapshot struct {

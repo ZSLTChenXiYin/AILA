@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aila-lang/aila/internal/home"
-	"github.com/aila-lang/aila/internal/resolve"
+	"github.com/ailang/aila/internal/home"
+	"github.com/ailang/aila/internal/resolve"
 )
 
 func TestIRToObjectRejectsMissingTool(t *testing.T) {

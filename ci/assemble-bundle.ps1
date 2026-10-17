@@ -36,7 +36,7 @@ $prevGOARCH = $env:GOARCH
 $env:CGO_ENABLED = "0"
 $env:GOOS = if ($Platform -like "windows*") { "windows" } else { "linux" }
 $env:GOARCH = if ($Platform -like "*arm64") { "arm64" } else { "amd64" }
-go build -trimpath -ldflags "-s -w -X github.com/aila-lang/aila/internal/cli.Version=$Version" `
+go build -trimpath -ldflags "-s -w -X github.com/ailang/aila/internal/cli.Version=$Version" `
     -o (Join-Path $Bundle "aila$(if ($env:GOOS -eq 'windows') { '.exe' } else { '' })") ./cmd/aila
 $env:GOOS = $prevGOOS
 $env:GOARCH = $prevGOARCH

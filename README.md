@@ -102,12 +102,13 @@ cmd/aila/   管理器 + 编译器前端入口（Go 单文件产物）
 internal/   cli / home / diag / targets / resolve / toolchain / manifest /
             lexer / ast / parser / types / sema / codegen / bindgen / build / project
 share/aila/data/  共享数据表（错误码 `diag_codes.json`、target 表 `targets.json`）
-stdlib/     标准库（AILA 源码，当前含 io / math）
+stdlib/     标准库（**纯 AILA 实现**，当前含 io / math；见 rfcs/0005）
 runtime/    语言运行时（C 薄层：区域账本 + trap 通道 + 打印出口）
 examples/   六个可运行示例（hello / control / region / struct / result / cinterop）
 tests/corpus/  黄金语料与契约快照（token / AST / 布局 / 签名 / 绑定 / IR / 示例输出）
 tools/goldengen/  快照生成器（`go run ./tools/goldengen [-check]`）
 ci/         打包脚本（拉 llvm-mingw 并裁剪到 toolchain/、拼发布目录）
+editors/vscode/  VSCode 扩展（语法高亮 / 片段 / 构建运行命令）
 toolchain/  随包工具链（ci/fetch-llvm.* 生成，不进版本库；发布时随 zip 分发）
 ```
 
@@ -154,6 +155,28 @@ module {
 | C 包 | `import ch`/`import cc` 只在根包的 `cpacks/` 里解析；依赖包里的 C 导入暂不支持 |
 
 完整规格见 [`docs/rfcs/0004`](docs/rfcs/0004-package-dependencies.md)。
+
+
+## 标准库与运行时边界
+
+标准库**只用 AILA 写**（[`rfcs/0005`](docs/rfcs/0005-pure-aila-stdlib.md)）：十进制转换、UTF-8 编码、
+浮点小数位、换行全在 `stdlib/io.aila` 里，`stdlib` 中不出现任何 `#[c]`。唯一的 OS 边界是两条
+**语言原语**（由运行时实现）：
+
+```aila
+#[intrinsic] func write(bytes: [U8], n: USize);
+#[intrinsic] func flush();
+```
+
+`runtime/aila_rt.c` 只剩三类东西：输出原语、区域账本、`aila_rt_trap` 陷阱出口。
+换平台只需实现这两条原语与区域账本——标准库不用动。
+
+## 编辑器支持
+
+`editors/vscode/` 是 AILA 的 VSCode 扩展：语法高亮、括号/注释、代码片段
+（`pubfunc` / `result` / `opt` / `region` / `hotmodule` …）、命令面板里的
+`AILA: 构建 / 构建并运行 / 只做检查 / 环境自检`，以及 `aila` 任务类型。
+装法见 [`editors/vscode/README.md`](editors/vscode/README.md)（软链进 `~/.vscode/extensions` 或 `vsce package`）。
 
 ## 当前实现范围（M1）
 

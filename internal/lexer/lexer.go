@@ -7,7 +7,7 @@ package lexer
 import (
 	"strings"
 
-	"github.com/aila-lang/aila/internal/diag"
+	"github.com/ailang/aila/internal/diag"
 )
 
 // Kind 是 token 类别；关键字 token 的 Kind 就是关键字本身（与 Python 版一致）。

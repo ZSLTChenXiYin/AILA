@@ -30,7 +30,7 @@ case "$PLATFORM" in
 esac
 
 ( cd "$ROOT" && CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
-    go build -trimpath -ldflags "-s -w -X github.com/aila-lang/aila/internal/cli.Version=$VERSION" \
+    go build -trimpath -ldflags "-s -w -X github.com/ailang/aila/internal/cli.Version=$VERSION" \
     -o "$BUNDLE/aila" ./cmd/aila )
 if [ "$GOOS" = "windows" ]; then
   mv "$BUNDLE/aila" "$BUNDLE/aila.exe"

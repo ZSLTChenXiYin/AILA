@@ -11,8 +11,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"github.com/aila-lang/aila/internal/diag"
-	"github.com/aila-lang/aila/internal/targets"
+	"github.com/ailang/aila/internal/diag"
+	"github.com/ailang/aila/internal/targets"
 )
 
 // FileName 是清单文件名。

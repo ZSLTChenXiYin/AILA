@@ -5,8 +5,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/aila-lang/aila/internal/diag"
-	"github.com/aila-lang/aila/internal/resolve"
+	"github.com/ailang/aila/internal/diag"
+	"github.com/ailang/aila/internal/resolve"
 )
 
 // findClang 返回可用的 clang 路径（随包优先，其次系统 PATH）。

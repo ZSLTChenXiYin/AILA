@@ -259,6 +259,19 @@ Never                             trap / 发散
 
 ## 7. LLVM IR 生成约定（`internal/codegen`）
 
+### 7.0 语言原语（`#[intrinsic]`）
+
+标准库要访问 OS（标准输出）时，用**语言原语**声明而不是 `#[c]`：
+
+```aila
+#[intrinsic] func write(bytes: [U8], n: USize);
+```
+
+- 语法与 `#[c]` 同形（壳内、无体），但符号固定为 `aila_rt_<名字>`，由运行时实现；
+- 参数映射与 `#[c]` 一致（视图家族传 `ptr`、`Bool` 传 `i8`）；
+- 只允许出现在 `stdlib/` 下；用户代码用 `#[c]` 做 C 互操作，不用 `#[intrinsic]`
+  （纪律见 [rfcs/0005](../rfcs/0005-pure-aila-stdlib.md)）。
+
 ### 7.1 模块骨架
 
 ```llvm

@@ -1,8 +1,8 @@
 package sema
 
 import (
-	"github.com/aila-lang/aila/internal/ast"
-	"github.com/aila-lang/aila/internal/types"
+	"github.com/ailang/aila/internal/ast"
+	"github.com/ailang/aila/internal/types"
 )
 
 // checkMatch 检查 match：分支产出统一性 + 完备性 + 模式绑定。

@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aila-lang/aila/internal/ast"
-	"github.com/aila-lang/aila/internal/diag"
-	"github.com/aila-lang/aila/internal/parser"
+	"github.com/ailang/aila/internal/ast"
+	"github.com/ailang/aila/internal/diag"
+	"github.com/ailang/aila/internal/parser"
 )
 
 // runModules 解析并语义检查一组模块（模块名 → 源码），返回错误码集合。

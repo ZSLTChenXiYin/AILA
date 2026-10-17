@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/aila-lang/aila/internal/build"
+	"github.com/ailang/aila/internal/build"
 )
 
 // loadOpts 把命令行开关转成构建选项。

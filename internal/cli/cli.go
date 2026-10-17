@@ -16,12 +16,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/aila-lang/aila/internal/diag"
-	"github.com/aila-lang/aila/internal/home"
-	"github.com/aila-lang/aila/internal/manifest"
-	"github.com/aila-lang/aila/internal/resolve"
-	"github.com/aila-lang/aila/internal/targets"
-	"github.com/aila-lang/aila/internal/toolchain"
+	"github.com/ailang/aila/internal/diag"
+	"github.com/ailang/aila/internal/home"
+	"github.com/ailang/aila/internal/manifest"
+	"github.com/ailang/aila/internal/resolve"
+	"github.com/ailang/aila/internal/targets"
+	"github.com/ailang/aila/internal/toolchain"
 )
 
 // 退出码（与 Python 版一致，docs/specs/0001 §3.1）。

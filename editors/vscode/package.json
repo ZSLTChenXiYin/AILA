@@ -1,0 +1,111 @@
+{
+  "name": "aila",
+  "displayName": "AILA",
+  "description": "AILA 语言支持：语法高亮、括号/注释、片段、构建与运行命令",
+  "version": "0.1.0",
+  "publisher": "ailang",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "aila",
+    "embedded",
+    "region"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ailang/aila"
+  },
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:aila"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "aila",
+        "aliases": [
+          "AILA",
+          "aila"
+        ],
+        "extensions": [
+          ".aila"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "aila",
+        "scopeName": "source.aila",
+        "path": "./syntaxes/aila.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "aila",
+        "path": "./snippets/aila.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "aila.build",
+        "title": "AILA: 构建（build）"
+      },
+      {
+        "command": "aila.run",
+        "title": "AILA: 构建并运行（run）"
+      },
+      {
+        "command": "aila.check",
+        "title": "AILA: 只做检查（check）"
+      },
+      {
+        "command": "aila.doctor",
+        "title": "AILA: 环境自检（doctor）"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "AILA",
+      "properties": {
+        "aila.executable": {
+          "type": "string",
+          "default": "aila",
+          "description": "aila 可执行文件路径（默认取 PATH 里的 `aila`）"
+        }
+      }
+    },
+    "taskDefinitions": [
+      {
+        "type": "aila",
+        "required": [],
+        "properties": {
+          "command": {
+            "type": "string",
+            "enum": [
+              "build",
+              "run",
+              "check",
+              "doctor"
+            ],
+            "default": "build"
+          }
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.80.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -330,3 +330,16 @@ M1 冻结条件（**四条全绿才算完**）：
 | 判据 | `internal/sema/vis_test.go`：六个阶梯用例（块内默认跨文件不可见 / 块内 public 同子包可见 / 跨子包不可见 / 壳内 public 跨子包可见 / 壳内默认类型跨子包不可见 / 壳内 public 类型可见）+ 前向声明三例（正常 / `E7031` / `E3201`）；`TestCrossProjectDependency` 仍全绿 |
 | 文档 | designs §2.1（壳允许前向声明）/§2.2（阶梯表 + 三级说明表 + 导出写法）；rfcs/0002 缺陷 14；rfcs/0004 §5；specs/0001 §1.2/§2.2；README |
 | 实测 | 干净 PATH + 随包工具链下：六示例全绿；同子包 `public` 调用通过、跨子包报 `E7020`、壳内 `public` 跨子包真编译运行输出正确 |
+
+## 22. 标准库去 C 化 + 模块重命名 + IDE 插件
+
+| 项 | 结论 |
+|---|---|
+| 模块路径 | `go.mod` 从 `github.com/aila-lang/aila` 改成 **`github.com/ailang/aila`**（138 处 import + 打包脚本的 `-X` 注入路径同步） |
+| 可见性语义确认 | 同项目内**跨子包**也算「包外」——`import` 本来就是导入一个子包，与跨项目同义，不需要额外一级（designs §2.2 已写明） |
+| 语言原语 | 新增 `#[intrinsic]`：壳内无体声明，符号固定为 `aila_rt_<名字>`，由运行时实现；只给标准库用 |
+| 标准库去 C 化 | `stdlib/io.aila` 重写成纯 AILA：十进制转换、符号、UTF-8 编码、浮点 6 位小数、换行/冲刷全部自己实现；缓冲区用 `region` 块就地分配，不留模块级可变状态 |
+| 运行时收窄 | `runtime/aila_rt.c` 只剩三类：`aila_rt_write`/`aila_rt_flush`（唯一 OS 边界）、区域账本、`aila_rt_trap`；`aila_print_*` 全删 |
+| 判据 | 六示例输出与 `expected.out` 逐字节一致（含 `score=0.75` 的浮点路径）；`std_io.ll` 快照随之更新；`stdlib/*.aila` 里 `#[c]` 计数为 0 |
+| IDE 插件 | 新增 `editors/vscode/`：语法高亮（TextMate）、语言配置（注释/括号/缩进）、片段、`aila build/run` 任务与命令，详见该目录 README |
+| 文档 | 新增 rfcs/0005（标准库纯 AILA 的动机/裁决/验收）；specs/0002 §7.0（原语）；docs/README 索引；README 标准库与插件说明 |

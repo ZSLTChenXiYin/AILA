@@ -14,7 +14,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/aila-lang/aila/internal/diag"
+	"github.com/ailang/aila/internal/diag"
 )
 
 // Target 是绑定生成需要的目标信息。

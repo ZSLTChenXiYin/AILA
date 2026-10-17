@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/aila-lang/aila/internal/home"
-	"github.com/aila-lang/aila/internal/resolve"
+	"github.com/ailang/aila/internal/home"
+	"github.com/ailang/aila/internal/resolve"
 )
 
 // Check 是 doctor 的一行。

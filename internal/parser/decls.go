@@ -1,8 +1,8 @@
 package parser
 
 import (
-	"github.com/aila-lang/aila/internal/ast"
-	"github.com/aila-lang/aila/internal/lexer"
+	"github.com/ailang/aila/internal/ast"
+	"github.com/ailang/aila/internal/lexer"
 )
 
 // isEffectClause 判断 `@` 之后的子句名：region / mut / move。
@@ -79,9 +79,10 @@ func (p *Parser) parseFunc(attrs []*ast.Attr, allowBodyless bool) ast.Node {
 	effects = append(effects, p.parseEffects()...)
 	var body *ast.Block
 	isExtern := hasCAttr(attrs)
+	isIntrinsic := hasIntrinsicAttr(attrs)
 	if p.atPunct(";") {
 		p.adv()
-		if !isExtern && !allowBodyless {
+		if !isExtern && !isIntrinsic && !allowBodyless {
 			p.errSpan(p.spanTo(start, p.spanOf(p.cur())),
 				"E2001", "函数 `"+nameTok.Text+"` 没有函数体",
 				"只有 `#[c]` 外部声明或壳里的前向声明可以省略函数体",
@@ -91,7 +92,7 @@ func (p *Parser) parseFunc(attrs []*ast.Attr, allowBodyless bool) ast.Node {
 		body = p.parseBlock()
 	}
 	return &ast.FuncDecl{Span: p.spanTo(start, p.spanOf(p.cur())), Name: nameTok.Text,
-		OwnerType: owner, IsCoroutine: isCoro, IsThread: isThread, IsExtern: isExtern,
+		OwnerType: owner, IsCoroutine: isCoro, IsThread: isThread, IsExtern: isExtern, IsIntrinsic: isIntrinsic,
 		Params: params, Effects: effects, Ret: ret, Body: body, Variadic: variadic}
 }
 
