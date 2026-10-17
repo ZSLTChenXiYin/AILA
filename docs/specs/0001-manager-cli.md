@@ -38,7 +38,7 @@ Python 标识符化：模块名 / 子包名必须匹配 `[A-Za-z_][A-Za-z0-9_]*`
 | `import _;` | 包根模块（即 `_.main`） |
 | `import ch _.cpacks.math;` | C 声明导入：对该 cpack 的头文件跑 bindgen，产物 `.ail` 作为模块参与前端 |
 | `import cc _.cpacks.legacy;` | C 实现导入：只编译 + 链接该 cpack 内 `.c`，不产 AILA 声明 |
-| `import <包名>....` | 外部包（M1 未实现依赖解析，报 `E7010`「跨包依赖待批次」） |
+| `import <依赖名>.子包.模块;` | 外部包：`<依赖名>` 必须是清单 `[dependencies]` 里声明过的依赖（见 §2.2）；未声明 = `E7010` |
 
 同一模块内 `as` 别名重复、或别名与模块名撞名 = `E7004`。
 
@@ -76,6 +76,11 @@ llvm = "auto"          # auto | bundled | system:llc | system:clang
 kind = "internal-ram"
 size = "64K"
 align = 16
+
+[dependencies]         # 可选：跨项目依赖（rfcs/0004）
+mylib = { path = "../mylib" }                        # 本地路径（相对本包根）
+util  = { git = "https://…/util.git", tag = "v1.2.0" }  # git：tag 或 rev 锁定，不许分支
+math  = { path = "../math", version = "0.3" }         # 可选版本前缀要求
 ```
 
 校验规则：
@@ -88,6 +93,10 @@ align = 16
 | `build.opt` | 非 0..3 | `E7007` |
 | `domains.*.kind` | 不在 kind 枚举（`internal-ram`/`external-ram`/`rtc-slow`/`default`） | `E7008` |
 | `domains.*.size` | 形如 `<num>[KMG]`；嵌入式 target 必填 | `E7008` |
+| `dependencies.<名>` | 名是合法标识符；恰好 `path` 或 `git`；git 必须锁 `tag`/`rev` | `E7021` |
+| 依赖定位 | `path` 指向包根（含 `aila.toml`）；git 可拉取；`package.version` 存在且满足要求 | `E7022` / `E7023` |
+| 依赖图 | 同名依赖同源；有向无环 | `E7024` / `E7025` |
+| 跨包引用 | 只认带 `public` 的声明 | `E7020` |
 
 ### 2.1 内置 board 表（M1）
 
@@ -102,6 +111,26 @@ M1 只有 `host` 可产出可执行产物；其余 board `aila build` 到 `.o` �
 
 ---
 
+### 2.2 跨项目依赖与 `aila.lock`（rfcs/0004）
+
+依赖 = **另一个包**；`import <依赖名>.子包.模块;` 里的 `<依赖名>` 就是清单里的键。
+
+| 行为 | 规则 |
+|---|---|
+| 解析顺序 | `vendor/<名>/` 优先（离线）→ `path` 直接定位 → `git` 缓存（未命中才 clone） |
+| 编译模型 | 依赖源码一起进模块图（AILA 是源码分发，没有预编译库）；模块名 = `<依赖名>.<子包>.<模块>`，符号天然带包前缀互不冲突 |
+| 锁文件 | `aila.lock` 记每条依赖的 `source` / `version` / `hash`（内容哈希）；来源、版本、哈希任一变化 → `E7023`，需 `aila deps --update` |
+| 首次构建 | 没有锁文件时自动写入 |
+| vendor | `aila deps --vendor` 复制到 `vendor/`；此后即使原路径断掉、无网络也能构建 |
+| 传递依赖 | 依赖包自己的 `[dependencies]` 继续生效；按拓扑序编译 |
+| 可见性 | 跨包只认 `public`（`E7020`）；同包内跨模块不需要 |
+
+`aila deps` 输出示例：
+
+```text
+  0. mylib            0.1.0      path:..\mylib                      ec023f1b088bab2e
+根包  <包根目录>
+```
 ## 3. CLI 契约
 
 ### 3.1 全局
@@ -135,6 +164,7 @@ aila [--version] [--help] <command> ...
 | `aila explain <CODE>` | 错误码解释 + 傻瓜式修复步骤 | `--json` | 未知码 = 2 |
 | `aila parse <文件>` | 解析一份 `.aila`，打印 token 流（`--tokens`）或语法树 S-表达式 | `--tokens` | 有诊断 = 1 |
 | `aila ir <文件>` | 单文件走完「解析 → 语义 → LLVM IR」并打印 IR 文本 | `--triple` | 有诊断 = 1 |
+| `aila deps [路径]` | 打印依赖图 / 重写 `aila.lock` / 生成 `vendor/` | `--update` `--vendor` `--json` | 0；有诊断 = 1 |
 
 ### 3.3 诊断输出格式（人读）
 
@@ -163,7 +193,7 @@ error[E3201]: 类型不匹配
 | `E4xxx` | 内存与效果 | `E4001` 缺分配许可 / `E4101` 逃逸 / `E4201` 只读绑定被写 |
 | `E5xxx` | 并发 | `E5001` `<-` 不在协程内 / `E5002` thread 参数白名单 |
 | `E6xxx` | C 互操作 | `E6001` 变参禁传类型 / `E6002` union 不支持 |
-| `E7xxx` | 工程与清单 | `E7002` 清单缺字段 / `E7003` 路径非法标识符 |
+| `E7xxx` | 工程、清单与依赖 | `E7002` 清单缺字段 / `E7003` 路径非法标识符 / `E7010` 导入根未声明 / `E7020` 跨包引用未导出 / `E7021` 依赖声明不合法 / `E7022` 依赖定位失败 / `E7023` 依赖与锁不一致 / `E7024` 同名依赖冲突 / `E7025` 依赖成环 |
 | `E8xxx` | 工具链与链接 | `E8010` 无可用 LLVM 后端 / `E8020` 交叉链接待批次 |
 | `E9xxx` | 批次未实现 | `E9001` 语法已解析但语义待批次 / `E9002` 代码生成待批次 |
 

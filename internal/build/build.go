@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/aila-lang/aila/internal/ast"
 	"github.com/aila-lang/aila/internal/bindgen"
 	"github.com/aila-lang/aila/internal/codegen"
+	"github.com/aila-lang/aila/internal/deps"
 	"github.com/aila-lang/aila/internal/diag"
 	"github.com/aila-lang/aila/internal/home"
 	"github.com/aila-lang/aila/internal/manifest"
@@ -27,6 +29,10 @@ import (
 // Options 是一次构建的可选参数（与 `aila build` 的命令行开关一一对应）。
 type Options struct {
 	Opt      int
+	// UpdateDeps 强制重新解析依赖并重写 `aila.lock`。
+	UpdateDeps bool
+	// Vendor 把解析好的依赖复制到 `vendor/`（离线构建）。
+	Vendor bool
 	Board    string
 	LLVM     string
 	CC       string
@@ -44,6 +50,9 @@ type Result struct {
 	Program   *sema.Program
 	Triple    string
 	Exe       string
+	// Deps 是跨项目依赖图；Packages 是本次参与构建的包名（不含根包的 `_` 在前）。
+	Deps     *deps.Graph
+	Packages []string
 	Objects   []string
 	IR        map[string]string
 	Cpacks    []string
@@ -74,89 +83,189 @@ func Load(root string, opts Options) *Result {
 	}
 	res.Triple = man.EffectiveTriple(resolve.HostTriple())
 
-	prj := project.Discover(root, bag)
-	res.Project = prj
+	// ---- 依赖图（跨项目依赖：path / git，docs/rfcs/0004）----
+	graph := deps.Resolve(root, opts.UpdateDeps, bag)
+	res.Deps = graph
+	if opts.Vendor {
+		if err := graph.Vendor(); err != nil {
+			bag.Error("E7022", diag.Empty, "vendor 复制失败", err.Error(), "")
+		}
+	}
+
+	// ---- 逐包发现模块：根包 `_` + 每个依赖 + 标准库（按需）----
+	rootPrj := project.DiscoverPackage(root, "_", bag)
+	res.Project = rootPrj
+	pkgs := map[string]*project.Project{"_": rootPrj}
+	for _, pkg := range graph.Order {
+		if pkg == deps.RootPkg {
+			continue
+		}
+		dir := graph.PackageDir(pkg)
+		if dir == "" {
+			continue
+		}
+		pkgs[pkg] = project.DiscoverPackage(dir, pkg, bag)
+	}
+	res.Packages = append([]string{"_"}, nonRootPackages(graph)...)
 	if bag.HasErrors() {
 		return res
 	}
-	if _, ok := prj.Modules[man.Entry]; !ok {
+	if _, ok := rootPrj.Modules[man.Entry]; !ok {
 		bag.Error("E7005", diag.Empty, "清单 `package.entry` 指向的模块 `"+man.Entry+"` 不存在",
 			"入口模块", "检查 `entry` 的值，或补上入口模块文件")
 		return res
 	}
+
 	mods := map[string]*ast.Module{}
 	order := []string{}
-	// 项目内模块（按发现顺序）
-	for _, name := range prj.ModuleList {
-		text, err := project.ReadSource(prj.Modules[name])
-		if err != nil {
-			bag.Error("E7001", diag.Empty, "读不到模块 `"+name+"`："+err.Error(), "文件", "")
-			continue
-		}
-		mod, mbag := parser.Parse(prj.Modules[name], text)
+	pkgOf := map[string]string{} // 模块名 → 包名
+	loadOne := func(pkg, name, path, text string) {
+		mod, mbag := parser.Parse(path, text)
 		mergeBag(bag, mbag)
 		mod.Name = name
 		mods[name] = mod
 		order = append(order, name)
+		pkgOf[name] = pkg
 	}
-	// 标准库与 C 绑定按需装载（`std.*` / `_.cpacks.*` 导入闭包）
+	for pkg, prj := range pkgs {
+		for _, name := range prj.ModuleList {
+			text, err := project.ReadSource(prj.Modules[name])
+			if err != nil {
+				bag.Error("E7001", diag.Empty, "读不到模块 `"+name+"`："+err.Error(), "文件", "")
+				continue
+			}
+			loadOne(pkg, name, prj.Modules[name], text)
+		}
+	}
+	// 排序，保证输出与模块图稳定（不影响语义）
+	sort.Strings(order)
+
 	bindTarget := bindgen.Target{Board: man.Board, Triple: res.Triple, PtrSize: man.PtrSize()}
 	loaded := map[string]bool{}
 	for _, name := range order {
 		loaded[name] = true
 	}
 	for i := 0; i < len(order); i++ {
-		mod := mods[order[i]]
+		name := order[i]
+		mod := mods[name]
 		if mod == nil {
 			continue
 		}
+		pkg := pkgOf[name]
 		for _, imp := range mod.Imports {
 			// ---- C 绑定：`import ch|cc _.cpacks.<名字>` → bindgen 生成 `.ail` 模块 ----
 			if imp.KindV == "ch" || imp.KindV == "cc" {
-				bindName, bindText, ok := bindCpack(prj, imp, res, bindTarget)
-				if !ok {
+				if pkg != "_" {
+					bag.Error("E7010", imp.Span, "依赖包里的 C 导入尚未支持",
+						"cpack 只在根包里解析", "把 C 包留在根项目，或等依赖批次补齐")
 					continue
 				}
-				if loaded[bindName] {
+				bindName, bindText, ok := bindCpack(rootPrj, imp, res, bindTarget)
+				if !ok || loaded[bindName] {
 					continue
 				}
-				sub, sbag := parser.Parse(bindName, bindText)
-				mergeBag(bag, sbag)
-				sub.Name = bindName
-				mods[bindName] = sub
-				order = append(order, bindName)
+				loadOne("_", bindName, bindName, bindText)
 				loaded[bindName] = true
 				continue
 			}
-			target := importTarget(imp.Root, imp.Path)
-			if target == "" || loaded[target] {
+			target, ok := resolveImportTarget(pkg, imp, graph)
+			if !ok {
+				bag.Error("E7010", imp.Span,
+					"跨项目依赖 `"+imp.Root+"` 未在 `[dependencies]` 里声明", "依赖根",
+					"在 `aila.toml` 里写 `[dependencies] "+imp.Root+" = { path = \"...\" }`（或 git 形式）")
 				continue
 			}
-			path := prj.ModulePath(target)
+			if loaded[target] {
+				continue
+			}
+			// 定位文件：优先在本包内找，`std.*` 走标准库目录
+			path := ""
+			if strings.HasPrefix(target, "std") {
+				path = rootPrj.ModulePath(target)
+			} else if targetPkg := packageOfModule(target); pkgs[targetPkg] != nil {
+				path = pkgs[targetPkg].Modules[target]
+			}
 			if path == "" {
-				continue // 留给 sema 报「找不到被导入的模块」
+				bag.Error("E3001", imp.Span, "找不到被导入的模块 `"+target+"`", "导入路径",
+					"检查目录/文件名是否与导入路径一致（路径即身份）")
+				continue
 			}
 			text, err := project.ReadSource(path)
 			if err != nil {
 				bag.Error("E7001", diag.Empty, "读不到模块 `"+target+"`："+err.Error(), "文件", "")
 				continue
 			}
-			sub, sbag := parser.Parse(path, text)
-			mergeBag(bag, sbag)
-			sub.Name = target
-			mods[target] = sub
-			order = append(order, target)
+			loadOne(packageOfModule(target), target, path, text)
 			loaded[target] = true
+		}
+	}
+	// 锁文件：第一次解析或有变化时写回（依赖没变就不动它）
+	if !bag.HasErrors() && (opts.UpdateDeps || !graph.Locked()) {
+		if err := graph.Write(); err != nil {
+			bag.Warning("W7021", diag.Empty, "写不了 `aila.lock`", err.Error(), "")
 		}
 	}
 	res.Artifacts["modules"] = mods
 	if bag.HasErrors() {
 		return res
 	}
-	prog := sema.BuildProgram(mods, order, man.Entry, bag)
+	prog := sema.BuildProgramWithDeps(mods, order, man.Entry, graph.Edges, bag)
 	res.Program = prog
 	res.OK = !bag.HasErrors()
 	return res
+}
+
+// nonRootPackages 列出依赖包名（不含根包）。
+func nonRootPackages(g *deps.Graph) []string {
+	out := make([]string, 0, len(g.Order))
+	for _, pkg := range g.Order {
+		if pkg != deps.RootPkg {
+			out = append(out, pkg)
+		}
+	}
+	return out
+}
+
+// resolveImportTarget 把导入语句解析成模块全名。
+//
+// 规则（designs/0001 §2.3 规则 1 + docs/rfcs/0004）：
+//   - `_`      → 当前包自身的根（依赖包里的 `_` 指该依赖自己）
+//   - `std`    → 标准库
+//   - 依赖名   → 该包（必须是 pkg 在清单里声明的依赖）
+func resolveImportTarget(pkg string, imp *ast.Import, g *deps.Graph) (string, bool) {
+	join := func(root string) string {
+		if len(imp.Path) == 0 {
+			return root
+		}
+		return root + "." + strings.Join(imp.Path, ".")
+	}
+	switch imp.Root {
+	case "_":
+		return join(pkg), true
+	case "std":
+		return join("std"), true
+	}
+	for _, dep := range g.DepsOf(pkg) {
+		if dep == imp.Root {
+			return join(dep), true
+		}
+	}
+	return "", false
+}
+
+// packageOfModule 从模块全名取包名（`_` / 依赖名 / `std`）。
+func packageOfModule(module string) string {
+	if module == "_" {
+		return "_"
+	}
+	if i := strings.Index(module, "."); i > 0 {
+		head := module[:i]
+		if head == "_" {
+			return "_"
+		}
+		return head
+	}
+	return module
 }
 
 // bindCpack 处理一条 C 导入：生成绑定模块文本（带缓存），并登记要一起编译的 cpack。

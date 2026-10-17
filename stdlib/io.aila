@@ -14,48 +14,48 @@
 
 // ---- 面向用户的包装（普通 AILA 函数，零特权） ----
 
-func print_i32(v: I32) {
+public func print_i32(v: I32) {
     aila_print_i32(v);
 }
 
-func print_u32(v: U32) {
+public func print_u32(v: U32) {
     aila_print_u32(v);
 }
 
-func print_usize(v: USize) {
+public func print_usize(v: USize) {
     aila_print_u32(v trunc U32);
 }
 
-func print_f64(v: F64) {
+public func print_f64(v: F64) {
     aila_print_f64(v);
 }
 
-func print_f32(v: F32) {
+public func print_f32(v: F32) {
     aila_print_f64(v as F64);
 }
 
-func print_bool(v: Bool) {
+public func print_bool(v: Bool) {
     aila_print_bool(v);
 }
 
-func print_char(c: C32) {
+public func print_char(c: C32) {
     aila_print_char(c);
 }
 
-func print_nl() {
+public func print_nl() {
     aila_print_nl();
 }
 
-func print_text(t: Text) {
+public func print_text(t: Text) {
     view bytes: [U8] = t;
     aila_print_bytes(bytes, len bytes);
 }
 
-func print_bytes(b: [U8]) {
+public func print_bytes(b: [U8]) {
     aila_print_bytes(b, len b);
 }
 
-func print_i32_nl(v: I32) {
+public func print_i32_nl(v: I32) {
     aila_print_i32(v);
     aila_print_nl();
 }

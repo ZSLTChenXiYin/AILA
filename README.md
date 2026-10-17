@@ -111,6 +111,40 @@ ci/         打包脚本（拉 llvm-mingw 并裁剪到 toolchain/、拼发布目
 toolchain/  随包工具链（ci/fetch-llvm.* 生成，不进版本库；发布时随 zip 分发）
 ```
 
+
+## 跨项目复用（包管理）
+
+**包 = 项目**（一个 `aila.toml` 的目录）、**子包 = 目录**、**模块 = 文件**。
+要用另一个项目的代码，就在清单里声明依赖，然后按「依赖名.子包.模块」导入：
+
+```toml
+# 我的工程 aila.toml
+[dependencies]
+mylib = { path = "../mylib" }                        # 本地路径
+util  = { git = "https://…/util.git", tag = "v1.2.0" }  # git（tag 或 rev 锁定，不许分支）
+```
+
+```aila
+import mylib.math.ops as ops;    // 依赖名 mylib · 子包 math · 模块 ops
+
+func main() {
+    io.print_i32_nl(ops.twice(21));
+}
+```
+
+规则速查：
+
+| 项 | 说明 |
+|---|---|
+| 跨包可见性 | 只认 `public` 声明（否则 `E7020`）；同包内跨模块不需要 `public` |
+| 锁文件 | `aila.lock` 记来源 / 版本 / 内容哈希；依赖变了不 `aila deps --update` 就报 `E7023`（构建可复现优先） |
+| 离线构建 | `aila deps --vendor` 把依赖复制进 `vendor/`，此后无网络、原路径断开也能编 |
+| 查看依赖 | `aila deps`（人读）/ `aila deps --json`（机器可读） |
+| 传递依赖 | 依赖包自己的 `[dependencies]` 继续生效，按拓扑序编译 |
+| C 包 | `import ch`/`import cc` 只在根包的 `cpacks/` 里解析；依赖包里的 C 导入暂不支持 |
+
+完整规格见 [`docs/rfcs/0004`](docs/rfcs/0004-package-dependencies.md)。
+
 ## 当前实现范围（M1）
 
 已落地：**全部 v0 语法解析** + 名字/类型/布局/区域效果/match 完备性/主名字检查 + LLVM IR 生成与目标文件产出，

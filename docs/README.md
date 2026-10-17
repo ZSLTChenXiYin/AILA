@@ -40,6 +40,7 @@ rfcs/0001（管理器 + 前端这一批做什么） ──► rfcs/0002（设计
 | [rfcs/0001](rfcs/0001-manager-and-frontend.md) | 管理器与编译器前端：范围、方案与弃选 | 历史记录（被 rfcs/0003 取代） |
 | [rfcs/0002](rfcs/0002-design-defects.md) | 实现期发现的 `designs/0001` 内部不一致（缺陷登记 + 裁决） | 已裁决，待设计稿修订 |
 | [rfcs/0003](rfcs/0003-go-rewrite.md) | 用 Go 重写管理器与前端的决定与分批计划（G1–G4） | 已完成（G1–G4 全绿，Python 前端已删） |
+| [rfcs/0004](rfcs/0004-package-dependencies.md) | 跨项目依赖（包管理）：路径 / git / 锁文件 / vendor / 跨包可见性 | 已落地 |
 | [specs/0001](specs/0001-manager-cli.md) | 管理器：工程模型、清单、CLI、bindgen、工具链供给 | 已定稿 |
 | [specs/0002](specs/0002-compiler-frontend.md) | 编译器前端：流水线、语法、AST、语义、LLVM IR | 已定稿 |
 | [specs/0003](specs/0003-distribution-and-toolchain.md) | 分发形态、随包工具链解析、CI 打包流水线 | 已定稿（M2-D 已落地） |

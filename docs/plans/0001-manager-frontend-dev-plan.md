@@ -301,3 +301,19 @@ M1 冻结条件（**四条全绿才算完**）：
 | 新判据 | `internal/toolchain/TestBundledToolchainSmoke`：仓库里有 `toolchain/<triple>/` 时，`bundled` 偏好下 doctor 不得有 fail（无随包工具链的机器上跳过） |
 | 发布包内容 | 新增 `examples/`（`aila doctor` 的提示与「解压即用」体验要用），外加 `LICENSE`/`NOTICE`/`NOTICES.md`/`README.md`/`VERSION`/`share/aila/**`/`toolchain/**` |
 | 遗留 | `fetch-llvm.sh` 的 Linux/macOS 分支只做了静态审阅与逐条对齐 ps1 规则，**没在真机上跑过**（本机是 Windows）；首次 release 前需要在 CI 上跑一次并修差异。sha256 需要在发行前用 `LLVM_MINGW_SHA256` 固定 |
+
+## 20. 跨项目依赖落地（包管理）
+
+| 项 | 结论 |
+|---|---|
+| 概念澄清 | **包 = 项目**（一个 `aila.toml`）、**子包 = 目录**、**模块 = 文件**；`import <依赖名>.<子包>.<模块>` 的第一个名字是**依赖名**（= 清单 `[dependencies]` 的键），不是包内的子包 |
+| 依赖形态 | 路径依赖 `{ path = "../mylib" }` 与 git 依赖 `{ git = "…", tag/rev = "…" }`（**分支不许用**）；可选 `version = "0.3"` 前缀要求 |
+| 定位顺序 | `vendor/<名>/` 优先（离线）→ `path` → git 缓存（`AILA_DEPS_CACHE` / `$AILA_HOME/cache/deps` / 用户缓存），未命中才 clone |
+| 锁文件 | `aila.lock` 记 `source` / `version` / `hash`（`aila.toml` + 全部 `.aila` 的内容哈希）；三者任一漂移 → `E7023`，须 `aila deps --update`；首次构建自动写；锁文件**不含本机绝对路径** |
+| 编译模型 | 依赖源码一起进模块图（源码分发、无预编译库），模块名带包前缀 → 符号天然隔离；按拓扑序编译，依赖的 `.o` 一起链接 |
+| 可见性 | 跨包只认 `public`（`E7020`）；`stdlib` 的对外函数补了 `public`；同包内跨模块不受影响 |
+| 新错误码 | `E7020` 未导出 / `E7021` 声明不合法 / `E7022` 定位失败 / `E7023` 锁不一致 / `E7024` 同名冲突 / `E7025` 成环（全部写进 `share/aila/data/diag_codes.json`） |
+| 新命令 | `aila deps [--update] [--vendor] [--json]`；`check/build/run` 加 `--deps-update` / `--vendor` |
+| 判据 | `internal/deps` 六个单测（路径 / vendor 离线 / 版本 / 成环 / 声明 / 版本匹配）+ `internal/build/TestCrossProjectDependency`（真实两项目编译运行 + `E7020` + `E7010`）|
+| 顺手修的缺陷 | ① 非 `_`/`std` 导入根原先被**静默忽略**（只剩「未定义的名字」误导）→ 现在 `E7010`；② 诊断按「码 + 行 + 消息」去重（同一处被类型标注与字面量各查一遍会重复报）；③ 设计稿可见性阶梯与跨包导出矛盾 → 登记缺陷 14 并裁决 |
+| 非目标 | 中心化注册表 / 版本求解 / 依赖改名强校验（见 rfcs/0004 §8） |

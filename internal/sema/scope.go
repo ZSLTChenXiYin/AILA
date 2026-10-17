@@ -116,6 +116,7 @@ type Checker struct {
 
 	// 模块图上下文（多模块语义）
 	modName string
+	pkg     string // 当前模块所属包（跨包可见性检查用）
 	imports map[string]*Unit
 	units   map[string]*Unit
 

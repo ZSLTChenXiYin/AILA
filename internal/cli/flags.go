@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 
@@ -19,7 +20,14 @@ var (
 	buildEmitIR   bool
 	buildEmitJSON bool
 	buildOutName  string
+	buildDepsUpd  bool
+	buildVendor   bool
 )
+
+// jsonMarshalIndent 统一缩进 JSON（2 空格）。
+func jsonMarshalIndent(v any) ([]byte, error) {
+	return json.MarshalIndent(v, "", "  ")
+}
 
 // addBuildFlags 给命令挂上构建开关。
 func addBuildFlags(cmd *cobra.Command) {
@@ -30,4 +38,6 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&buildEmitIR, "emit-ir", false, "额外写出 `.ll` 文本")
 	cmd.Flags().BoolVar(&buildEmitJSON, "emit-json", false, "写出构建报告 `aila-build.json`")
 	cmd.Flags().StringVar(&buildOutName, "out", "", "输出文件名（默认 `app` + 平台后缀）")
+	cmd.Flags().BoolVar(&buildDepsUpd, "deps-update", false, "重新解析跨项目依赖并重写 aila.lock")
+	cmd.Flags().BoolVar(&buildVendor, "vendor", false, "把依赖复制到 vendor/（离线构建）")
 }

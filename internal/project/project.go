@@ -20,23 +20,31 @@ var reservedDirs = map[string]bool{
 	"target": true, "node_modules": true,
 }
 
-// Project 是一个已发现的工程。
+// Project 是一个已发现的工程（一个「包」）。
 type Project struct {
 	Root       string
+	// Prefix 是模块名根：根包是 `_`，依赖包是它的依赖名（`mylib`），标准库是 `std`。
+	Prefix     string
 	Modules    map[string]string // 模块名 -> 源文件绝对路径
 	ModuleList []string          // 发现顺序（确定性输出用）
 	Cpacks     map[string]string // cpack 名 -> 目录
 	StdlibRoot string
 }
 
-// Discover 扫描工程根目录，收集模块与 cpack。
+// Discover 扫描根包（模块名根 = `_`）。
 func Discover(root string, bag *diag.Bag) *Project {
+	return DiscoverPackage(root, "_", bag)
+}
+
+// DiscoverPackage 扫描一个包（模块名根用 prefix），收集模块与 cpack。
+func DiscoverPackage(root, prefix string, bag *diag.Bag) *Project {
 	abs, err := filepath.Abs(root)
 	if err == nil {
 		root = abs
 	}
 	p := &Project{
 		Root:       root,
+		Prefix:     prefix,
 		Modules:    map[string]string{},
 		Cpacks:     map[string]string{},
 		StdlibRoot: home.StdlibDir(),
@@ -110,9 +118,10 @@ func Discover(root string, bag *diag.Bag) *Project {
 					"把它移到 `"+stem+"/` 目录下，导入名变成 `_."+stem+"."+stem+"` 或改名")
 				continue
 			}
-			name := "_.main"
+			// 模块全名 = <包名根>.<子包...>.<模块>；包根入口模块是 `<根>.main`
+			name := prefix + ".main"
 			if len(parts) > 0 {
-				name = "_." + strings.Join(append(append([]string{}, parts...), stem), ".")
+				name = prefix + "." + strings.Join(append(append([]string{}, parts...), stem), ".")
 			}
 			if _, dup := p.Modules[name]; dup {
 				bag.Error("E7003", span, "模块名 `"+name+"` 重复", "这里", "")

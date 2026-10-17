@@ -16,6 +16,7 @@ build/**/*.ll
 /toolchain/
 /dist/
 /ci-work/
+/cache/
 
 # 编辑器 / 系统
 .vscode/

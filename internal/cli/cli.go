@@ -73,7 +73,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(
 		newVersionCmd(), newDoctorCmd(), newToolchainCmd(), newTargetCmd(),
 		newExplainCmd(), newNewCmd(), newCleanCmd(), newIRCmd(),
-		checkCmd, buildCmd, runCmd,
+		checkCmd, buildCmd, runCmd, newDepsCmd(),
 		newPendingCmd("bindgen", "生成 C 绑定"),
 		newParseCmd(),
 	)

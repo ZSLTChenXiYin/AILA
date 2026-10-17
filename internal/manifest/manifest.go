@@ -33,6 +33,17 @@ type Manifest struct {
 	CC       string
 	LLVM     string
 	Domains  map[string]Domain
+	// Dependencies 是跨项目依赖（docs/rfcs/0004）：名字 → 声明。
+	Dependencies map[string]Dependency
+}
+
+// Dependency 是一条 `[dependencies]` 声明。
+type Dependency struct {
+	Path    string `toml:"path"`
+	Git     string `toml:"git"`
+	Tag     string `toml:"tag"`
+	Rev     string `toml:"rev"`
+	Version string `toml:"version"`
 }
 
 // Domain 是一个物理域声明。
@@ -67,6 +78,7 @@ type rawManifest struct {
 		Size  string `toml:"size"`
 		Align int    `toml:"align"`
 	} `toml:"domains"`
+	Dependencies map[string]Dependency `toml:"dependencies"`
 }
 
 var nameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]*$`)
@@ -93,7 +105,7 @@ func Load(root string, bag *diag.Bag) *Manifest {
 		bag.Error("E7002", diag.Empty, "清单不是合法 TOML", err.Error(), "")
 		return nil
 	}
-	m := &Manifest{Path: path, Domains: map[string]Domain{}}
+	m := &Manifest{Path: path, Domains: map[string]Domain{}, Dependencies: map[string]Dependency{}}
 	m.Name = strings.TrimSpace(r.Package.Name)
 	m.Version = strings.TrimSpace(r.Package.Version)
 	m.Entry = strings.TrimSpace(r.Package.Entry)
@@ -157,6 +169,15 @@ func Load(root string, bag *diag.Bag) *Manifest {
 			bag.Error("E7008", diag.Empty, "域 `"+name+"` 的 align 必须是 2 的幂", "", "")
 		}
 		m.Domains[name] = Domain{Kind: kind, Size: spec.Size, Align: spec.Align}
+	}
+
+	for name, d := range r.Dependencies {
+		if !nameRe.MatchString(name) {
+			bag.Error("E7021", diag.Empty, "依赖名 `"+name+"` 不是合法标识符", "这里",
+				"依赖名会当成导入根：`import "+name+".子包.模块;`")
+			continue
+		}
+		m.Dependencies[name] = Dependency{Path: d.Path, Git: d.Git, Tag: d.Tag, Rev: d.Rev, Version: d.Version}
 	}
 
 	for _, key := range md.Undecoded() {

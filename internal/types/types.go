@@ -220,6 +220,8 @@ type Field struct {
 type StructInfo struct {
 	Name   string
 	Module string
+	// IsPublic 表示壳里写了 `public`（跨包可见，designs/0001 §2.2）
+	IsPublic bool
 	Fields []Field
 	Packed bool
 	Align  int
@@ -242,6 +244,8 @@ type VariantInfo struct {
 type EnumInfo struct {
 	Name    string
 	Module  string
+	// IsPublic 表示壳里写了 `public`（跨包可见）
+	IsPublic bool
 	Base    Type
 	Payload bool
 	Variants []VariantInfo

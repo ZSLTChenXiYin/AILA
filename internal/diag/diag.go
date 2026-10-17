@@ -138,6 +138,15 @@ func (b *Bag) emit(severity, code string, span Span, message, label, help string
 	if _, ok := Find(code); !ok {
 		panic("未登记的错误码 " + code + "：请先写入 share/aila/data/diag_codes.json")
 	}
+	// 去重：同一个错误码 + 同一行 + 同一句消息只登记一次
+	// （同一个构造可能被「类型标注」与「字面量」两条路径各查一遍，不该报两遍）
+	for i := range b.Items {
+		old := b.Items[i]
+		if old.Code == code && old.Message == message &&
+			old.Span.File == span.File && old.Span.Line == span.Line {
+			return &b.Items[i]
+		}
+	}
 	d := Diagnostic{Code: code, Severity: severity, Message: message, Help: help, Span: span}
 	if span.Valid() {
 		d.Labels = []Label{{Span: span, Message: label}}

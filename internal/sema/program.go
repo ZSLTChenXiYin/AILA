@@ -9,7 +9,9 @@ import (
 
 // Unit 是一个已装载模块的语义产物。
 type Unit struct {
-	Name  string
+	Name string
+	// Package 是该模块所属的包名（`_` / 依赖名 / `std`）。
+	Package string
 	Mod   *ast.Module
 	Table *Table
 	Sigs  *Sigs
@@ -24,6 +26,8 @@ type Program struct {
 	Entry string
 	Units map[string]*Unit
 	Order []string
+	// Deps 是「包名 → 该包声明的依赖包名」（docs/rfcs/0004）：导入根必须是其中之一。
+	Deps map[string][]string
 }
 
 // Unit 返回模块单元。
@@ -53,7 +57,13 @@ func (u *Unit) PublicType(name string) (*Table, string, bool) {
 // BuildProgram 是 Go 侧的多模块语义入口：
 // 声明类型 → 链接导入 → 解析类型体 → 构建签名 → 逐模块类型检查。
 func BuildProgram(mods map[string]*ast.Module, order []string, entry string, bag *diag.Bag) *Program {
-	p := &Program{Entry: entry, Units: map[string]*Unit{}, Order: order}
+	return BuildProgramWithDeps(mods, order, entry, nil, bag)
+}
+
+// BuildProgramWithDeps 与 BuildProgram 相同，但带上跨项目依赖图（包名 → 依赖名）。
+func BuildProgramWithDeps(mods map[string]*ast.Module, order []string, entry string,
+	deps map[string][]string, bag *diag.Bag) *Program {
+	p := &Program{Entry: entry, Units: map[string]*Unit{}, Order: order, Deps: deps}
 	for _, name := range order {
 		mod := mods[name]
 		if mod == nil {
@@ -61,6 +71,7 @@ func BuildProgram(mods map[string]*ast.Module, order []string, entry string, bag
 		}
 		p.Units[name] = &Unit{
 			Name:    name,
+			Package: PackageOf(name),
 			Mod:     mod,
 			Table:   DeclareTypes(mod, bag),
 			Imports: map[string]*Unit{},
@@ -73,13 +84,11 @@ func BuildProgram(mods map[string]*ast.Module, order []string, entry string, bag
 			continue
 		}
 		for _, imp := range u.Mod.Imports {
-			target := importTarget(imp)
-			if target == "" {
-				// 非 `_` / `std` 根 = 外部包（designs/0001 §2.3 规则 1 为跨项目依赖预留）：
-				// 依赖解析尚未实现，必须显式报错，绝不静默忽略（否则只会看到「未定义的名字」）
+			target, ok := p.resolveImport(u.Package, imp)
+			if !ok {
 				bag.Error("E7010", imp.Span,
-					"跨项目依赖 `"+imp.Root+"` 尚未支持（M1 只有 `_` 与 `std` 两个导入根）",
-					"依赖根", "v0 暂不支持外部包；把依赖的模块放进本项目，或等依赖解析批次")
+					"跨项目依赖 `"+imp.Root+"` 未在 `[dependencies]` 里声明", "依赖根",
+					"在 `aila.toml` 写 `[dependencies] "+imp.Root+" = { path = \"...\" }`（或 git 形式）")
 				continue
 			}
 			binding := importBinding(imp)
@@ -123,26 +132,35 @@ func BuildProgram(mods map[string]*ast.Module, order []string, entry string, bag
 		}
 		u.Check = NewChecker(u.Mod, u.Table, u.Sigs, bag)
 		u.Check.SetModuleContext(u.Name, u.Imports, p.Units)
+		u.Check.pkg = u.Package
 		u.Check.Run()
 	}
 	return p
 }
 
-// importTarget 计算导入语句指向的模块名。
-func importTarget(imp *ast.Import) string {
+// resolveImport 把导入语句解析成模块全名。
+//
+// 规则（designs/0001 §2.3 规则 1 + docs/rfcs/0004）：`_` = 当前包自身的根
+// （依赖包里的 `_` 指该依赖自己）、`std` = 标准库、其余根必须是该包声明的依赖。
+func (p *Program) resolveImport(pkg string, imp *ast.Import) (string, bool) {
+	join := func(root string) string {
+		if len(imp.Path) == 0 {
+			return root
+		}
+		return root + "." + strings.Join(imp.Path, ".")
+	}
 	switch imp.Root {
 	case "_":
-		if len(imp.Path) == 0 {
-			return "_"
-		}
-		return "_." + strings.Join(imp.Path, ".")
+		return join(pkg), true
 	case "std":
-		if len(imp.Path) == 0 {
-			return "std"
-		}
-		return "std." + strings.Join(imp.Path, ".")
+		return join("std"), true
 	}
-	return ""
+	for _, dep := range p.Deps[pkg] {
+		if dep == imp.Root {
+			return join(dep), true
+		}
+	}
+	return "", false
 }
 
 // importBinding 计算导入后的绑定名（默认取路径末段）。

@@ -136,3 +136,76 @@ func toolchainMissing(bag *diag.Bag) (string, bool) {
 	}
 	return "", false
 }
+// TestCrossProjectDependency 是跨项目依赖的端到端判据（docs/rfcs/0004）：
+// 两个真实项目，根包 import 依赖包的 public 符号，编译并运行出预期输出；
+// 非 public 符号必须被 E7020 拒绝。
+func TestCrossProjectDependency(t *testing.T) {
+	root := t.TempDir()
+	libDir := filepath.Join(root, "mylib")
+	appDir := filepath.Join(root, "app")
+	mustWrite := func(path, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o666); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustWrite(filepath.Join(libDir, "aila.toml"),
+		"[package]\nname = \"mylib\"\nversion = \"0.1.0\"\nentry = \"_.main\"\n\n[target]\nboard = \"host\"\n")
+	mustWrite(filepath.Join(libDir, "main.aila"), "func main() {}\n")
+	mustWrite(filepath.Join(libDir, "math", "ops.aila"),
+		"public func twice(v: I32) -> I32 {\n    return add(v, v);\n}\n\n"+
+			"func add(a: I32, b: I32) -> I32 {\n    return a + b;\n}\n")
+	mustWrite(filepath.Join(appDir, "aila.toml"),
+		"[package]\nname = \"app\"\nversion = \"0.1.0\"\nentry = \"_.main\"\n\n[target]\nboard = \"host\"\n\n"+
+			"[dependencies]\nmylib = { path = \"../mylib\" }\n")
+	mustWrite(filepath.Join(appDir, "main.aila"),
+		"import std.io;\nimport mylib.math.ops as ops;\n\n"+
+			"func main() {\n    io.print_i32_nl(ops.twice(21));\n}\n")
+
+	// ① 正常路径：构建成功、运行输出 42
+	res := Build(appDir, Options{})
+	if !res.OK {
+		if r, missing := toolchainMissing(res.Diags); missing {
+			t.Skip(r)
+		}
+		t.Fatalf("跨项目构建失败：\n%s", res.Diags.Render(false))
+	}
+	out, err := exec.Command(res.Exe).Output()
+	if err != nil {
+		t.Fatalf("运行失败：%v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "42" {
+		t.Fatalf("输出 %q，期望 42", got)
+	}
+
+	// ② 非 public：必须报 E7020
+	mustWrite(filepath.Join(appDir, "main.aila"),
+		"import mylib.math.ops as ops;\n\nfunc main() {\n    _ = ops.add(1, 2);\n}\n")
+	res2 := Check(appDir, Options{})
+	found := false
+	for _, d := range res2.Diags.Items {
+		if d.Code == "E7020" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("非 public 跨包引用应报 E7020：\n%s", res2.Diags.Render(false))
+	}
+
+	// ③ 未声明的依赖根：E7010
+	mustWrite(filepath.Join(appDir, "main.aila"),
+		"import nomath.calc as calc;\n\nfunc main() {\n    _ = calc.f();\n}\n")
+	res3 := Check(appDir, Options{})
+	found = false
+	for _, d := range res3.Diags.Items {
+		if d.Code == "E7010" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("未声明的依赖根应报 E7010：\n%s", res3.Diags.Render(false))
+	}
+}

@@ -38,7 +38,13 @@ func (c *Checker) findMethod(owner types.Named, name string) *FuncSig {
 	}
 	if ownerMod != "" && ownerMod != c.modName {
 		if u, ok := c.units[ownerMod]; ok && u.Sigs != nil {
-			return u.Sigs.Methods[key]
+			sig := u.Sigs.Methods[key]
+			if sig != nil && u.Package != c.pkg && !sig.IsPublic {
+				c.err("E7020", diag.Empty, "方法 `"+name+"` 未导出（缺 `public`）",
+					"跨包引用只认 `public` 声明",
+					"在依赖包里给该方法的 `func` 声明加 `public`")
+			}
+			return sig
 		}
 	}
 	return nil
@@ -642,6 +648,40 @@ func (c *Checker) checkStructLit(x *ast.StructLit, expected types.Type) types.Ty
 		c.err("E3001", x.Span, "未知类型 `"+names[0]+"`", "构造必须类型前缀", "")
 		return types.I32
 	}
+	// 跨包构造：`绑定.类型 { ... }` / `绑定.类型.变体 { ... }`（docs/rfcs/0004）
+	if len(names) >= 2 {
+		if dep, isDep := c.imports[names[0]]; isDep && dep != nil {
+			if info, ok := dep.Table.Types[names[1]]; ok {
+				switch it := info.(type) {
+				case *types.StructInfo:
+					if len(names) > 2 {
+						c.err("E3001", x.Span, "struct 没有变体 `"+names[2]+"`", "这里", "")
+						return types.Named{Info: it}
+					}
+					if dep.Package != c.pkg && !it.IsPublic {
+						c.err("E7020", x.Span, "类型 `"+names[0]+"."+names[1]+"` 未导出（缺 `public`）",
+							"跨包引用只认 `public` 声明", "在依赖包里给该 struct 加 `public`")
+					}
+					return c.checkStructFields(x, types.Named{Info: it}, it, nil)
+				case *types.EnumInfo:
+					if len(names) != 3 {
+						c.err("E3201", x.Span, "enum 构造必须写 `类型.变体 { ... }`", "这里", "")
+						return types.Named{Info: it}
+					}
+					v, ok2 := it.Variant(names[2])
+					if !ok2 {
+						c.err("E3001", x.Span, "enum `"+it.Name+"` 没有变体 `"+names[2]+"`", "这里", "")
+						return types.Named{Info: it}
+					}
+					if dep.Package != c.pkg && !it.IsPublic {
+						c.err("E7020", x.Span, "枚举 `"+it.Name+"` 未导出（缺 `public`）",
+							"跨包引用只认 `public` 声明", "在依赖包里给该 enum 加 `public`")
+					}
+					return c.checkEnumVariant(x, types.Named{Info: it}, it, v)
+				}
+			}
+		}
+	}
 	if len(names) == 2 {
 		t, ok := c.table.Lookup(names[0])
 		if !ok {
@@ -845,4 +885,78 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b)
+}
+// checkStructFields 校验 `类型 { 字段: 值, ... }` 并对字段表达式做类型检查。
+//
+// 供「本包 struct」与「跨包 struct」两条路径共用（字段一律写全，铁律 10）。
+func (c *Checker) checkStructFields(x *ast.StructLit, named types.Named, info *types.StructInfo,
+	_ []types.Field) types.Type {
+	c.StructLits[x] = info
+	c.noteLit(x, &LitRef{Struct: info})
+	seen := map[string]bool{}
+	for _, pair := range x.FieldPairs {
+		fname, _ := pair.A.(string)
+		seen[fname] = true
+		var ftype types.Type
+		for _, f := range info.Fields {
+			if f.Name == fname {
+				ftype = f.Type
+			}
+		}
+		if ftype == nil {
+			c.err("E3001", x.Span, "结构体 `"+info.Name+"` 没有字段 `"+fname+"`", "这里", "")
+			continue
+		}
+		fe, ok := pair.B.(ast.Node)
+		if !ok {
+			continue
+		}
+		ft := c.checkExpr(fe, ftype)
+		c.unify(ftype, ft, ast.SpanOf(fe), "字段 `"+fname+"`")
+	}
+	for _, f := range info.Fields {
+		if !seen[f.Name] {
+			c.err("E3201", x.Span, "构造 `"+info.Name+"` 缺少字段 `"+f.Name+"`",
+				"构造一律写全（铁律 10）", "")
+		}
+	}
+	return named
+}
+
+// checkEnumVariant 校验 `枚举.变体 { 字段: 值, ... }`。
+func (c *Checker) checkEnumVariant(x *ast.StructLit, named types.Named, en *types.EnumInfo,
+	v types.VariantInfo) types.Type {
+	c.VariantLits[x] = variantRef{enum: en, variant: v}
+	c.noteLit(x, &LitRef{Enum: en, Variant: v, HasVar: true})
+	if v.Payload == nil {
+		if len(x.FieldPairs) > 0 {
+			c.err("E3201", x.Span, "该变体没有载荷", "这里", "")
+		}
+		return named
+	}
+	seen := map[string]bool{}
+	for _, pair := range x.FieldPairs {
+		fname, _ := pair.A.(string)
+		seen[fname] = true
+		var ftype types.Type
+		for _, f := range v.Payload {
+			if f.Name == fname {
+				ftype = f.Type
+			}
+		}
+		if ftype == nil {
+			c.err("E3001", x.Span, "变体没有字段 `"+fname+"`", "这里", "")
+			continue
+		}
+		if fe, ok := pair.B.(ast.Node); ok {
+			ft := c.checkExpr(fe, ftype)
+			c.unify(ftype, ft, ast.SpanOf(fe), "字段 `"+fname+"`")
+		}
+	}
+	for _, f := range v.Payload {
+		if !seen[f.Name] {
+			c.err("E3201", x.Span, "构造缺少字段 `"+f.Name+"`", "构造一律写全（铁律 10）", "")
+		}
+	}
+	return named
 }
