@@ -318,7 +318,7 @@ func runBuiltin(cpack, cpackDir string, target Target, bag *diag.Bag) *Result {
 			res.Notes = append(res.Notes, "包含守卫宏跳过："+k)
 			continue
 		}
-		constLines = append(constLines, "const "+ValueName(k)+": "+lit[0]+" = "+lit[1]+";")
+		constLines = append(constLines, "public const "+ValueName(k)+": "+lit[0]+" = "+lit[1]+";")
 		res.Notes = append(res.Notes, "宏定型："+k+" = "+lit[1]+" ("+lit[0]+")")
 	}
 	combined := strings.Join(chunks, "\n") + "\n"
@@ -610,7 +610,8 @@ func renderItem(it *item, declared map[string]string, target Target, bag *diag.B
 			if !strings.HasPrefix(retMapped, "（") {
 				retPart = " -> " + retMapped
 			}
-			return []string{"#[c] func " + ValueName(fname) + "(" + strings.Join(args, ", ") + ")" + retPart + ";"}
+			// 生成的绑定就是 cpack 的对外接口：一律 public（包外可见）
+			return []string{"#[c] public func " + ValueName(fname) + "(" + strings.Join(args, ", ") + ")" + retPart + ";"}
 		}
 		if len(texts) >= 2 && it.parts[len(it.parts)-1].Kind == "id" {
 			vname := it.parts[len(it.parts)-1].Text
@@ -624,7 +625,7 @@ func renderItem(it *item, declared map[string]string, target Target, bag *diag.B
 					kw = "let"
 				}
 			}
-			return []string{"#[c] " + kw + " " + ValueName(vname) + ": " + mapped + ";"}
+			return []string{"#[c] public " + kw + " " + ValueName(vname) + ": " + mapped + ";"}
 		}
 	}
 	return nil
@@ -951,7 +952,7 @@ func collectMacroConsts(headers []string) (constLines, headerNotes, macroNotes [
 			macroNotes = append(macroNotes, "包含守卫宏跳过："+k)
 			continue
 		}
-		constLines = append(constLines, "const "+ValueName(k)+": "+lit[0]+" = "+lit[1]+";")
+		constLines = append(constLines, "public const "+ValueName(k)+": "+lit[0]+" = "+lit[1]+";")
 		macroNotes = append(macroNotes, "宏定型："+k+" = "+lit[1]+" ("+lit[0]+")")
 	}
 	return constLines, headerNotes, macroNotes

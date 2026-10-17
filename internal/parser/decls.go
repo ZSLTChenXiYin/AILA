@@ -37,7 +37,7 @@ func (p *Parser) parseEffects() []*ast.Effect {
 	return effects
 }
 
-func (p *Parser) parseFunc(attrs []*ast.Attr) ast.Node {
+func (p *Parser) parseFunc(attrs []*ast.Attr, allowBodyless bool) ast.Node {
 	start := p.spanOf(p.cur())
 	_, isCoro := p.eatKw("coroutine")
 	_, isThread := p.eatKw("thread")
@@ -81,11 +81,11 @@ func (p *Parser) parseFunc(attrs []*ast.Attr) ast.Node {
 	isExtern := hasCAttr(attrs)
 	if p.atPunct(";") {
 		p.adv()
-		if !isExtern {
+		if !isExtern && !allowBodyless {
 			p.errSpan(p.spanTo(start, p.spanOf(p.cur())),
 				"E2001", "函数 `"+nameTok.Text+"` 没有函数体",
-				"只有 `#[c]` 外部声明可以省略函数体",
-				"补上 `{ ... }`，或在声明前加 `#[c]`")
+				"只有 `#[c]` 外部声明或壳里的前向声明可以省略函数体",
+				"补上 `{ ... }`；要在包里对外导出，就在 `module` 块外写 `public func ...;` 并在块内实现")
 		}
 	} else {
 		body = p.parseBlock()

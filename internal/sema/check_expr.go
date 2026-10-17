@@ -255,15 +255,15 @@ func (c *Checker) resolvePath(p *ast.Path) (pathKind, any) {
 		if len(rest) == 1 {
 			name := rest[0]
 			if sig, ok := dep.Sigs.Funcs[name]; ok {
-				c.requireExport(p, dep, sig.Name, sig.IsPublic, "函数")
+				c.requireVisible(p, sig.Name, "函数", dep.Name, sig.IsPublic, sig.InShell)
 				return pkFunc, sig
 			}
 			if ci, ok := dep.Sigs.Consts[name]; ok {
-				c.requireExport(p, dep, ci.Name, ci.IsPublic, "常量")
+				c.requireVisible(p, ci.Name, "常量", dep.Name, ci.IsPublic, ci.InShell)
 				return pkConst, ci
 			}
 			if gi, ok := dep.Sigs.Globals[name]; ok {
-				c.requireExport(p, dep, gi.Name, gi.IsPublic, "模块级绑定")
+				c.requireVisible(p, gi.Name, "模块级绑定", dep.Name, gi.IsPublic, gi.InShell)
 				return pkGlobal, gi
 			}
 			if _, ok := dep.Table.Types[name]; ok {
@@ -275,15 +275,12 @@ func (c *Checker) resolvePath(p *ast.Path) (pathKind, any) {
 				if named, ok2 := t.(types.Named); ok2 {
 					if en, ok3 := named.Info.(*types.EnumInfo); ok3 {
 						if v, ok4 := en.Variant(rest[1]); ok4 {
-							if dep.Package != c.pkg && !en.IsPublic {
-								c.err("E7020", ast.SpanOf(p), "枚举 `"+en.Name+"` 未导出（缺 `public`）",
-									"跨包引用只认 `public` 声明", "在依赖包里给该 enum 加 `public`")
-							}
+							c.requireVisible(p, en.Name, "枚举", dep.Name, en.IsPublic, en.InShell)
 							return pkVariant, variantRef{enum: en, variant: v}
 						}
 					}
 					if sig, ok4 := dep.Sigs.Methods[rest[0]+"."+rest[1]]; ok4 {
-						c.requireExport(p, dep, rest[1], sig.IsPublic, "方法")
+						c.requireVisible(p, rest[1], "方法", dep.Name, sig.IsPublic, sig.InShell)
 						return pkFunc, sig
 					}
 				}
@@ -407,12 +404,3 @@ func (c *Checker) checkPath(p *ast.Path, expected types.Type) types.Type {
 	return types.I32
 }
 
-// requireExport 校验跨包引用的可见性：跨包只认 `public`（docs/rfcs/0002 缺陷 14 的裁决）。
-func (c *Checker) requireExport(p *ast.Path, dep *Unit, name string, isPublic bool, kind string) {
-	if dep.Package == c.pkg || isPublic {
-		return
-	}
-	c.err("E7020", ast.SpanOf(p), "`"+name+"` 是"+kind+"但未导出（缺 `public`）",
-		"跨包引用只认 `public` 声明",
-		"在依赖包里给它加 `public`，或把它留在本包内部")
-}

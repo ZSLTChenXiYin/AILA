@@ -178,22 +178,24 @@ Python 侧写 `.ll` 用的是文本模式默认换行，Windows 上变成 CRLF�
 
 **实现落点**：Python `codegen.Lowerer.display_path()`（`file_const` 用它）；Go `codegen.DisplayPath()`（`New` 内部调用）。`tests/corpus/*.ir` 与 `tests/corpus/examples/*.ll` 的 `@.str` 行随之固定为 `main.aila` / `std/io.aila`。
 
-## 缺陷 14：`public` 的可见性阶梯让 AILA 函数永远无法跨包导出（§2.2 vs §2.3）
+## 缺陷 14：跨包导出没有落地通道（壳禁止有体函数 vs 块内 `public` 只到子包内）
 
-§2.2 的表格写着：块内（`module {}` / `module hot {}`）`public` → **包内**；壳（块外）`public` → **包外**。
-而 §2.1 又规定壳内**禁止有体 `func`**（方法实现必须落块）。两条一合：
-**有实现的 AILA 函数最多只能到「包内」**，永远够不到「包外」。可 §2.3 规则 1 又明确「非 `_` 根 = 外部包」——
-跨项目依赖要能用，就必须有跨包导出的手段。三条规则不能同时成立。
+**现象**：按 §2.2 的阶梯，块内 `public` 只到「子包内」，而 §2.1 规定壳里禁止**有体** `func`——
+于是「对外导出 AILA 实现」在语法上无路可走：`stdlib/io.aila` 的 `print_i32` 这种实现函数没法给用户代码用。
+跨项目依赖一接通就撞上了这件事。
 
-实现侧更早就撞上了这件事：`std.io` 的 `print_i32` 是 AILA 函数，用户代码在别的包里调它，
-按字面表格永远不合法。
+**裁决（按设计者澄清）**：阶梯就是三级——**文件内 ⊂ 子包内 ⊂ 包外**，`public` 恒为「提一级」：
 
-**裁决**：`public` 在**任意位置**都构成「提升一级」；对**跨包引用**而言，`public` = 可见（不再区分壳/块）。
-块内 `public` 的原有含义（分派表面 = ABI 版本检查范围）保留——那是热替换维度的语义，与可见性维度正交。
+| 声明位置 | 默认 | `public` |
+|---|---|---|
+| 块内（`module { }` 里） | 文件内 | 子包内（同一目录） |
+| 壳内（`module { }` 外面） | 子包内 | **包外**（跨子包 / 跨项目） |
 
-**实现落点**：Go 侧 `sema` 的跨包可见性检查（函数 / 方法 / 常量 / 模块级绑定 / 类型 / 枚举变体），
-未导出 = `E7020`；`stdlib/io.aila` 与 `stdlib/math.aila` 的对外函数补 `public`。
-判据：`internal/build/TestCrossProjectDependency`、`internal/deps/*`。
+轻量形态（文件里没有 `module` 块）的顶层声明字面上「写在 module 外面」，按壳语义取等级。
+**跨包导出的写法**：壳里写前向声明（无体、非 `#[c]`），实现在块内，签名必须一致
+（声明没实现 = `E7031`，签名不一致 = `E3201`）——接口与可见性在壳、可热替换的实现在块，两不冲突。
 
-**对设计稿的建议**：§2.2 表格第二列改成「`public` → 跨包可见」，并补一句「块内 `public` 同时是分派表面」；
-§2.1 壳的禁止列表保留（壳仍禁止有体函数，那条是版本悖论约束，与可见性无关）。
+**实现落点**：`internal/parser`（壳内允许无体 `func` + `Attrs.InShell`）、`internal/sema/vis.go`
+（三级判定 + `E7020`）、`internal/sema/link.go`（前向声明配对 + `E7031`）、`bindgen` 生成的绑定一律
+`#[c] public`（cpack 的接口天然包外可见）、`stdlib` 对外函数 `public`。
+判据：`internal/sema/vis_test.go`（六个阶梯用例 + 前向声明三例）、`internal/build/TestCrossProjectDependency`。

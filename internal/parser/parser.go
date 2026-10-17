@@ -210,11 +210,34 @@ func (p *Parser) parseFile() *ast.Module {
 		}
 	}
 	if !seenBlock {
+		// 轻量形态：没有显式 `module` 块 → 顶层声明字面上「写在 module 外面」，
+		// 按壳语义给可见性（默认子包内、`public` 包外）。
 		mod.IsLightweight = true
 		mod.Block = append(mod.Shell, mod.Block...)
 		mod.Shell = nil
+		for _, d := range mod.Block {
+			markInShell(d)
+		}
 	}
 	return mod
+}
+
+// markInShell 把一条顶层声明标成「壳里声明的」。
+func markInShell(d ast.Node) {
+	switch x := d.(type) {
+	case *ast.StructDecl:
+		x.InShell = true
+	case *ast.EnumDecl:
+		x.InShell = true
+	case *ast.TypeAlias:
+		x.InShell = true
+	case *ast.FuncDecl:
+		x.InShell = true
+	case *ast.LetDecl:
+		x.InShell = true
+	case *ast.ViewDecl:
+		x.InShell = true
+	}
 }
 
 // hasModuleBlockLater 扫描后续 token，判断是否还有 `module` 块（决定当前声明属壳还是块）。
@@ -336,7 +359,7 @@ func (p *Parser) parseDecl(shell bool, attrs []*ast.Attr) ast.Node {
 	case tok.Kind == lexer.Kind("type"):
 		decl = p.parseTypeAlias()
 	case tok.Kind == lexer.Kind("func"), tok.Kind == lexer.Kind("coroutine"), tok.Kind == lexer.Kind("thread"):
-		decl = p.parseFunc(attrs)
+		decl = p.parseFunc(attrs, shell)
 	case tok.Kind == lexer.Kind("let"), tok.Kind == lexer.Kind("var"),
 		tok.Kind == lexer.Kind("const"), tok.Kind == lexer.Kind("state"):
 		decl = p.parseBinding(true, hasCAttr(attrs))
@@ -354,7 +377,7 @@ func (p *Parser) parseDecl(shell bool, attrs []*ast.Attr) ast.Node {
 		}
 		return nil
 	}
-	p.applyAttrs(decl, attrs, isPublic)
+	p.applyAttrs(decl, attrs, isPublic, shell)
 	if shell {
 		switch d := decl.(type) {
 		case *ast.LetDecl:
@@ -377,10 +400,11 @@ func (p *Parser) parseDecl(shell bool, attrs []*ast.Attr) ast.Node {
 	return decl
 }
 
-func (p *Parser) applyAttrs(decl ast.Node, attrs []*ast.Attr, isPublic bool) {
+func (p *Parser) applyAttrs(decl ast.Node, attrs []*ast.Attr, isPublic, inShell bool) {
 	set := func(a *ast.Attrs) {
 		a.Attrs = attrs
 		a.IsPublic = isPublic
+		a.InShell = inShell
 	}
 	switch d := decl.(type) {
 	case *ast.StructDecl:

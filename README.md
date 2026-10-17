@@ -132,11 +132,21 @@ func main() {
 }
 ```
 
+要**导出**函数给别的子包/项目用，写「壳内前向声明 + 块内实现」（壳内 `public` = 包外可见）：
+
+```aila
+public func twice(v: I32) -> I32;        // 壳：接口 + 可见性
+
+module {
+    func twice(v: I32) -> I32 { return v + v; }   // 块：实现
+}
+```
+
 规则速查：
 
 | 项 | 说明 |
 |---|---|
-| 跨包可见性 | 只认 `public` 声明（否则 `E7020`）；同包内跨模块不需要 `public` |
+| 可见性 | 三级阶梯：文件内 ⊂ 子包内（块内 `public` / 壳内默认）⊂ 包外（壳内 `public`）；违反 = `E7020` |
 | 锁文件 | `aila.lock` 记来源 / 版本 / 内容哈希；依赖变了不 `aila deps --update` 就报 `E7023`（构建可复现优先） |
 | 离线构建 | `aila deps --vendor` 把依赖复制进 `vendor/`，此后无网络、原路径断开也能编 |
 | 查看依赖 | `aila deps`（人读）/ `aila deps --json`（机器可读） |

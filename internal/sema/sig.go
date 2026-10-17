@@ -25,6 +25,11 @@ type FuncSig struct {
 	IsThread    bool
 	IsExtern    bool
 	IsPublic    bool
+	InShell     bool
+	// Impl 是壳里前向声明对应的块内实现（没有前向声明时为空）。
+	// Decl 是签名来自的那条声明（壳内前向声明时就是它）。
+	Decl        *ast.FuncDecl
+	Impl        *ast.FuncDecl
 	Variadic    bool
 	Span        diag.Span
 }
@@ -59,6 +64,7 @@ type ConstInfo struct {
 	Type     types.Type
 	Value    any
 	IsPublic bool
+	InShell  bool
 }
 
 // GlobalInfo 是模块级绑定（var / let / state）。
@@ -68,6 +74,7 @@ type GlobalInfo struct {
 	Mutable  bool
 	Kind     string // var | let | state
 	IsPublic bool
+	InShell  bool
 }
 
 // Sigs 是一个模块的签名与模块级值表。
@@ -94,12 +101,31 @@ func BuildSigs(mod *ast.Module, table *Table, bag *diag.Bag) *Sigs {
 	for _, d := range mod.AllDecls() {
 		switch x := d.(type) {
 		case *ast.FuncDecl:
-			sig := buildFuncSig(x, table, bag, mod.Name)
+			// 壳里的前向声明（`public func f(...) -> T;`）与块内实现配对：
+			// 签名只登记一次，可见性取声明、函数体取实现（designs/0001 §2.1 壳/块分工）。
 			if x.OwnerType == "" {
-				if _, dup := s.Funcs[x.Name]; dup {
-					bag.Error("E3001", x.Span, "函数 `"+x.Name+"` 重复定义", "这里", "")
+				if prev, ok := s.Funcs[x.Name]; ok {
+					if prev.Decl == nil || x.Body == nil || prev.Impl != nil {
+						bag.Error("E3001", x.Span, "函数 `"+x.Name+"` 重复定义", "这里", "")
+						continue
+					}
+					prev.Impl = x
 					continue
 				}
+			} else {
+				key := x.OwnerType + "." + x.Name
+				if prev, ok := s.Methods[key]; ok {
+					if prev.Decl == nil || x.Body == nil || prev.Impl != nil {
+						bag.Error("E3001", x.Span, "方法 `"+key+"` 重复定义", "这里", "")
+						continue
+					}
+					prev.Impl = x
+					continue
+				}
+			}
+			sig := buildFuncSig(x, table, bag, mod.Name)
+			sig.Decl = x
+			if x.OwnerType == "" {
 				s.Funcs[x.Name] = sig
 			} else {
 				if _, ok := table.Types[x.OwnerType]; !ok {
@@ -127,7 +153,7 @@ func BuildSigs(mod *ast.Module, table *Table, bag *diag.Bag) *Sigs {
 				if !hasVal {
 					bag.Error("E3201", x.Span, "`const` 初始化器必须是编译期常量", "这里", "")
 				}
-				s.Consts[x.Name] = &ConstInfo{Name: x.Name, Type: t, Value: v, IsPublic: x.IsPublic}
+				s.Consts[x.Name] = &ConstInfo{Name: x.Name, Type: t, Value: v, IsPublic: x.IsPublic, InShell: x.InShell}
 		s.ConstOrder = append(s.ConstOrder, x.Name)
 				continue
 			}
@@ -139,7 +165,7 @@ func BuildSigs(mod *ast.Module, table *Table, bag *diag.Bag) *Sigs {
 			}
 			s.Globals[x.Name] = &GlobalInfo{Name: x.Name, Type: t,
 				// state 与 var 逐条同语法（designs/0001 §4.2 规则 11），因此同样可写
-				Mutable: x.KindV != "const", Kind: x.KindV, IsPublic: x.IsPublic}
+				Mutable: x.KindV != "const", Kind: x.KindV, IsPublic: x.IsPublic, InShell: x.InShell}
 		}
 	}
 	return s
@@ -150,7 +176,7 @@ func buildFuncSig(x *ast.FuncDecl, table *Table, bag *diag.Bag, module string) *
 		Module: module,
 		Name: x.Name, Owner: x.OwnerType,
 		IsCoroutine: x.IsCoroutine, IsThread: x.IsThread, IsExtern: x.IsExtern,
-		IsPublic: x.IsPublic, Variadic: x.Variadic, Span: x.Span,
+		IsPublic: x.IsPublic, InShell: x.InShell, Variadic: x.Variadic, Span: x.Span,
 	}
 	for _, p := range x.Params {
 		if p.IsSelf {

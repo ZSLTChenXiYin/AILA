@@ -222,6 +222,7 @@ type StructInfo struct {
 	Module string
 	// IsPublic 表示壳里写了 `public`（跨包可见，designs/0001 §2.2）
 	IsPublic bool
+	InShell  bool
 	Fields []Field
 	Packed bool
 	Align  int
@@ -246,6 +247,7 @@ type EnumInfo struct {
 	Module  string
 	// IsPublic 表示壳里写了 `public`（跨包可见）
 	IsPublic bool
+	InShell  bool
 	Base    Type
 	Payload bool
 	Variants []VariantInfo

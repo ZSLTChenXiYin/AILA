@@ -137,6 +137,12 @@ func (n *Effect) Fields() []F  { return []F{N("kind", n.KindV), N("names", n.Nam
 type Attrs struct {
 	Attrs    []*Attr
 	IsPublic bool
+	// InShell 表示该声明写在 `module { }` 块**外面**（壳）。
+	//
+	// 可见性阶梯（designs/0001 §2.2）：块内默认文件内、`public` → 子包内；
+	// 壳内默认子包内、`public` → 包外。轻量形态（文件无块）顶层声明按壳语义，
+	// 因为它们是字面意义上的「写在 module 外面」。
+	InShell bool
 }
 
 // StructDecl 是 struct 声明。

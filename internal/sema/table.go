@@ -17,9 +17,11 @@ type Table struct {
 	Aliases map[string]types.Type
 	// Imports 是「导入绑定名 -> 被导入模块的类型表」：跨模块类型名的解析入口。
 	Imports map[string]*Table
-	// Pkg 是本表所属包名（`_` / 依赖名 / `std`），跨包可见性检查要用。
+	// Pkg 是本表所属包名（`_` / 依赖名 / `std`），可见性检查要用。
 	Pkg string
-	order   []string // 声明顺序（别名解析要用）
+	// Module 是本表所属模块全名（子包由它推出）。
+	Module string
+	order  []string // 声明顺序（别名解析要用）
 }
 
 // BuildTable 收集类型声明并解析其体（结构体字段 / 枚举变体 / 别名目标）。
@@ -34,7 +36,7 @@ func BuildTable(mod *ast.Module, bag *diag.Bag) *Table {
 // DeclareTypes 只登记类型名字（跨模块链接需要「先声明、后解析」两段式）。
 func DeclareTypes(mod *ast.Module, bag *diag.Bag) *Table {
 	t := &Table{Types: map[string]types.Info{}, Aliases: map[string]types.Type{},
-		Imports: map[string]*Table{}, Pkg: PackageOf(mod.Name)}
+		Imports: map[string]*Table{}, Pkg: PackageOf(mod.Name), Module: mod.Name}
 	for _, d := range mod.AllDecls() {
 		switch x := d.(type) {
 		case *ast.StructDecl:
@@ -42,7 +44,7 @@ func DeclareTypes(mod *ast.Module, bag *diag.Bag) *Table {
 				bag.Error("E3001", x.Span, "类型 `"+x.Name+"` 重复定义", "这里", "")
 				continue
 			}
-			info := &types.StructInfo{Name: x.Name, Module: mod.Name, IsPublic: x.Attrs.IsPublic,
+			info := &types.StructInfo{Name: x.Name, Module: mod.Name, IsPublic: x.Attrs.IsPublic, InShell: x.Attrs.InShell,
 				Packed: hasAttr(x.Attrs.Attrs, "packed")}
 			if n, ok := attrInt(x.Attrs.Attrs, "align"); ok {
 				info.Align = n
@@ -54,7 +56,7 @@ func DeclareTypes(mod *ast.Module, bag *diag.Bag) *Table {
 				bag.Error("E3001", x.Span, "类型 `"+x.Name+"` 重复定义", "这里", "")
 				continue
 			}
-			info := &types.EnumInfo{Name: x.Name, Module: mod.Name, IsPublic: x.Attrs.IsPublic,
+			info := &types.EnumInfo{Name: x.Name, Module: mod.Name, IsPublic: x.Attrs.IsPublic, InShell: x.Attrs.InShell,
 				Base: types.U32, TagType: types.U32}
 			t.Types[x.Name] = info
 			t.order = append(t.order, x.Name)
@@ -262,10 +264,10 @@ func (t *Table) Resolve(ref *ast.TypeRef, bag *diag.Bag) types.Type {
 			if binding, rest, qualified := splitQualified(ref.Name); qualified {
 				if dep, ok := t.Imports[binding]; ok && dep != nil {
 					if info, ok2 := dep.Types[rest]; ok2 {
-						if !typeVisible(t.Pkg, info) {
-							bag.Error("E7020", ref.Span, "类型 `"+ref.Name+"` 未导出（缺 `public`）",
-								"跨包引用只认 `public` 声明",
-								"在依赖包里给该类型加 `public`，或不要跨包用它")
+						if !typeVisibleFrom(t.Module, info) {
+							bag.Error("E7020", ref.Span, "类型 `"+ref.Name+"` 在此不可见",
+								"可见性阶梯",
+								"块内 `public` = 子包内；要让别的子包/项目也能用，写到 `module` 块外加 `public`")
 						}
 						return types.Named{Info: info}
 					}

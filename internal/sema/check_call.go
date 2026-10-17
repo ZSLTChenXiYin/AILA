@@ -39,11 +39,7 @@ func (c *Checker) findMethod(owner types.Named, name string) *FuncSig {
 	if ownerMod != "" && ownerMod != c.modName {
 		if u, ok := c.units[ownerMod]; ok && u.Sigs != nil {
 			sig := u.Sigs.Methods[key]
-			if sig != nil && u.Package != c.pkg && !sig.IsPublic {
-				c.err("E7020", diag.Empty, "方法 `"+name+"` 未导出（缺 `public`）",
-					"跨包引用只认 `public` 声明",
-					"在依赖包里给该方法的 `func` 声明加 `public`")
-			}
+			c.sigVisible(nil, sig)
 			return sig
 		}
 	}
@@ -658,10 +654,7 @@ func (c *Checker) checkStructLit(x *ast.StructLit, expected types.Type) types.Ty
 						c.err("E3001", x.Span, "struct 没有变体 `"+names[2]+"`", "这里", "")
 						return types.Named{Info: it}
 					}
-					if dep.Package != c.pkg && !it.IsPublic {
-						c.err("E7020", x.Span, "类型 `"+names[0]+"."+names[1]+"` 未导出（缺 `public`）",
-							"跨包引用只认 `public` 声明", "在依赖包里给该 struct 加 `public`")
-					}
+					c.requireVisible(x, names[0]+"."+names[1], "类型", dep.Name, it.IsPublic, it.InShell)
 					return c.checkStructFields(x, types.Named{Info: it}, it, nil)
 				case *types.EnumInfo:
 					if len(names) != 3 {
@@ -673,10 +666,7 @@ func (c *Checker) checkStructLit(x *ast.StructLit, expected types.Type) types.Ty
 						c.err("E3001", x.Span, "enum `"+it.Name+"` 没有变体 `"+names[2]+"`", "这里", "")
 						return types.Named{Info: it}
 					}
-					if dep.Package != c.pkg && !it.IsPublic {
-						c.err("E7020", x.Span, "枚举 `"+it.Name+"` 未导出（缺 `public`）",
-							"跨包引用只认 `public` 声明", "在依赖包里给该 enum 加 `public`")
-					}
+					c.requireVisible(x, names[0]+"."+names[1], "枚举", dep.Name, it.IsPublic, it.InShell)
 					return c.checkEnumVariant(x, types.Named{Info: it}, it, v)
 				}
 			}

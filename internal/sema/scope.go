@@ -186,6 +186,7 @@ func NewChecker(mod *ast.Module, table *Table, sigs *Sigs, bag *diag.Bag) *Check
 
 // Run 跑模块级值与全部函数体。
 func (c *Checker) Run() {
+	c.checkForwardDeclarations()
 	c.checkModuleValues()
 	for _, d := range c.mod.AllDecls() {
 		if fn, ok := d.(*ast.FuncDecl); ok && fn.Body != nil {
