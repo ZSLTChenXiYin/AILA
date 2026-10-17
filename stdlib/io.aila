@@ -1,0 +1,61 @@
+// AILA 标准库 · std.io（M1 最小面）
+//
+// 设计纪律（designs/0001 §13.1）：std 纯 AILA 实现，零编译器特办。
+// 运行时打印出口是 C 侧薄层（runtime/aila_rt.c），在 AILA 侧只以 `#[c]` 声明出现。
+
+#[c] func aila_print_i32(v: I32);
+#[c] func aila_print_u32(v: U32);
+#[c] func aila_print_f64(v: F64);
+#[c] func aila_print_bool(v: Bool);
+#[c] func aila_print_char(v: C32);
+#[c] func aila_print_nl();
+#[c] func aila_print_bytes(p: [U8], n: USize);
+#[c] func aila_print_cstr(p: [U8]?);
+
+// ---- 面向用户的包装（普通 AILA 函数，零特权） ----
+
+func print_i32(v: I32) {
+    aila_print_i32(v);
+}
+
+func print_u32(v: U32) {
+    aila_print_u32(v);
+}
+
+func print_usize(v: USize) {
+    aila_print_u32(v trunc U32);
+}
+
+func print_f64(v: F64) {
+    aila_print_f64(v);
+}
+
+func print_f32(v: F32) {
+    aila_print_f64(v as F64);
+}
+
+func print_bool(v: Bool) {
+    aila_print_bool(v);
+}
+
+func print_char(c: C32) {
+    aila_print_char(c);
+}
+
+func print_nl() {
+    aila_print_nl();
+}
+
+func print_text(t: Text) {
+    view bytes: [U8] = t;
+    aila_print_bytes(bytes, len bytes);
+}
+
+func print_bytes(b: [U8]) {
+    aila_print_bytes(b, len b);
+}
+
+func print_i32_nl(v: I32) {
+    aila_print_i32(v);
+    aila_print_nl();
+}

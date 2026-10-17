@@ -1,0 +1,43 @@
+// AILA 标准库 · std.math（M1 最小面）
+//
+// 承接 designs/0001 §13.5：运算默认 trap 之下的**显式回绕**出口。
+// 语言层只保留 `trunc` 一个有损词，回绕 / 钳制 / 失败返回全在这里。
+
+func wrapping_add_u32(a: U32, b: U32) -> U32 {
+    let w: U64 = a as U64 + b as U64;
+    return w trunc U32;
+}
+
+func wrapping_add_i32(a: I32, b: I32) -> I32 {
+    return a + b;
+}
+
+func abs_i32(v: I32) -> I32 {
+    var m: I32 = v;
+    if v < 0 {
+        m = 0 - v;
+    }
+    return m;
+}
+
+func min_i32(a: I32, b: I32) -> I32 {
+    var m: I32 = a;
+    if b < a {
+        m = b;
+    }
+    return m;
+}
+
+func max_i32(a: I32, b: I32) -> I32 {
+    var m: I32 = a;
+    if b > a {
+        m = b;
+    }
+    return m;
+}
+
+func fmod(a: F64, b: F64) -> F64 {
+    let q: F64 = a / b;
+    let n: I64 = q trunc I64;
+    return a - n trunc F64 * b;
+}

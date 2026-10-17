@@ -1,0 +1,11 @@
+[package]
+name = "hello"
+version = "0.1.0"
+entry = "_.main"
+
+[target]
+board = "host"
+
+[build]
+opt = 0
+warnings = "default"

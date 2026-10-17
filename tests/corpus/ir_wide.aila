@@ -1,0 +1,133 @@
+// corpus: 广覆盖 IR 语料（struct / 方法 / enum+载荷 / match 四种判别 / Result 与 `?` /
+// 定长数组 / 视图与区域分配 / 三段式与 for-in / 显式转换 / 短路 / 解构赋值 / 布局查询）
+struct Pair {
+    a: I32,
+    b: I32,
+};
+
+enum Color { Red, Green, Blue, Bad };
+
+enum Shape {
+    Circle { r: I32 },
+    Rect { w: I32, h: I32 },
+    Empty,
+};
+
+func Pair.sum(self) -> I32 {
+    return self.a + self.b;
+}
+
+func classify(n: I32) -> I32 {
+    return match n {
+        0 => 100,
+        _ => 300,
+    };
+}
+
+func color_tag(c: Color) -> I32 {
+    return match c {
+        Color.Red => 1,
+        Color.Green => 2,
+        Color.Blue => 3,
+        _ => 0,
+    };
+}
+
+func shape_area(s: Shape) -> I32 {
+    return match s {
+        Shape.Circle { r } => r * r * 3,
+        Shape.Rect { w, h } => w * h,
+        Shape.Empty => 0,
+    };
+}
+
+func safe_div(a: I32, b: I32) -> I32 ! Color {
+    if b == 0 {
+        return _ ! Color.Bad;
+    }
+    return a / b;
+}
+
+func twice(v: I32) -> I32 ! Color {
+    let q = safe_div(v, 2)?;
+    return q + q;
+}
+
+func sum_view(buf: [U8]) -> I32 {
+    var s: I32 = 0;
+    for x in buf {
+        s = s + (x as I32);
+    }
+    return s;
+}
+
+func mixed(a: I32, b: I32) -> I32 {
+    var acc: I32 = 0;
+    for var i: I32 = 0; i < 3; i = i + 1 {
+        if i == 1 {
+            continue;
+        }
+        acc = acc + a * i;
+    }
+    if a > b {
+        acc = acc + 1;
+    } else if a == b {
+        acc = acc + 2;
+    } else {
+        acc = acc + 3;
+    }
+    if !(a == b) && (b != 0) {
+        acc = acc - 1;
+    }
+    return acc;
+}
+
+func main() {
+    var p: Pair = Pair { a: 3, b: 4 };
+    let total: I32 = p.sum() + classify(0) + color_tag(Color.Green) + shape_area(Shape.Rect { w: 2, h: 5 });
+    let scaled: I32 = total trunc I8 as I32;
+    let flag: Bool = total > 10 || scaled == 0;
+    var acc: I32 = 0;
+    if flag {
+        acc = mixed(total, 7);
+    }
+    let f: F32 = 1.5;
+    let g: F64 = 2.25;
+    let wide: I64 = acc as I64;
+    let narrow: I16 = wide trunc I16;
+
+    var fixed: [I32; 4] = [1, 2, 3, 4];
+    fixed[0] = narrow as I32;
+    let n: USize = len fixed;
+    let sz: USize = #size(Pair);
+    let al: USize = #align(Shape);
+
+    region work {
+        var buf: [U8] = [7; 4]@work;
+        buf[1] = 9;
+        acc = acc + sum_view([7; 4]@work) + (buf[0] as I32) + (n trunc I32) + (sz trunc I32) + (al trunc I32);
+    }
+
+    let msg: Text = "wide";
+    var maybe: Text? = Some { v: msg };
+    match maybe {
+        Some { v } => { acc = acc + (len v trunc I32); },
+        None => { acc = 0; },
+    }
+
+    let res = twice(acc);
+    match res {
+        Ok { v } => { acc = v; },
+        Err { e } => {
+            match e {
+                Color.Bad => { acc = -1; },
+                _ => { acc = -2; },
+            }
+        },
+    }
+
+    let q: F32 = f + (g trunc F32);
+    _ = q;
+    (acc, _) = (acc + 1, total);
+    return;
+}

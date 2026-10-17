@@ -1,0 +1,48 @@
+// 示例 3 · region：区域即寿命 + 视图 + 逃逸检查
+//
+// 期望输出：
+//   sum = 20
+//   buf[0] = 7  len = 4 (bytes 16)
+//   escaped region is rejected at compile time (see docs/designs/0001 §5.2)
+import std.io;
+
+// 分配点落在调用方供给的区域里：区域实参通道 `@[r]`
+func fill(n: USize, v: U8) @region[r] -> [U8] {
+    return [v; n]@r;
+}
+
+func sum_of(buf: [U8]) -> I32 {
+    var s: I32 = 0;
+    for x in buf {
+        s = s + (x as I32);
+    }
+    return s;
+}
+
+func main() {
+    region work {
+        // 分配：长度由初始化器决定，落 work
+        var nums: [U8] = [5; 4]@work;
+        nums[0] = 5;
+        io.print_text("sum = ");
+        io.print_i32_nl(sum_of(nums));          // 20
+
+        // 下层函数把内存分配进调用方区域 —— 跨函数寿命由区域名决定
+        var buf: [U8] = fill(4, 7)@[work];
+        buf[0] = 7;
+
+        io.print_text("buf[0] = ");
+        io.print_i32(buf[0] as I32);
+        io.print_text("  len = ");
+        io.print_usize(len buf);
+        io.print_text(" (bytes ");
+        io.print_usize(#size(I32) * 4);
+        io.print_text(")");
+        io.print_nl();
+
+        // 视图重标：等元素宽度的零拷贝出口
+        let text: Text = "AILA";
+        view bytes: [U8] = text;
+        io.print_i32_nl(len bytes trunc I32);   // 4 字节
+    }   // work 退出：nums / buf 整块回收，无 free、无析构
+}

@@ -1,0 +1,3 @@
+norm2(3, 4) = 10
+Detection{label=3 score=0.75 bbox=[1, 2, 3, 4]
+#size(Detection) = 24  #align = 4

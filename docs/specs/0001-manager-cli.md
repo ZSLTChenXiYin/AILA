@@ -1,0 +1,333 @@
+# SPEC 0001：管理器（`aila` CLI、工程模型、清单、bindgen、工具链供给）
+
+> **编号**：0001 · **类型**：SPEC · **状态**：定稿（M1 实现依据）
+> **上游**：[designs/0001](../designs/0001-language-spec.md)（§1.2 B1–B3、§2.1–2.3、§5.9、§11 章、§12.2–12.4）、[rfcs/0001](../rfcs/0001-manager-and-frontend.md)
+> **下游**：[specs/0002](0002-compiler-frontend.md)（前端）、[plans/0001](../plans/0001-manager-frontend-dev-plan.md)
+
+---
+
+## 1. 工程模型（不可协商的三条）
+
+| # | 规则 | 依据 |
+|---|---|---|
+| 1 | **项目 = 包**：工程根目录（含 `aila.toml`）就是一个包；包名 = 清单 `package.name` | §1.2 B1 |
+| 2 | **子包 = 目录**：包内每个子目录（除保留目录）是一个子包，子包名 = 目录名；子包可嵌套，路径用 `.` 连接 | §1.2 B2 |
+| 3 | **模块 = 文件**：`X.aila` 在其所在子包内名为 `X`；模块是热替换的最小单位 | §1.2 B3/B4 |
+
+Python 标识符化：模块名 / 子包名必须匹配 `[A-Za-z_][A-Za-z0-9_]*`，否则 `E7003`（源码路径与符号一一对应，不允许「目录名叫 `my-lib` 但导入写 `my_lib`」，不做隐式转写）。
+
+### 1.1 目录布局
+
+```text
+<包根>/
+  aila.toml                 # 清单，唯一
+  main.aila                 # 入口模块（包根唯一允许的 .aila 文件），模块名 = _.main
+  <子包>/<模块>.aila         # 项目内模块，导入名 = _.子包.模块
+  cpacks/<cpack>/           # C 包：include/ 与 .c/.a/.so 共置即关联（§11.8）
+  build/                    # 产物与缓存，管理器独占，可整体删除
+```
+
+保留目录（不参与子包扫描）：`build`、`cpacks`、`.git`、`.aila`，以及任何以 `.` 开头的目录。
+
+### 1.2 导入解析（§2.3）
+
+| 写法 | 解析 |
+|---|---|
+| `import _.sensors.camera;` | 文件 `<包根>/sensors/camera.aila`；绑定名 = `camera` |
+| `import _.sensors.camera as cam;` | 同上，绑定名 = `cam` |
+| `import _;` | 包根模块（即 `_.main`） |
+| `import ch _.cpacks.math;` | C 声明导入：对该 cpack 的头文件跑 bindgen，产物 `.ail` 作为模块参与前端 |
+| `import cc _.cpacks.legacy;` | C 实现导入：只编译 + 链接该 cpack 内 `.c`，不产 AILA 声明 |
+| `import <包名>....` | 外部包（M1 未实现依赖解析，报 `E7010`「跨包依赖待批次」） |
+
+同一模块内 `as` 别名重复、或别名与模块名撞名 = `E7004`。
+
+### 1.3 入口
+
+清单 `package.entry` 指定入口模块（默认 `_.main`）。入口函数 = 该模块内名为 `main` 的 `func`（`main` 不是关键字，§2.2）；后端把 `main` 直接映射为目标入口符号。找不到 = `E7005`。
+
+---
+
+## 2. 清单 `aila.toml`
+
+TOML 子集（字符串 / 整数 / 布尔 / 表格）。**未知段落/键 = `W7001` 警告并在 `--strict` 下升级为错误**（拼错不静默生效）。
+
+```toml
+[package]
+name = "demo"          # 必填；[A-Za-z_][A-Za-z0-9_-]*
+version = "0.1.0"      # 必填；语义化版本
+entry = "_.main"       # 可选，默认 "_.main"
+
+[target]
+board = "host"         # 傻瓜路：一个词决定 arch / triple / 地形
+arch = ""              # 可选；board 未给时必填（riscv32 / xtensa / x86_64 / aarch64）
+triple = ""            # 可选；都给时以 triple 为准（内置 board 表已带 triple）
+
+[build]
+opt = 0                # 0..3，默认 0（嵌入式默认关闭优化，WCET 可读）
+warnings = "default"   # default | strict | allow，默认 default
+debug = false          # 是否产出位置的详细 IR 调试信息（M1：仅影响 IR 注释）
+
+[build.toolchain]      # 傻瓜路整段可省
+cc = "auto"            # auto | system:<name>[>=ver] | bundled
+llvm = "auto"          # auto | bundled | system:llc | system:clang
+
+[domains.fast]         # 可选：自定义物理域（§5.9）
+kind = "internal-ram"
+size = "64K"
+align = 16
+```
+
+校验规则：
+
+| 键 | 规则 | 违反 |
+|---|---|---|
+| `package.name` | 缺失 / 空 | `E7002` |
+| `package.version` | 缺失 | `E7002` |
+| `target.board` | 不在内置 board 表且未给 `arch` | `E7006`，诊断附候选 board 列表 |
+| `build.opt` | 非 0..3 | `E7007` |
+| `domains.*.kind` | 不在 kind 枚举（`internal-ram`/`external-ram`/`rtc-slow`/`default`） | `E7008` |
+| `domains.*.size` | 形如 `<num>[KMG]`；嵌入式 target 必填 | `E7008` |
+
+### 2.1 内置 board 表（M1）
+
+| board | arch | triple | 预置域 |
+|---|---|---|---|
+| `host` | 宿主 | 由 LLVM 默认三元组决定 | `default` |
+| `esp32s3` | xtensa | `xtensa-esp32s3-elf` | `default`(internal-ram) / `psram`(external-ram) / `rtc`(rtc-slow) |
+| `riscv32` | riscv32 | `riscv32-unknown-elf` | `default` |
+| `aarch64` | aarch64 | `aarch64-unknown-none` | `default` |
+
+M1 只有 `host` 可产出可执行产物；其余 board `aila build` 到 `.o` 为止，链接阶段报 `E8020`「交叉链接器待批次」并在 `aila doctor` 中标明。
+
+---
+
+## 3. CLI 契约
+
+### 3.1 全局
+
+```text
+aila [--version] [--help] <command> ...
+```
+
+| 退出码 | 含义 |
+|---|---|
+| `0` | 成功 |
+| `1` | 编译 / 检查 / 构建失败（有诊断） |
+| `2` | 用法错误（参数不合法） |
+| `3` | 环境不满足（`aila doctor` 项失败） |
+| `4` | 管理器内部错误（栈已带 `--verbose`） |
+
+公共开关：`--json`（机器可读输出，供 CI/AI 用）、`--verbose`、`--quiet`、`--color auto|always|never`（默认 auto，`NO_COLOR` 环境变量生效）。
+
+### 3.2 命令清单
+
+| 命令 | 作用 | 关键参数 | 退出码行为 |
+|---|---|---|---|
+| `aila new <path>` | 建工程骨架（`aila.toml` + `main.aila` + README） | `--board <board>` `--no-README` | 目标非空目录 = `E7011` |
+| `aila doctor` | 环境自检 + 链接冒烟测试 | `--json` `--fix`（打印可复制命令，不自动装） | 任一项失败 = 3 |
+| `aila check [路径]` | 只到语义检查（不产产物） | `--json` `--deny-warnings` `--target` | 有 error = 1 |
+| `aila build [路径]` | 全流程到可执行 / `.o` | `-o` `--target` `--opt` `--emit ir\|json\|bindings\|all` `--no-cache` | 失败 = 1 |
+| `aila run [路径]` | `build` 后执行，透传 `-- ARGS` | 同 build + `--` | 被执行程序退出码透传 |
+| `aila clean [路径]` | 删 `build/` | `--cache-only` | 0 |
+| `aila bindgen <目标> [--out <文件>]` | 手动跑 C 绑定生成（调试用，§11.1 工具化） | `--backend auto\|clang\|builtin` `--target` `--out` | 有未映射项但产物成立 = 0（带 `W3001`）；完全失败 = 1 |
+| `aila target list\|show\|add` | 目标与地形表可发现性三件套（§5.9） | `show <board>` | 未知 board = 2 |
+| `aila explain <CODE>` | 错误码解释 + 傻瓜式修复步骤 | `--json` | 未知码 = 2 |
+| `aila parse <文件>` | 解析一份 `.aila`，打印 token 流（`--tokens`）或语法树 S-表达式 | `--tokens` | 有诊断 = 1 |
+| `aila ir <文件>` | 单文件走完「解析 → 语义 → LLVM IR」并打印 IR 文本 | `--triple` | 有诊断 = 1 |
+
+### 3.3 诊断输出格式（人读）
+
+```text
+error[E3201]: 类型不匹配
+  ┌─ sensors/camera.aila:12:18
+  │
+12 │     let x: F32 = count;
+  │                  ^^^^^ 期望 `F32`，实得 `I32`
+  │
+  = 帮助：AILA 零隐式转换。整数转浮点请写 `count trunc F32`
+  = 参见：docs/designs/0001 §6.3
+```
+
+- 多文件汇总时按「先 error 后 warning、组内按文件行号」排序；
+- 末尾固定汇总行：`error: 共 3 个错误，1 个警告`（`--quiet` 时省略）；
+- `--json` 输出 `{"diagnostics":[{"code","severity","message","labels":[{"file","line","col","span","text","label"}],"help","doc"}],"summary":{...}}`。
+
+### 3.4 错误码分段（D6）
+
+| 段 | 域 | 例 |
+|---|---|---|
+| `E1xxx` | 词法 | `E1001` 非法字符 / `E1002` 未闭合字符串 / `E1003` 单引号多码点 |
+| `E2xxx` | 语法 | `E2001` 期望 token / `E2002` 裸块语句 / `E2003` 歧义需加括号 |
+| `E3xxx` | 类型与名字 | `E3001` 未定义名 / `E3201` 类型不匹配 / `E3401` match 不完备 |
+| `E4xxx` | 内存与效果 | `E4001` 缺分配许可 / `E4101` 逃逸 / `E4201` 只读绑定被写 |
+| `E5xxx` | 并发 | `E5001` `<-` 不在协程内 / `E5002` thread 参数白名单 |
+| `E6xxx` | C 互操作 | `E6001` 变参禁传类型 / `E6002` union 不支持 |
+| `E7xxx` | 工程与清单 | `E7002` 清单缺字段 / `E7003` 路径非法标识符 |
+| `E8xxx` | 工具链与链接 | `E8010` 无可用 LLVM 后端 / `E8020` 交叉链接待批次 |
+| `E9xxx` | 批次未实现 | `E9001` 语法已解析但语义待批次 / `E9002` 代码生成待批次 |
+
+`aila explain <CODE>` 数据源 = 包内 `share/aila/data/diag_codes.json`（唯一事实源，禁止两处手写；Go 侧 `internal/diag` 直接读它）。
+
+---
+
+## 4. 工具链供给（§12.4）
+
+解析优先级：**CLI > 清单 > 内置默认**。三件工具，各自独立探测：
+
+| 件 | 用途 | 探测顺序 | 缺失后果 |
+|---|---|---|---|
+| `llvm-backend` | IR 文本 → `.o` | ①清单 `llvm` 指定 ②随包 `llc`/`clang`（`toolchain/<triple>/bin/`）③系统 PATH 里的 `llc`/`clang` | `E8010`：错误信息直接给出安装 LLVM 或 `aila toolchain install` 的命令 |
+| `cc` | 编 C（`import cc`、runtime）与链接 | ①清单 `cc` ②`clang` ③`gcc` ④`cc` | `E8011` |
+| `clang` | bindgen 首选档 | `clang` / `clang.exe` | 降级 `builtin` 档 + `W3001` |
+
+`aila doctor` 检查项（全通过才退出 0）：
+
+| # | 检查 | 失败提示（可复制执行） |
+|---|---|---|
+| 1 | Python ≥ 3.11 | 升级 Python |
+| 2 | LLVM 后端可用（三级任一） | `pip install llvmlite` / 安装 LLVM |
+| 3 | `cc` 可用且能链接 | 安装 clang 或 MinGW |
+| 4 | runtime 源码存在 | 重新拉取仓库 |
+| 5 | **链接冒烟测试**：把一段最小 IR 编成 `.o` → 用 `cc` 链接 → 运行 → 校验输出 | 给出两端版本信息与不兼容分析 |
+| 6 | 清单可解析（若在工程内） | 指向清单错误码 |
+
+---
+
+## 5. 构建流水线与产物
+
+### 5.1 流水线
+
+```text
+1 discover   扫描包 → 模块表（子包/模块/入口），校验命名
+2 manifest   解析并校验 aila.toml，合并 CLI 覆盖，定型 target
+3 bindgen    对每个 import ch 的 cpack 跑 bindgen（缓存命中即跳过）→ <cpack>.ail
+4 parse      每模块：lexer → parser → AST（含 bindgen 产物，当普通 AILA 模块）
+5 sema       名字解析 → 类型/布局 → 区域与效果 → match 完备性 → 丢弃/逃逸
+6 lower      AST → LLVM IR 文本（每模块一个 .ll）
+7 object     .ll → .o（LLVM 后端）
+8 csrc       编 `import cc` 的 .c 与 runtime .c → .o（cc）
+9 link       全部 .o + cpack 内 .a/.so → 可执行 / 静态库
+10 report    build/manifest.json + build/hot.json（分派表元数据）+ 诊断汇总
+```
+
+任一步失败即停，前面的产物保留在缓存（供增量重跑）。
+
+### 5.2 产物布局
+
+```text
+build/
+  <target>/                 # target 名 = board 名或 triple 短名
+    <module>.ll             # --emit ir 时保留
+    <module>.o
+    <cpack>.ail             # --emit bindings 时复制（真身始终在缓存）
+    aila_rt.o
+    app[.exe]               # 可执行（host）或 app.o（交叉）
+    manifest.json           # 构建事实（版本、target、工具链、哈希、时间）
+    hot.json                # hot 模块 + public 函数的分派表元数据（M3 消费）
+  .cache/
+    bindgen/<key>.ail       # key = sha256(头文件内容 + include 链 + defines + target + backend)
+    mod/<key>.json          # key = sha256(模块源码 + 依赖模块接口哈希 + 清单哈希 + target)
+    smoke/                  # doctor 冒烟测试产物
+```
+
+`aila clean` 删 `build/`；`aila clean --cache-only` 只删 `build/.cache/`。
+
+### 5.3 增量规则
+
+模块级：接口哈希 = 该模块导出声明（类型签名 + 布局 + 可见性）的稳定序列化哈希。依赖模块接口哈希不变且自身源码不变 ⇒ 复用 `mod/<key>.json` 与 `.o`。首版允许保守（任何变化全量重编），但**缓存键必须正确**，错误增量比慢更糟。
+
+---
+
+## 6. bindgen（`import ch` → `.ail`）
+
+### 6.1 产物形态（§11.1）
+
+对一个 cpack 生成**一个** `.ail` 文件，形如普通 AILA 模块的**壳声明**（无 `module {}` 块，全为壳内声明）：
+
+```aila
+// 由 aila bindgen 自动生成，请勿手改
+// cpack: _.cpacks.math   backend: clang   target: host   hash: 3f2a...
+// 宏定型：MATH_MAX=2147483647 (I32)；跳过：未定义分支 #ifdef __linux__
+
+import ch _.cpacks.math;              // 供 AILA 侧继续解析 C 实现
+type MathErr = I32;
+#[c] func math_add(a: I32, b: I32) -> I32;
+#[c] func math_scale(v: F32, k: F32) -> F32;
+#[c] let math_epsilon: F32;
+```
+
+C 侧实现本体（`.c`）不进前端，只进 `cc` 编译与链接（§11.1、§12.2）。
+
+### 6.2 类型映射（§11.2 / §11.3，逐条落地）
+
+| C | AILA |
+|---|---|
+| `bool`/`_Bool` | `Bool` |
+| `char` | `U8` |
+| `signed char` / `unsigned char` | `I8` / `U8` |
+| `short`/`unsigned short` | `I16`/`U16` |
+| `int`/`unsigned int` | `I32`/`U32` |
+| `long`/`unsigned long` | 按 target 实宽（ILP32→I32/U32，LP64→I64/U64） |
+| `long long`/`unsigned long long` | `I64`/`U64` |
+| `size_t`/`uintptr_t` | `USize` |
+| `ptrdiff_t`/`intptr_t` | `ISize` |
+| `float`/`double` | `F32`/`F64` |
+| `long double` | 不支持，`W3001` |
+| `T*`/`const T*` | `[T]?` |
+| `char*`/`const char*` | `[U8]?` |
+| `void*` | `[Unsafe]?` |
+| `T**` 及以上 | `[Unsafe]?` |
+| opaque struct（仅 `typedef struct X X;`） | 无布局句柄类型，指针处 → `[X]?` |
+| 数组成员 `T a[N]` | `[T; N]` |
+| `union` | **不直译**，`W3002` + C shim 建议 |
+| 位域 | 不支持，`W3001` |
+| 无名 struct/enum | 合成名 `Anon_<行>_<列>`，`W3003` |
+| 函数指针 | 内联签名 `(T1, T2) -> R`（`_Nullable` 时加 `?`） |
+| 变参函数 | 固定参数映射 + 尾随 `...`（产物写 `/* variadic */`） |
+
+### 6.3 命名规范（§11.5）
+
+| C | AILA 名 |
+|---|---|
+| 函数 / 变量 / 宏常量 | **保留原名** |
+| `struct`/`enum`/`typedef` 类型名 | snake → Pascal，剥离 `_t` 后缀（`esp_err_t` → `EspErr`） |
+| 与 AILA 保留字（含 `as`/`trunc`/`len`/`copy`/`move`/`state`/`view`/`out`/`trap`/`resume` 等）撞名 | 加 `_c` 后缀（`trunc` → `trunc_c`），并出 `W3004` 诊断「原名 → 新名」 |
+| 无名类型 | `Anon_<line>_<col>` |
+
+同一 cpack 内映射后重名 = `E6100`（不做静默加数字后缀，否则调用点不可预测）。
+
+### 6.4 宏（§11.7）
+
+| C 宏形态 | 处理 |
+|---|---|
+| 对象式常量宏（可在 C 侧求值为常量） | 映射为 `const`，按 C 标准类型规则定型（不发明推断） |
+| 函数式宏 / `static inline` | **不自动翻译**；`W3005` 列出名 + 建议写 C shim；`aila bindgen --shim` 生成 shim 骨架（M2） |
+| 无法求值的对象宏 | `W3001` 列出，绝不静默丢弃 |
+
+### 6.5 两档后端的行为差异
+
+| 维度 | `clang` 档 | `builtin` 档 |
+|---|---|---|
+| 触发条件 | `clang` 可用或 `--backend clang` | 显式 `--backend builtin` 或 clang 不可用 |
+| `#include` 解析 | 完整 include 链 | 只在 cpack 的 `include/` 与同目录内递归解析 `"..."`；`<...>` 系统头只按内置最小声明表识别 |
+| `#define` 常量 | 聚类求值 | 只认字面量 / 字面量四则表达式 |
+| `#ifdef` | 按 defines 定型 | 只走「未定义」分支 + 产物头注释 `/* WARNING: conditional compilation not resolved */` |
+| packed/aligned | 从 AST 属性透传 | 识别 `__attribute__((packed))` / `__attribute__((aligned(N)))` / `#pragma pack(push,N)` 的文本形态 |
+
+两档产出同一套 §6.2/§6.3 规则，因此 AILA 侧代码无需感知档位。
+
+---
+
+## 7. 验收命令（本 SPEC 的测试面）
+
+```text
+aila new /tmp/demo --board host          # 生成骨架，aila.toml + main.aila 齐全
+aila check /tmp/demo                     # 0 退出；故意破坏语法 → 1 退出且带 E2xxx
+aila build /tmp/demo --emit ir           # build/host/main.ll 存在且可被 llc 验证
+aila run /tmp/demo                       # 打印预期输出，退出码透传
+aila bindgen cpacks/math --backend builtin   # 产出 .ail + W3001 诊断
+aila target show esp32s3                 # 打印 arch/triple/预置域
+aila explain E4101                       # 打印含义 + 修复步骤 + 设计锚点
+aila clean                               # build/ 消失
+```

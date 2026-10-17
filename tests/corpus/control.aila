@@ -1,0 +1,87 @@
+// corpus: 控制流（if / 三种 for / match / region / defer / unsafe / thread / coroutine）
+import std.io;
+
+enum Cmd { Data { v: I32 }, Eof };
+
+coroutine func producer(tx: send chan Cmd) {
+    yield;
+}
+
+func worker(cmds: recv chan Cmd) {
+    region scratch: 2048 {
+        let buf: [U8] = [0; 64]@scratch;
+        _ = buf;
+    }
+}
+
+func recv_of() -> recv chan Cmd {
+    var rx: recv chan Cmd = chan@r Cmd(4);
+    return rx;
+}
+
+func control(ready: Bool, buf: [U8], n: USize) @region[r] {
+    if ready {
+        io.print_text("yes");
+    } else if !ready {
+        io.print_text("no");
+    } else {
+        io.print_text("maybe");
+    }
+
+    for var i: USize = 0; i < n; i = i + 1 {
+        if i == 2 { continue; }
+        if i > 8 { break; }
+    }
+
+    for !ready {
+        break;
+    }
+
+    for {
+        break;
+    }
+
+    for x in buf {
+        _ = x;
+    }
+
+    for i, x in buf {
+        _ = i;
+        _ = x;
+    }
+
+    match n {
+        0 => { io.print_text("zero"); }
+        _ => { io.print_text("many"); }
+    }
+
+    let c: Cmd = Cmd.Eof;
+    match c {
+        Cmd.Data { v } => { io.print_i32(v); }
+        Cmd.Eof => { io.print_text("eof"); }
+    }
+
+    let opt: [U8]? = None;
+    match opt {
+        Some { v } => { io.print_usize(len v); }
+        None => { io.print_text("none"); }
+    }
+
+    region tmp: 4096 {
+        var a: [U8] = [0; 8]@tmp;
+        _ = a;
+    }
+
+    unsafe {
+        view words: [U32] = buf;
+        _ = words;
+    }
+
+    defer io.print_nl();
+    defer {
+        io.print_text("done");
+    }
+
+    thread: 4096 worker(recv_of());
+    trap "unreachable";
+}

@@ -1,0 +1,10 @@
+// 示例 1 · hello：最小可运行程序
+//
+// 期望输出：
+//   hello, AILA!
+import std.io;
+
+func main() {
+    io.print_text("hello, AILA!");
+    io.print_nl();
+}

@@ -1,0 +1,444 @@
+{
+  "consts": {
+    "FLAG": {
+      "type": "Bool",
+      "value": true
+    },
+    "GREETING": {
+      "type": "Text",
+      "value": "hi"
+    },
+    "LIMIT": {
+      "type": "I32",
+      "value": 8
+    },
+    "RATIO": {
+      "type": "F64",
+      "value": 0.5
+    }
+  },
+  "funcs": {
+    "callback": {
+      "coroutine": false,
+      "err": null,
+      "extern": false,
+      "group": null,
+      "moves": [],
+      "muts": [],
+      "owner": "",
+      "params": [],
+      "public": false,
+      "regions": [],
+      "ret": "(U8) -> U16",
+      "thread": false,
+      "variadic": false
+    },
+    "consume": {
+      "coroutine": false,
+      "err": null,
+      "extern": false,
+      "group": null,
+      "moves": [
+        "m"
+      ],
+      "muts": [],
+      "owner": "",
+      "params": [
+        [
+          "m",
+          "Matrix"
+        ]
+      ],
+      "public": false,
+      "regions": [],
+      "ret": "Matrix",
+      "thread": false,
+      "variadic": false
+    },
+    "detect": {
+      "coroutine": false,
+      "err": null,
+      "extern": false,
+      "group": null,
+      "moves": [],
+      "muts": [],
+      "owner": "",
+      "params": [
+        [
+          "img",
+          "[U8]"
+        ]
+      ],
+      "public": true,
+      "regions": [
+        "work"
+      ],
+      "ret": "I32",
+      "thread": false,
+      "variadic": false
+    },
+    "ext_printf": {
+      "coroutine": false,
+      "err": null,
+      "extern": true,
+      "group": null,
+      "moves": [],
+      "muts": [],
+      "owner": "",
+      "params": [
+        [
+          "fmt",
+          "[U8]"
+        ]
+      ],
+      "public": false,
+      "regions": [],
+      "ret": "I32",
+      "thread": false,
+      "variadic": true
+    },
+    "fallible": {
+      "coroutine": false,
+      "err": "Err",
+      "extern": false,
+      "group": null,
+      "moves": [],
+      "muts": [],
+      "owner": "",
+      "params": [
+        [
+          "buf",
+          "[U8]"
+        ]
+      ],
+      "public": false,
+      "regions": [],
+      "ret": "I32",
+      "thread": false,
+      "variadic": false
+    },
+    "fnptr_param": {
+      "coroutine": false,
+      "err": null,
+      "extern": false,
+      "group": null,
+      "moves": [],
+      "muts": [],
+      "owner": "",
+      "params": [
+        [
+          "f",
+          "(U8) -> U16"
+        ]
+      ],
+      "public": false,
+      "regions": [],
+      "ret": "U16",
+      "thread": false,
+      "variadic": false
+    },
+    "main": {
+      "coroutine": false,
+      "err": null,
+      "extern": false,
+      "group": null,
+      "moves": [],
+      "muts": [],
+      "owner": "",
+      "params": [],
+      "public": false,
+      "regions": [],
+      "ret": "（无返回值）",
+      "thread": false,
+      "variadic": false
+    },
+    "noret": {
+      "coroutine": false,
+      "err": null,
+      "extern": false,
+      "group": null,
+      "moves": [],
+      "muts": [],
+      "owner": "",
+      "params": [
+        [
+          "a",
+          "I32"
+        ]
+      ],
+      "public": false,
+      "regions": [],
+      "ret": "（无返回值）",
+      "thread": false,
+      "variadic": false
+    },
+    "noret_call": {
+      "coroutine": false,
+      "err": null,
+      "extern": false,
+      "group": null,
+      "moves": [],
+      "muts": [],
+      "owner": "",
+      "params": [
+        [
+          "a",
+          "U8"
+        ]
+      ],
+      "public": false,
+      "regions": [],
+      "ret": "U16",
+      "thread": false,
+      "variadic": false
+    },
+    "opt_ret": {
+      "coroutine": false,
+      "err": null,
+      "extern": false,
+      "group": null,
+      "moves": [],
+      "muts": [],
+      "owner": "",
+      "params": [],
+      "public": false,
+      "regions": [],
+      "ret": "[U8]?",
+      "thread": false,
+      "variadic": false
+    },
+    "pair": {
+      "coroutine": false,
+      "err": null,
+      "extern": false,
+      "group": [
+        "U8",
+        "U16"
+      ],
+      "moves": [],
+      "muts": [],
+      "owner": "",
+      "params": [],
+      "public": false,
+      "regions": [],
+      "ret": "(U8, U16)",
+      "thread": false,
+      "variadic": false
+    },
+    "pair_err": {
+      "coroutine": false,
+      "err": "Err",
+      "extern": false,
+      "group": [
+        "U8",
+        "U16"
+      ],
+      "moves": [],
+      "muts": [],
+      "owner": "",
+      "params": [],
+      "public": false,
+      "regions": [],
+      "ret": "(U8, U16)",
+      "thread": false,
+      "variadic": false
+    },
+    "plain": {
+      "coroutine": false,
+      "err": null,
+      "extern": false,
+      "group": null,
+      "moves": [],
+      "muts": [],
+      "owner": "",
+      "params": [
+        [
+          "a",
+          "I32"
+        ],
+        [
+          "b",
+          "F32"
+        ]
+      ],
+      "public": false,
+      "regions": [],
+      "ret": "I32",
+      "thread": false,
+      "variadic": false
+    },
+    "poll": {
+      "coroutine": true,
+      "err": "Err",
+      "extern": false,
+      "group": null,
+      "moves": [],
+      "muts": [],
+      "owner": "",
+      "params": [
+        [
+          "id",
+          "U8"
+        ]
+      ],
+      "public": false,
+      "regions": [
+        "buf"
+      ],
+      "ret": "I32",
+      "thread": false,
+      "variadic": false
+    },
+    "with_effects": {
+      "coroutine": false,
+      "err": null,
+      "extern": false,
+      "group": null,
+      "moves": [],
+      "muts": [
+        "dst"
+      ],
+      "owner": "",
+      "params": [
+        [
+          "dst",
+          "[U8]"
+        ],
+        [
+          "src",
+          "[U8]"
+        ]
+      ],
+      "public": false,
+      "regions": [
+        "scratch"
+      ],
+      "ret": "（无返回值）",
+      "thread": false,
+      "variadic": false
+    },
+    "worker": {
+      "coroutine": false,
+      "err": null,
+      "extern": false,
+      "group": null,
+      "moves": [],
+      "muts": [],
+      "owner": "",
+      "params": [
+        [
+          "cmds",
+          "[Unsafe]?"
+        ]
+      ],
+      "public": false,
+      "regions": [],
+      "ret": "（无返回值）",
+      "thread": true,
+      "variadic": false
+    }
+  },
+  "globals": {
+    "counter": {
+      "kind": "state",
+      "mutable": true,
+      "type": "U32"
+    }
+  },
+  "methods": {
+    "Matrix.add": {
+      "coroutine": false,
+      "err": null,
+      "extern": false,
+      "group": null,
+      "moves": [],
+      "muts": [],
+      "owner": "Matrix",
+      "params": [
+        [
+          "a",
+          "Matrix"
+        ],
+        [
+          "b",
+          "Matrix"
+        ]
+      ],
+      "public": false,
+      "regions": [
+        "r"
+      ],
+      "ret": "Matrix",
+      "thread": false,
+      "variadic": false
+    },
+    "Matrix.area": {
+      "coroutine": false,
+      "err": null,
+      "extern": false,
+      "group": null,
+      "moves": [],
+      "muts": [],
+      "owner": "Matrix",
+      "params": [
+        [
+          "self",
+          "Matrix"
+        ]
+      ],
+      "public": false,
+      "regions": [],
+      "ret": "F32",
+      "thread": false,
+      "variadic": false
+    },
+    "Matrix.scale": {
+      "coroutine": false,
+      "err": null,
+      "extern": false,
+      "group": null,
+      "moves": [],
+      "muts": [
+        "self"
+      ],
+      "owner": "Matrix",
+      "params": [
+        [
+          "self",
+          "Matrix"
+        ],
+        [
+          "k",
+          "F32"
+        ]
+      ],
+      "public": false,
+      "regions": [],
+      "ret": "（无返回值）",
+      "thread": false,
+      "variadic": false
+    },
+    "Matrix.zero": {
+      "coroutine": false,
+      "err": null,
+      "extern": false,
+      "group": null,
+      "moves": [],
+      "muts": [],
+      "owner": "Matrix",
+      "params": [
+        [
+          "n",
+          "USize"
+        ]
+      ],
+      "public": false,
+      "regions": [
+        "r"
+      ],
+      "ret": "Matrix",
+      "thread": false,
+      "variadic": false
+    }
+  }
+}

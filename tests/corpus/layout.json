@@ -1,0 +1,423 @@
+{
+  "aliases": {
+    "TArr": {
+      "align": 1,
+      "size": 8,
+      "type": "[U8; 8]"
+    },
+    "TChan": {
+      "align": 8,
+      "size": 8,
+      "type": "chan Color"
+    },
+    "TCoro": {
+      "align": 8,
+      "size": 8,
+      "type": "coro"
+    },
+    "TFn": {
+      "align": 8,
+      "size": 8,
+      "type": "(U8, U16) -> U16"
+    },
+    "TFnErr": {
+      "align": 8,
+      "size": 8,
+      "type": "(U8) -> I32 ! Color"
+    },
+    "TGroup": {
+      "align": 2,
+      "size": 4,
+      "type": "(U8, U16)"
+    },
+    "TOpt": {
+      "align": 8,
+      "size": 16,
+      "type": "[U8]?"
+    },
+    "TOptEnum": {
+      "align": 4,
+      "size": 5,
+      "type": "Color?"
+    },
+    "TOptPayload": {
+      "align": 4,
+      "size": 13,
+      "type": "Shape?"
+    },
+    "TRes": {
+      "align": 4,
+      "size": 12,
+      "type": "I32 ! Color"
+    },
+    "TTextOpt": {
+      "align": 8,
+      "size": 16,
+      "type": "Text?"
+    },
+    "TView": {
+      "align": 8,
+      "size": 16,
+      "type": "[U8]"
+    }
+  },
+  "types": {
+    "Aligned": {
+      "align": 16,
+      "align_attr": 16,
+      "fields": [
+        {
+          "align": 1,
+          "name": "a",
+          "offset": 0,
+          "size": 1
+        },
+        {
+          "align": 4,
+          "name": "b",
+          "offset": 4,
+          "size": 4
+        }
+      ],
+      "kind": "struct",
+      "packed": false,
+      "size": 16,
+      "type": "Aligned"
+    },
+    "Color": {
+      "align": 4,
+      "kind": "enum",
+      "payload": false,
+      "size": 4,
+      "tag": "U32",
+      "tag_size": 4,
+      "type": "Color",
+      "variants": [
+        {
+          "name": "Red",
+          "tag": 0
+        },
+        {
+          "name": "Green",
+          "tag": 1
+        },
+        {
+          "name": "Blue",
+          "tag": 2
+        }
+      ]
+    },
+    "FnHolder": {
+      "align": 8,
+      "align_attr": 0,
+      "fields": [
+        {
+          "align": 8,
+          "name": "open",
+          "offset": 0,
+          "size": 8
+        },
+        {
+          "align": 8,
+          "name": "close",
+          "offset": 8,
+          "size": 8
+        }
+      ],
+      "kind": "struct",
+      "packed": false,
+      "size": 16,
+      "type": "FnHolder"
+    },
+    "Mixed": {
+      "align": 8,
+      "align_attr": 0,
+      "fields": [
+        {
+          "align": 1,
+          "name": "tag",
+          "offset": 0,
+          "size": 1
+        },
+        {
+          "align": 8,
+          "name": "v",
+          "offset": 8,
+          "size": 16
+        },
+        {
+          "align": 4,
+          "name": "n",
+          "offset": 24,
+          "size": 4
+        }
+      ],
+      "kind": "struct",
+      "packed": false,
+      "size": 32,
+      "type": "Mixed"
+    },
+    "Narrow": {
+      "align": 1,
+      "kind": "enum",
+      "payload": false,
+      "size": 1,
+      "tag": "U8",
+      "tag_size": 1,
+      "type": "Narrow",
+      "variants": [
+        {
+          "name": "A",
+          "tag": 0
+        },
+        {
+          "name": "B",
+          "tag": 1
+        }
+      ]
+    },
+    "Nested": {
+      "align": 8,
+      "align_attr": 0,
+      "fields": [
+        {
+          "align": 8,
+          "name": "s",
+          "offset": 0,
+          "size": 56
+        },
+        {
+          "align": 8,
+          "name": "x",
+          "offset": 56,
+          "size": 8
+        }
+      ],
+      "kind": "struct",
+      "packed": false,
+      "size": 64,
+      "type": "Nested"
+    },
+    "Packed": {
+      "align": 1,
+      "align_attr": 0,
+      "fields": [
+        {
+          "align": 1,
+          "name": "a",
+          "offset": 0,
+          "size": 1
+        },
+        {
+          "align": 4,
+          "name": "b",
+          "offset": 1,
+          "size": 4
+        },
+        {
+          "align": 2,
+          "name": "c",
+          "offset": 5,
+          "size": 2
+        }
+      ],
+      "kind": "struct",
+      "packed": true,
+      "size": 7,
+      "type": "Packed"
+    },
+    "Payload": {
+      "align": 8,
+      "kind": "enum",
+      "payload": true,
+      "size": 24,
+      "tag": "U8",
+      "tag_size": 1,
+      "type": "Payload",
+      "variants": [
+        {
+          "name": "Big",
+          "tag": 0
+        },
+        {
+          "name": "Small",
+          "tag": 1
+        }
+      ]
+    },
+    "Scalars": {
+      "align": 8,
+      "align_attr": 0,
+      "fields": [
+        {
+          "align": 1,
+          "name": "a",
+          "offset": 0,
+          "size": 1
+        },
+        {
+          "align": 2,
+          "name": "b",
+          "offset": 2,
+          "size": 2
+        },
+        {
+          "align": 4,
+          "name": "c",
+          "offset": 4,
+          "size": 4
+        },
+        {
+          "align": 8,
+          "name": "d",
+          "offset": 8,
+          "size": 8
+        },
+        {
+          "align": 1,
+          "name": "e",
+          "offset": 16,
+          "size": 1
+        },
+        {
+          "align": 2,
+          "name": "f",
+          "offset": 18,
+          "size": 2
+        },
+        {
+          "align": 4,
+          "name": "g",
+          "offset": 20,
+          "size": 4
+        },
+        {
+          "align": 8,
+          "name": "h",
+          "offset": 24,
+          "size": 8
+        },
+        {
+          "align": 4,
+          "name": "i",
+          "offset": 32,
+          "size": 4
+        },
+        {
+          "align": 8,
+          "name": "j",
+          "offset": 40,
+          "size": 8
+        },
+        {
+          "align": 1,
+          "name": "k",
+          "offset": 48,
+          "size": 1
+        },
+        {
+          "align": 4,
+          "name": "l",
+          "offset": 52,
+          "size": 4
+        }
+      ],
+      "kind": "struct",
+      "packed": false,
+      "size": 56,
+      "type": "Scalars"
+    },
+    "Shape": {
+      "align": 4,
+      "kind": "enum",
+      "payload": true,
+      "size": 12,
+      "tag": "U8",
+      "tag_size": 1,
+      "type": "Shape",
+      "variants": [
+        {
+          "name": "Circle",
+          "tag": 0
+        },
+        {
+          "name": "Rect",
+          "tag": 1
+        },
+        {
+          "name": "Point",
+          "tag": 2
+        }
+      ]
+    },
+    "Wide": {
+      "align": 2,
+      "kind": "enum",
+      "payload": false,
+      "size": 2,
+      "tag": "U16",
+      "tag_size": 2,
+      "type": "Wide",
+      "variants": [
+        {
+          "name": "A",
+          "tag": 300
+        },
+        {
+          "name": "B",
+          "tag": 301
+        }
+      ]
+    },
+    "WithFixed": {
+      "align": 4,
+      "align_attr": 0,
+      "fields": [
+        {
+          "align": 4,
+          "name": "arr",
+          "offset": 0,
+          "size": 16
+        },
+        {
+          "align": 4,
+          "name": "n",
+          "offset": 16,
+          "size": 4
+        }
+      ],
+      "kind": "struct",
+      "packed": false,
+      "size": 20,
+      "type": "WithFixed"
+    },
+    "WithView": {
+      "align": 8,
+      "align_attr": 0,
+      "fields": [
+        {
+          "align": 8,
+          "name": "v",
+          "offset": 0,
+          "size": 16
+        },
+        {
+          "align": 8,
+          "name": "t",
+          "offset": 16,
+          "size": 16
+        },
+        {
+          "align": 8,
+          "name": "raw",
+          "offset": 32,
+          "size": 16
+        }
+      ],
+      "kind": "struct",
+      "packed": false,
+      "size": 48,
+      "type": "WithView"
+    }
+  }
+}

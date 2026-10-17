@@ -1,0 +1,88 @@
+// corpus: 类型布局（size / align / 字段偏移），判据是 layout.json
+
+struct Scalars {
+    a: I8,
+    b: I16,
+    c: I32,
+    d: I64,
+    e: U8,
+    f: U16,
+    g: U32,
+    h: U64,
+    i: F32,
+    j: F64,
+    k: Bool,
+    l: C32,
+};
+
+#[packed]
+struct Packed {
+    a: I8,
+    b: I32,
+    c: I16,
+};
+
+#[align(16)]
+struct Aligned {
+    a: I8,
+    b: I32,
+};
+
+struct Nested {
+    s: Scalars,
+    x: F64,
+};
+
+struct WithView {
+    v: [U8],
+    t: Text,
+    raw: [Unsafe],
+};
+
+struct WithFixed {
+    arr: [F32; 4],
+    n: I32,
+};
+
+struct Mixed {
+    tag: U8,
+    v: [U8],
+    n: U32,
+};
+
+struct FnHolder {
+    open: (U8) -> U16,
+    close: (U8, U16) -> U16,
+};
+
+enum Color { Red, Green, Blue };
+
+enum Narrow: U8 { A, B };
+
+enum Wide: U16 { A = 300, B };
+
+enum Shape {
+    Circle { r: F32 },
+    Rect { w: F32, h: F32 },
+    Point,
+};
+
+enum Payload {
+    Big { a: I64, b: I64 },
+    Small { c: I8 },
+};
+
+type TView = [U8];
+type TArr = [U8; 8];
+type TOpt = [U8]?;
+type TTextOpt = Text?;
+type TFn = (U8, U16) -> U16;
+type TFnErr = (U8) -> I32 ! Color;
+type TRes = I32 ! Color;
+type TGroup = (U8, U16);
+type TOptEnum = Color?;
+type TOptPayload = Shape?;
+type TChan = chan Color;
+type TCoro = coro;
+
+func main() { }

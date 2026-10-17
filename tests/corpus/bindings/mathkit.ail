@@ -1,0 +1,13 @@
+// 由 aila bindgen 自动生成，请勿手改
+// cpack: mathkit   backend: builtin   target: host (x86_64-w64-windows-gnu)
+// C 实现本体由 aila build 用 cc 编译并自动链接（共置即关联）
+// 头文件：mathkit.h
+// 宏定型：MATHKIT_MAX = 1000 (I32)
+// 宏定型：MATHKIT_VERSION = "0.1.0" (Text)
+// builtin 兜底档：覆盖范围窄于 clang 档（见 docs/specs/0001 §6.5）
+
+const MATHKIT_MAX: I32 = 1000;
+const MATHKIT_VERSION: Text = "0.1.0";
+#[c] func mathkit_add(a0: I32, a1: I32) -> I32;
+#[c] func mathkit_clamp(a0: I32, a1: I32, a2: I32) -> I32;
+#[c] func mathkit_hash(a0: U32, a1: U32) -> U32;

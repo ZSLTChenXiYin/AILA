@@ -1,0 +1,342 @@
+{
+  "files": {
+    "ir_basic.aila": {
+      "add": [],
+      "bits": [],
+      "cmp": [],
+      "main": [
+        [
+          "x",
+          "I32"
+        ],
+        [
+          "y",
+          "I32"
+        ],
+        [
+          "z",
+          "I32"
+        ]
+      ],
+      "mul": [],
+      "neg": [],
+      "sub": []
+    },
+    "ir_wide.aila": {
+      "Pair.sum": [],
+      "classify": [],
+      "color_tag": [],
+      "main": [
+        [
+          "p",
+          "Pair"
+        ],
+        [
+          "total",
+          "I32"
+        ],
+        [
+          "scaled",
+          "I32"
+        ],
+        [
+          "flag",
+          "Bool"
+        ],
+        [
+          "acc",
+          "I32"
+        ],
+        [
+          "f",
+          "F32"
+        ],
+        [
+          "g",
+          "F64"
+        ],
+        [
+          "wide",
+          "I64"
+        ],
+        [
+          "narrow",
+          "I16"
+        ],
+        [
+          "fixed",
+          "[I32; 4]"
+        ],
+        [
+          "n",
+          "USize"
+        ],
+        [
+          "sz",
+          "USize"
+        ],
+        [
+          "al",
+          "USize"
+        ],
+        [
+          "buf",
+          "[U8]"
+        ],
+        [
+          "msg",
+          "Text"
+        ],
+        [
+          "maybe",
+          "Text?"
+        ],
+        [
+          "res",
+          "I32 ! Color"
+        ],
+        [
+          "q",
+          "F32"
+        ]
+      ],
+      "mixed": [
+        [
+          "acc",
+          "I32"
+        ]
+      ],
+      "safe_div": [],
+      "shape_area": [],
+      "sum_view": [
+        [
+          "s",
+          "I32"
+        ]
+      ],
+      "twice": [
+        [
+          "q",
+          "I32"
+        ]
+      ]
+    },
+    "layout.aila": {
+      "main": []
+    },
+    "sema.aila": {
+      "arith": [
+        [
+          "s",
+          "I32"
+        ],
+        [
+          "m",
+          "I32"
+        ],
+        [
+          "d",
+          "I32"
+        ],
+        [
+          "r",
+          "I32"
+        ],
+        [
+          "sh",
+          "I32"
+        ],
+        [
+          "bits",
+          "I32"
+        ],
+        [
+          "lit",
+          "整数常量"
+        ],
+        [
+          "fl",
+          "浮点常量"
+        ],
+        [
+          "cmp",
+          "Bool"
+        ],
+        [
+          "logic",
+          "Bool"
+        ],
+        [
+          "neg",
+          "I32"
+        ],
+        [
+          "notb",
+          "Bool"
+        ]
+      ],
+      "casts": [
+        [
+          "w",
+          "I64"
+        ],
+        [
+          "back",
+          "I32"
+        ],
+        [
+          "g",
+          "F64"
+        ],
+        [
+          "t",
+          "I32"
+        ]
+      ],
+      "lits": [
+        [
+          "t",
+          "Text"
+        ],
+        [
+          "c",
+          "C32"
+        ],
+        [
+          "ok",
+          "Bool"
+        ],
+        [
+          "p",
+          "Point"
+        ],
+        [
+          "px",
+          "I32"
+        ]
+      ],
+      "m1": [
+        [
+          "x",
+          "I32"
+        ]
+      ],
+      "m2": [
+        [
+          "x",
+          "I32"
+        ]
+      ],
+      "m3": [
+        [
+          "x",
+          "I32"
+        ]
+      ],
+      "m4": [
+        [
+          "x",
+          "I32"
+        ]
+      ],
+      "main": [],
+      "tries": [
+        [
+          "v",
+          "I32"
+        ]
+      ],
+      "views": [
+        [
+          "n",
+          "USize"
+        ],
+        [
+          "first",
+          "U8"
+        ],
+        [
+          "cpy",
+          "[U8]"
+        ],
+        [
+          "arr",
+          "[U8; 4]"
+        ],
+        [
+          "dyn",
+          "[U8]"
+        ],
+        [
+          "sz",
+          "USize"
+        ]
+      ]
+    },
+    "sigs.aila": {
+      "Matrix.add": [],
+      "Matrix.area": [],
+      "Matrix.scale": [],
+      "Matrix.zero": [],
+      "callback": [],
+      "consume": [],
+      "detect": [
+        [
+          "buf",
+          "[U8]"
+        ]
+      ],
+      "fallible": [],
+      "fnptr_param": [],
+      "main": [],
+      "noret": [],
+      "noret_call": [],
+      "opt_ret": [],
+      "pair": [],
+      "pair_err": [],
+      "plain": [],
+      "poll": [],
+      "with_effects": [],
+      "worker": []
+    },
+    "variadic.aila": {}
+  },
+  "skipped": {
+    "control.aila": [
+      "E3001",
+      "E3201",
+      "E3206",
+      "E4001"
+    ],
+    "decls.aila": [
+      "E3001",
+      "E4003"
+    ],
+    "errors.aila": [
+      "E1002",
+      "E1003",
+      "E1006",
+      "E2001",
+      "E2002",
+      "E2004",
+      "E3201"
+    ],
+    "exprs.aila": [
+      "E3001",
+      "E3201",
+      "E3202",
+      "E3601",
+      "E4201"
+    ],
+    "hello.aila": [
+      "E3001",
+      "E3201",
+      "E3206"
+    ],
+    "types.aila": [
+      "E3001",
+      "E3201",
+      "E3601"
+    ]
+  }
+}

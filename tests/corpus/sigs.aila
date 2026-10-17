@@ -1,0 +1,71 @@
+// corpus: 函数签名与模块级值（判据 sigs.json）
+enum Err {
+    Bad,
+    Worse { code: U8 },
+};
+
+struct Matrix {
+    n: USize,
+    data: [F32],
+};
+
+const LIMIT: I32 = 8;
+const RATIO: F64 = 0.5;
+const GREETING: Text = "hi";
+const FLAG: Bool = true;
+
+module hot {
+    state counter: U32 = 0;
+
+    func plain(a: I32, b: F32) -> I32 { return a; }
+
+    func noret(a: I32) { }
+
+    func with_effects(dst: [U8], src: [U8]) @region[scratch] @mut[dst] { }
+
+    func consume(m: Matrix) @move[m] -> Matrix { return m; }
+
+    func Matrix.zero(n: USize) @region[r] -> Matrix {
+        return Matrix { n: n, data: [0.0; n]@r };
+    }
+
+    func Matrix.scale(self, k: F32) @mut[self] { }
+
+    func Matrix.area(self) -> F32 { return 1.0; }
+
+    func Matrix.add(a: Matrix, b: Matrix) @region[r] -> Matrix { return a; }
+
+    coroutine func poll(id: U8) @region[buf] -> I32 ! Err {
+        yield;
+        return _ ! Err.Bad;
+    }
+
+    thread func worker(cmds: [Unsafe]?) { }
+
+    #[c] func ext_printf(fmt: [U8], ...) -> I32;
+
+    func fallible(buf: [U8]) -> I32 ! Err {
+        return _ ! Err.Bad;
+    }
+
+    func pair() -> (U8, U16) { return (1, 2); }
+
+    func pair_err() -> (U8, U16) ! Err { return (1, 2); }
+
+    func noret_call(a: U8) -> U16 { return 0; }
+
+    func callback() -> (U8) -> U16 { return noret_call; }
+
+    func opt_ret() -> [U8]? { return None; }
+
+    func fnptr_param(f: (U8) -> U16) -> U16 { return f(1); }
+
+    func main() { }
+
+    public func detect(img: [U8]) @region[work] -> I32 {
+        region tmp {
+            let buf: [U8] = [0; 4]@tmp;
+            return buf[0] as I32;
+        }
+    }
+}

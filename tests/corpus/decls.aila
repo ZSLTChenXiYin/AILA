@@ -1,0 +1,59 @@
+// corpus: 声明层全覆盖（壳 / 块 / 属性 / 方法 / 关联函数）
+import _.util.math;
+
+const MAX_BATCH: I32 = 64;
+
+#[packed, align(4)]
+struct Packet {
+    kind: U8,
+    size: U16,
+    payload: [U8; 8],
+};
+
+enum Color: U8 {
+    Red = 1,
+    Green,
+    Blue,
+};
+
+enum Shape {
+    Circle { r: F32 },
+    Rect { w: F32, h: F32 },
+    Point,
+};
+
+type Handle = (U8, U16) -> U16;
+
+module hot {
+    state batch_id: U32 = 0;
+    var frames: I32 = 0;
+
+    func on_load() { }
+
+    public func detect(img: [U8]) @region[work] -> I32 {
+        region work {
+            let buf: [U8] = [0; 4]@work;
+            return buf[0] as I32;
+        }
+    }
+
+    func Color.is_green(self) -> Bool {
+        return match self {
+            Color.Green => true,
+            _ => false,
+        };
+    }
+
+    func Shape.area(self) -> F32 {
+        return match self {
+            Shape.Circle { r } => r * r,
+            Shape.Rect { w, h } => w * h,
+            Shape.Point => 0.0,
+        };
+    }
+
+    func Color.from_name(name: Text) -> Color {
+        let c: Color = Color.Red;
+        return c;
+    }
+}

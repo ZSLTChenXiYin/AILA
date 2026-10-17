@@ -1,0 +1,3 @@
+parse(4 bytes) -> Truncated{got=4, need=8}
+safe parse failed, fallback = 0
+recovered by ?: 42

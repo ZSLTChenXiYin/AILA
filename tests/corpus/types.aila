@@ -1,0 +1,53 @@
+// corpus: 类型拼法全覆盖（designs/0001 第 3 章 / 第 10 章）
+const A: I8 = 1;
+const B: [U8] = [0; 1]@static;
+const C: [U8; 4] = [0; 4];
+const D: [Unsafe] = [0; 4]@static;
+const E: [U8]? = None;
+const F: Text = "t";
+const G: C32 = 'x';
+const H: Bool = false;
+const I: USize = 0;
+const J: ISize = 0;
+
+type T1 = U64;
+type T2 = [I32];
+type T3 = [I32; 3];
+type T4 = [Unsafe];
+type T5 = [Text]?;
+type T6 = I32 ! Color;
+type T7 = chan Color;
+type T8 = send chan U8;
+type T9 = recv chan U8;
+type T10 = coro;
+type T11 = coro I32;
+type T12 = coro I32 ! Color;
+type T13 = (U8, U16) -> U16;
+type T14 = (I32) -> I32?;
+type T15 = (coro I32 ! Color)?;
+type T16 = ([U8], Text) -> Bool ! Color;
+
+struct Holder {
+    a: I8,
+    b: I16,
+    c: I32,
+    d: I64,
+    e: U8,
+    f: U16,
+    g: U32,
+    h: U64,
+    i: F32,
+    j: F64,
+    k: Bool,
+    l: C32,
+    m: Text,
+    n: USize,
+    o: ISize,
+    p: [U8],
+    q: [U8; 2],
+    r: [Unsafe],
+    s: [U8]?,
+    t: Handle,
+};
+
+enum Color { Red, Green, Blue };

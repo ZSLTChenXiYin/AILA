@@ -1,0 +1,49 @@
+// corpus: 表达式与优先级、字面量、调用与区域实参（designs/0001 第 6 章）
+import std.io;
+
+struct Packet { kind: U8, payload: [U8; 4] };
+enum Color { Red, Green };
+
+func take(a: I32, b: I32) @region[r] -> I32 { return a; }
+
+func exprs(a: I32, b: I32, f: F32, buf: [U8], raw: [Unsafe]) @region[r] -> I32 {
+    let x: I32 = a + b * 2 - a / 3 % 2;
+    let y: I32 = a << 2 >> 1 & 0xFF | 1 ^ 2;
+    let z: Bool = a < b && b != 0 || !(a == b);
+    let w: I32 = a as I64 trunc I32;
+    let n: USize = len buf;
+    let first: U8 = buf[0];
+    let cp: C32 = 'A';
+    let esc: Text = "tab\tnl\nquote\"back\\u\u{4e2d}";
+    let p: [U8] = copy buf @[r];
+    let q: [U8] = copy raw @[r];
+    let s: USize = #size(Packet) + #align(Packet);
+    let t: I32? = ?(a + b);
+    let u: [U8] = [0; 4]@r;
+    let arr: [U8; 4] = [1, 2, 3, 4];
+    let lit: Packet = Packet { kind: 1, payload: [0; 4] };
+    let v: I32 = take(a, b)@[r];
+    let neg: I32 = -a;
+    let notb: Bool = !z;
+    let bitnot: I32 = ~a;
+    let cond: I32 = match a {
+        0 => 1,
+        1 => { out 2; }
+        _ => 3,
+    };
+    let big: I32 = ?(a * b + 1) as I32;
+    _ = take(a, b)@[r];
+    b = b + 1;
+    b += 1;
+    b -= 1;
+    b *= 2;
+    b /= 2;
+    b %= 3;
+    b &= 1;
+    b |= 1;
+    b ^= 1;
+    b <<= 1;
+    b >>= 1;
+    (a, b) = (1, 2);
+    return v;
+}

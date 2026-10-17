@@ -1,0 +1,24 @@
+# Go
+/bin/
+*.exe
+*.test
+
+# AILA 构建产物（只忽略产物目录，**不能**误伤 internal/build 这类源码包）
+/build/
+examples/*/build/
+tests/tmp*/
+*.o
+
+# `.ll` 在 tests/corpus 下是**契约快照**（要进版本库），这里只忽略构建目录里的
+build/**/*.ll
+
+# 随包工具链与打包中间物（由 ci/fetch-llvm.* 生成，发布时随 release 分发）
+/toolchain/
+/dist/
+/ci-work/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

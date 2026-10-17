@@ -1,0 +1,4 @@
+mathkit_add(20, 22) = 42
+mathkit_clamp(999, 0, 100) = 100
+mathkit_hash(1, 2) = 3411320782
+MATHKIT_MAX = 1000

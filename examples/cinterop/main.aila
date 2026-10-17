@@ -1,0 +1,28 @@
+// 示例 6 · cinterop：`import ch` 导入 C 生态（bindgen → `.ail` → 前端当普通模块）
+//
+// 期望输出：
+//   mathkit_add(20, 22) = 42
+//   mathkit_clamp(999, 0, 100) = 100
+//   mathkit_hash(1, 2) = 3411320782
+//   MATHKIT_MAX = 1000
+import std.io;
+import ch _.cpacks.mathkit;
+
+func main() {
+    // bindgen 保留 C 原名；返回值是 C 错误码，AILA 侧自己判码（designs/0001 §11.6）
+    let s: I32 = mathkit.mathkit_add(20, 22);
+    io.print_text("mathkit_add(20, 22) = ");
+    io.print_i32_nl(s);
+
+    let c: I32 = mathkit.mathkit_clamp(999, 0, 100);
+    io.print_text("mathkit_clamp(999, 0, 100) = ");
+    io.print_i32_nl(c);
+
+    let h: U32 = mathkit.mathkit_hash(1, 2);
+    io.print_text("mathkit_hash(1, 2) = ");
+    io.print_u32(h);
+    io.print_nl();
+
+    io.print_text("MATHKIT_MAX = ");
+    io.print_i32_nl(mathkit.MATHKIT_MAX);
+}

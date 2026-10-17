@@ -1,0 +1,8 @@
+// corpus: 解析期诊断（错误码快照，目标是「诊断码稳定」而不是编译通过）
+func f() {
+    let x = 1u8;
+    let y: C32 = 'ab';
+    let s = "unclosed;
+    if x < y < 3 { }
+    { let z = 1; }
+}

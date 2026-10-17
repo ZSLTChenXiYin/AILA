@@ -1,0 +1,5 @@
+# 行尾与编码统一：仓库内一律 LF，避免 Windows 检出把快照改成 CRLF
+# （黄金快照是逐字节判据，CRLF 会让 `go run ./tools/goldengen -check` 在本机误报）
+* text=auto eol=lf
+
+# 二进制（无）

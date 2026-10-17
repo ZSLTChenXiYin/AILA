@@ -1,0 +1,51 @@
+// 示例 2 · control：if（恒为语句）+ 三种 for + match 取值
+//
+// 期望输出：
+//   15
+//   3
+//   blue
+//   digit: 7
+import std.io;
+
+enum Color { Red, Green, Blue };
+
+func name_of(c: Color) -> Text {
+    return match c {
+        Color.Red   => "red",
+        Color.Green => "green",
+        Color.Blue  => "blue",
+    };
+}
+
+func main() {
+    // 三段式计数循环
+    var total: I32 = 0;
+    for var i: I32 = 1; i <= 5; i = i + 1 {
+        total = total + i;
+    }
+    io.print_i32_nl(total);            // 15
+
+    // 条件循环 + break / continue
+    var hits: I32 = 0;
+    var done: Bool = false;
+    for !done {
+        hits = hits + 1;
+        if hits >= 3 {
+            done = true;
+        }
+    }
+    io.print_i32_nl(hits);             // 3
+
+    // match 取值位置：所有分支产出同型
+    io.print_text(name_of(Color.Blue));
+    io.print_nl();
+
+    // for-in 双变量：i 是下标，x 是元素拷贝
+    let samples: [I32] = [10, 20, 7]@static;
+    for i, x in samples {
+        if i == 2 {
+            io.print_text("digit: ");
+            io.print_i32_nl(x);        // digit: 7
+        }
+    }
+}

@@ -1,0 +1,34 @@
+// corpus: 最小 IR 生成子集（标量函数 / 算术 / 比较 / 陷阱检查 / 返回）
+func add(a: I32, b: I32) -> I32 {
+    return a + b;
+}
+
+func sub(a: I32, b: I32) -> I32 {
+    return a - b;
+}
+
+func mul(a: I32, b: I32) -> I32 {
+    return a * b;
+}
+
+func cmp(a: I32, b: I32) -> Bool {
+    return a < b;
+}
+
+func neg(a: I32) -> I32 {
+    return -a;
+}
+
+func bits(a: I32, b: I32) -> I32 {
+    return (a & b) | (a ^ b);
+}
+
+func main() {
+    let x: I32 = add(1, 2);
+    let y: I32 = mul(x, 3);
+    var z: I32 = 0;
+    if cmp(y, 10) {
+        z = sub(y, 1);
+    }
+    z = z + 1;
+}

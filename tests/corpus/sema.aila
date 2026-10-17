@@ -1,0 +1,96 @@
+// corpus: 表达式类型推断（判据 bindings.json）
+enum Color { Red, Green, Blue };
+
+enum Cmd { Data { v: I32 }, Eof };
+
+struct Point {
+    x: I32,
+    y: I32,
+};
+
+const LIMIT: I32 = 8;
+
+module {
+    func arith(a: I32, b: I32) -> I32 {
+        let s: I32 = a + b;
+        let m: I32 = a * b - 1;
+        let d: I32 = a / 2;
+        let r: I32 = a % 3;
+        let sh: I32 = a << 2;
+        let bits: I32 = (a & 0xFF) | (b ^ 1);
+        let lit = 42;
+        let fl = 1.5;
+        let cmp: Bool = a < b;
+        let logic: Bool = a < b && b > 0;
+        let neg: I32 = -a;
+        let notb: Bool = !(a == b);
+        return s + m + d + r + sh + bits + neg;
+    }
+
+    func casts(a: I32, f: F32) -> I32 {
+        let w: I64 = a as I64;
+        let back: I32 = w trunc I32;
+        let g: F64 = f as F64;
+        let t: I32 = g trunc I32;
+        return back + t;
+    }
+
+    func views(buf: [U8], raw: [Unsafe]) @region[r] -> USize {
+        let n: USize = len buf;
+        let first: U8 = buf[0];
+        let cpy: [U8] = copy buf @[r];
+        let arr: [U8; 4] = [1, 2, 3, 4];
+        let dyn: [U8] = [0; 8]@r;
+        let sz: USize = #size(Point);
+        return n + len cpy + (first as USize) + (arr[0] as USize) + len dyn + sz;
+    }
+
+    func lits() -> I32 {
+        let t: Text = "hi";
+        let c: C32 = 'A';
+        let ok: Bool = true;
+        let p: Point = Point { x: 1, y: 2 };
+        let px: I32 = p.x;
+        return px + (c as I32) + (len t trunc I32);
+    }
+
+    func m1(c: Color) -> I32 {
+        let x: I32 = match c {
+            Color.Red => 1,
+            Color.Green => 2,
+            Color.Blue => 3,
+        };
+        return x;
+    }
+
+    func m2(n: I32) -> I32 {
+        let x: I32 = match n {
+            0 => 1,
+            _ => { out 2; }
+        };
+        return x;
+    }
+
+    func m3(p: [U8]?) -> I32 {
+        let x: I32 = match p {
+            Some { v } => len v trunc I32,
+            None => 0,
+        };
+        return x;
+    }
+
+    func m4(c: Cmd) -> I32 {
+        let x: I32 = match c {
+            Cmd.Data { v } => v,
+            Cmd.Eof => 0,
+        };
+        return x;
+    }
+
+    func tries(r: I32 ! Color) -> I32 ! Color {
+        let v: I32 = r?;
+        return v;
+    }
+
+    func main() { }
+}

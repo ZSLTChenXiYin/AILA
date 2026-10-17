@@ -1,0 +1,14 @@
+// corpus: 最小入口 + 导入 + 文本/字符字面量
+import std.io;
+import _.sensors.camera as cam;
+
+func main() {
+    io.print_text("hello, AILA!");
+    io.print_nl();
+    let a: Bool = true;
+    let b: Float = 1.5;
+    let c: Text = r"no\escape";
+    let d: U8 = 0xFF;
+    let e = 1_000;
+    let f: F64 = 1.5e-3;
+}

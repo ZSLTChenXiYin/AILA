@@ -1,0 +1,49 @@
+// 示例 4 · struct：结构体 + 方法（类型前缀式）+ 定长内联数组字段 + 布局查询
+//
+// 期望输出：
+//   norm2(3, 4) = 10
+//   Detection{label=1 score=0.75 bbox=[1, 2, 3, 4]}
+//   #size(Detection) = 24  #align = 4
+import std.io;
+
+struct Detection {
+    label: I32,
+    score: F32,
+    bbox: [F32; 4],
+};
+
+func Detection.norm2(self) -> I32 {
+    return self.label * self.label + self.bbox[0] trunc I32 * self.bbox[0] trunc I32;
+}
+
+func Detection.describe(self) {
+    io.print_text("Detection{label=");
+    io.print_i32(self.label);
+    io.print_text(" score=");
+    io.print_f32(self.score);
+    io.print_text(" bbox=[");
+    for i, v in self.bbox {
+        if i > 0 {
+            io.print_text(", ");
+        }
+        io.print_i32(v trunc I32);
+    }
+    io.print_text("]");
+    io.print_nl();
+}
+
+func main() {
+    var d: Detection = Detection {
+        label: 3,
+        score: 0.75,
+        bbox: [1.0, 2.0, 3.0, 4.0],
+    };
+    io.print_text("norm2(3, 4) = ");
+    io.print_i32_nl(d.norm2());
+    d.describe();
+    io.print_text("#size(Detection) = ");
+    io.print_usize(#size(Detection));
+    io.print_text("  #align = ");
+    io.print_usize(#align(Detection));
+    io.print_nl();
+}
