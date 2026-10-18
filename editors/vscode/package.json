@@ -84,6 +84,14 @@
       {
         "command": "aila.doctor",
         "title": "AILA: 环境自检（doctor）"
+      },
+      {
+        "command": "aila.bindgen",
+        "title": "AILA: 生成 C 绑定（bindgen）"
+      },
+      {
+        "command": "aila.restartLSP",
+        "title": "AILA: 重启语言服务器"
       }
     ],
     "configuration": {
@@ -94,6 +102,11 @@
           "type": "string",
           "default": "aila",
           "description": "aila 可执行文件路径（默认取 PATH 里的 `aila`）"
+        },
+        "aila.lsp.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "启用语言服务器（大纲 / 跳转定义 / 悬停 / 查找引用 / 诊断标红）"
         }
       }
     },
@@ -119,6 +132,7 @@
   "scripts": {
     "compile": "tsc -p ./",
     "smoke": "node scripts/grammar-smoke.mjs",
+    "smoke:lsp": "node scripts/lsp-smoke.mjs",
     "check": "npm run compile && npm run smoke",
     "package": "vsce package"
   },

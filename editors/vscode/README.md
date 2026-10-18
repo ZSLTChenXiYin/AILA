@@ -1,6 +1,13 @@
 # AILA for VSCode
 
-AILA 语言的 VSCode 扩展：**语法高亮 + 语言配置 + 代码片段 + 构建/运行命令**。
+AILA 语言的 VSCode 扩展。分两层：
+
+| 层 | 内容 | 依赖 |
+|---|---|---|
+| **声明式**（不跑代码） | 语法高亮、括号/注释、代码片段 | 无 |
+| **语言服务器**（`aila lsp`） | 大纲、跳转定义、悬停、查找引用、同文件高亮、工程符号搜索、诊断标红 | 需要 `aila` 可执行文件 |
+
+再加构建/运行/检查/绑定生成等命令与 `aila` 任务类型。
 
 ## 装法（二选一）
 
@@ -52,7 +59,8 @@ code --install-extension aila-0.1.0.vsix
 | **语法高亮** | 关键字（`func`/`module`/`region`/`match`/`defer`…）、内建类型（`I32`/`U8`/`Text`/`USize`…）、`#[c]` 属性、`#size`/`#align` 查询、`@region`/`@mut`/`@move` 效果子句、`@[区域名]`、字符串（含 `r"..."` 原始串）、数字（十六进制/浮点/下划线分隔）、`import` 路径与别名 |
 | **语言配置** | `//` 与 `/* */` 注释、括号自动配对、`module`/`func`/`struct`/`region`/`match` 等块自动缩进 |
 | **代码片段** | `pubfunc`（壳内 public + 块内实现）、`func`、`method`、`struct`、`enum`、`result`（`T ! E`）、`opt`（`T?`）、`region`、`match`、`forc`、`forin`、`module`、`hotmodule`、`cop`（`#[c]` 绑定） |
-| **命令** | 命令面板里搜 `AILA:` —— 构建 / 构建并运行 / 只做检查 / 环境自检 |
+| **语言智能**（LSP） | `F12` 跳转定义（含 `import` 别名、方法、枚举变体、字段）、`Shift+F12` 查找引用、悬停看签名、`Ctrl+Shift+O` 大纲、`Ctrl+T` 工程符号搜索、同名高亮、诊断标红（保存即推） |
+| **命令** | 命令面板里搜 `AILA:` —— 构建 / 构建并运行 / 只做检查 / 环境自检 / 生成 C 绑定 / 重启语言服务器 |
 | **任务** | `Terminal → Run Task` 里出现 `aila build` / `aila run` / `aila check`，可绑快捷键或放进 `tasks.json` |
 
 命令都调用**外部 `aila` 可执行文件**（不内嵌编译器）：

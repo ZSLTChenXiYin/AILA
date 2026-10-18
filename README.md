@@ -174,9 +174,9 @@ module {
 
 ## 编辑器支持
 
-`editors/vscode/` 是 AILA 的 VSCode 扩展：语法高亮、括号/注释、代码片段
-（`pubfunc` / `result` / `opt` / `region` / `hotmodule` …）、命令面板里的
-`AILA: 构建 / 构建并运行 / 只做检查 / 环境自检`，以及 `aila` 任务类型。
+`editors/vscode/` 是 AILA 的 VSCode 扩展。**语义能力来自编译器本体**（`aila lsp` 语言服务器）：
+跳转定义、查找引用、悬停签名、大纲、工程符号搜索、诊断标红；语法高亮 / 括号 / 片段是纯声明式贡献点。
+另有 `AILA: 构建 / 构建并运行 / 只做检查 / 环境自检 / 生成 C 绑定 / 重启语言服务器` 命令与 `aila` 任务类型。
 装法见 [`editors/vscode/README.md`](editors/vscode/README.md)（软链进 `~/.vscode/extensions` 或 `vsce package`）。
 
 

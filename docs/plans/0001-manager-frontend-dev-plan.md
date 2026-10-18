@@ -366,3 +366,14 @@ M1 冻结条件（**四条全绿才算完**）：
 | 快照 | `tests/corpus/examples/*/std_io.ll` 随标准库回退重生成；六示例输出与 `expected.out` 仍逐字节一致 |
 | 文档 | designs §12.3 改为「标准库的 C 边界（`#[c]`，不用新机制）」；rfcs/0005 重写为「能用 AILA 写的就用 AILA 写」；specs/0002 §7.0 同步；README、docs/README、编辑器 README 与文法冒烟去掉 `#[intrinsic]` |
 | 后续原则 | 标准库需要新的系统调用时：加一条 `#[c]` 绑定 + 运行时实现，**不加语法**；能用 AILA 算的尽量用 AILA 算 |
+## 25. IDE 基础能力（语言服务器 `aila lsp`）
+
+| 项 | 结论 |
+|---|---|
+| 架构 | 插件只做渲染；**语义一律问 `aila lsp`**（JSON-RPC over stdio），不在插件里另写语法树——避免第二事实源 |
+| 服务端 | 新增 `internal/lsp`：`protocol.go`（LSP 类型子集）、`server.go`（Content-Length 分帧 + 方法分发 + 诊断推送）、`analysis.go`（工程分析 + 符号索引，打开中的文档用缓冲覆盖磁盘）、`queries.go`（大纲 / 定义 / 悬停 / 引用 / 高亮 / 工程符号） |
+| 能力 | `documentSymbol`（模块→类型/函数→成员）、`definition`（局部 / 模块级 / `import` 别名 / 方法 / 变体 / 字段）、`hover`（种类 + 签名/类型 + 来源模块）、`references`、`documentHighlight`、`workspace/symbol`、`publishDiagnostics`（保存/输入即推，`E**`/`W**` 映射 1/2 级） |
+| 命令 | `aila lsp [--log <文件>]`；stdout 归协议独占，日志走 stderr/文件 |
+| 插件 | 自写极简 LSP 客户端（分帧 + 请求表 + 诊断集合），不用 `vscode-languageclient`：只读能力 6 个，两百行即可，且不引运行时依赖、不绑编辑器版本；新增设置 `aila.lsp.enable` 与命令「重启语言服务器」 |
+| 判据 | Go：`internal/lsp` 四个单测（URI 往返 / 标识符与限定名 / 跨模块跳转+悬停+引用+工程符号 / 语法错误诊断）全绿；端到端：`node scripts/lsp-smoke.mjs` 真起子进程跑 13 条协议断言全绿；`npm run check`（tsc + 文法冒烟）全绿 |
+| 文档 | specs/0001 命令表加 `aila lsp`；编辑器 README 重写能力清单；README 说明「语义来自编译器」 |

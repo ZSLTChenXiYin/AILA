@@ -165,6 +165,7 @@ aila [--version] [--help] <command> ...
 | `aila parse <文件>` | 解析一份 `.aila`，打印 token 流（`--tokens`）或语法树 S-表达式 | `--tokens` | 有诊断 = 1 |
 | `aila ir <文件>` | 单文件走完「解析 → 语义 → LLVM IR」并打印 IR 文本 | `--triple` | 有诊断 = 1 |
 | `aila deps [路径]` | 打印依赖图 / 重写 `aila.lock` / 生成 `vendor/` | `--update` `--vendor` `--json` | 0；有诊断 = 1 |
+| `aila lsp` | 启动语言服务器（JSON-RPC over stdio）：大纲 / 跳转定义 / 悬停 / 引用 / 诊断 | `--log <文件>` | 0；内部错误 = 4 |
 
 ### 3.3 诊断输出格式（人读）
 

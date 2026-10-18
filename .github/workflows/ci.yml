@@ -64,7 +64,7 @@ jobs:
           ./aila run examples/hello
 
   vscode-extension:
-    # 编辑器插件：TypeScript 编译 + 语法高亮冒烟（TextMate 真正跑一遍）
+    # 编辑器插件：TypeScript 编译 + 语法高亮冒烟 + 语言服务器端到端冒烟
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -78,6 +78,11 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: 编译 + 语法高亮冒烟
         run: npm run check
+      - name: 构建 aila（LSP 冒烟要用真二进制）
+        working-directory: .
+        run: go build -o bin/aila ./cmd/aila
+      - name: 语言服务器端到端冒烟
+        run: node scripts/lsp-smoke.mjs
       - name: 打包 vsix
         run: npx --yes @vscode/vsce@latest package --allow-missing-repository
       - uses: actions/upload-artifact@v4
