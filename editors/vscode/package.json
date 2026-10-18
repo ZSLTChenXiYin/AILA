@@ -36,12 +36,28 @@
           ".aila"
         ],
         "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "aila-binding",
+        "aliases": [
+          "AILA C 绑定（生成物）",
+          "aila-binding"
+        ],
+        "extensions": [
+          ".ail"
+        ],
+        "configuration": "./language-configuration.json"
       }
     ],
     "grammars": [
       {
         "language": "aila",
         "scopeName": "source.aila",
+        "path": "./syntaxes/aila.tmLanguage.json"
+      },
+      {
+        "language": "aila-binding",
+        "scopeName": "source.aila.binding",
         "path": "./syntaxes/aila.tmLanguage.json"
       }
     ],
@@ -51,6 +67,7 @@
         "path": "./snippets/aila.json"
       }
     ],
+    "semanticTokenScopes": [],
     "commands": [
       {
         "command": "aila.build",

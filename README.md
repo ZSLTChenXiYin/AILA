@@ -178,6 +178,25 @@ module {
 `AILA: 构建 / 构建并运行 / 只做检查 / 环境自检`，以及 `aila` 任务类型。
 装法见 [`editors/vscode/README.md`](editors/vscode/README.md)（软链进 `~/.vscode/extensions` 或 `vsce package`）。
 
+
+## `.aila` 与 `.ail` 不是一种文件
+
+| 扩展名 | 是什么 | 谁生成 | 进版本库 |
+|---|---|---|---|
+| `.aila` | **AILA 源码**（模块） | 人写 | 是 |
+| `.ail` | **C 绑定声明**（bindgen 产物，形如只有壳声明的 AILA 模块） | `aila build` 自动生成，也可 `aila bindgen` 单独产出 | 否（`build/` 下，随构建重生成） |
+
+调 C 库**不需要手动绑定**：在 `cpacks/<名字>/` 放好 `include/*.h` 与 `.c`，然后
+
+```aila
+import ch _.cpacks.mathkit;   // 声明导入：自动对该 cpack 的头跑 bindgen
+import cc _.cpacks.legacy;    // 实现导入：只编译链接，不产生声明
+```
+
+`aila build/run/check` 会自动跑 bindgen（缓存键 = 头文件哈希 + 档位 + 三元组），
+想单独看产物就 `aila bindgen`（默认写到 `build/bindgen/<cpack>.ail`），
+或 `aila build --emit-bindings` 把 `.ail` 一并放进产物目录。
+
 ## 当前实现范围（M1）
 
 已落地：**全部 v0 语法解析** + 名字/类型/布局/区域效果/match 完备性/主名字检查 + LLVM IR 生成与目标文件产出，

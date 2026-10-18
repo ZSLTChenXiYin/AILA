@@ -343,3 +343,15 @@ M1 冻结条件（**四条全绿才算完**）：
 | 判据 | 六示例输出与 `expected.out` 逐字节一致（含 `score=0.75` 的浮点路径）；`std_io.ll` 快照随之更新；`stdlib/*.aila` 里 `#[c]` 计数为 0 |
 | IDE 插件 | 新增 `editors/vscode/`：语法高亮（TextMate）、语言配置（注释/括号/缩进）、片段、`aila build/run` 任务与命令，详见该目录 README |
 | 文档 | 新增 rfcs/0005（标准库纯 AILA 的动机/裁决/验收）；specs/0002 §7.0（原语）；docs/README 索引；README 标准库与插件说明 |
+
+## 23. `.ail` 与 `.aila` 分清 + `aila bindgen` 落地
+
+| 项 | 结论 |
+|---|---|
+| 概念澄清 | **`.aila` = AILA 源码**（人写、进版本库、可有 `module {}` 与函数体）；**`.ail` = C 绑定声明**（bindgen 产物、只有壳内声明、放 `build/` 下、随构建重生成、不进版本库） |
+| 自动绑定 | 调 C 库**不需要用户手动绑定**：`cpacks/<名>/{include/*.h,*.c}` + `import ch _.cpacks.<名>;` → `build/run/check` 自动跑 bindgen（缓存键 = 头文件内容 + 档位 + 三元组） |
+| 新命令 | `aila bindgen [目标] [--backend auto\|clang\|builtin] [--target <board>] [--out <文件>]`：不给目标 = 项目内全部 cpack → `build/bindgen/<cpack>.ail`；目标可为 cpack 名 / `cpacks/<名>` / 含头文件的目录；未映射项以 `W3001` 报出 |
+| 构建产物 | `aila build --emit-bindings` 把 `.ail` 复制到 `build/<board>/bindgen/`（specs/0001 §5.2 的 `--emit bindings`） |
+| 编辑器 | 插件把 `.ail` 注册成**独立语言** `aila-binding`（状态栏显示「AILA C 绑定（生成物）」），复用同一套文法；片段只给 `.aila` |
+| 判据 | `internal/cli/TestBindgenCommandGeneratesAil`：临时工程里真实生成 `build/bindgen/kit.ail`，断言它是 AILA 声明而不是 C 源码；`aila bindgen` 实跑 cinterop 输出 `mathkit → build/bindgen/mathkit.ail（clang 档，12 行）` |
+| 文档 | specs/0001 新增 §6.0（两种文件对照表 + 自动绑定 + 命令用法）、CLI 表更新；README 新增「`.aila` 与 `.ail` 不是一种文件」小节 |

@@ -38,6 +38,8 @@ type Options struct {
 	CC       string
 	EmitIR   bool
 	EmitJSON bool
+	// EmitBindings 把 bindgen 生成的 `.ail` 复制到产物目录（便于审计）
+	EmitBindings bool
 	OutName  string
 }
 
@@ -56,6 +58,8 @@ type Result struct {
 	Objects   []string
 	IR        map[string]string
 	Cpacks    []string
+	// bindText 是本次构建生成的 C 绑定文本（cpack → .ail 内容）
+	bindText map[string]string
 	OutDir    string
 	Artifacts map[string]any
 }
@@ -63,7 +67,7 @@ type Result struct {
 // Load 是「解析 + 语义」阶段：模块发现、清单、逐模块解析、多模块类型检查。
 func Load(root string, opts Options) *Result {
 	bag := &diag.Bag{}
-	res := &Result{Diags: bag, IR: map[string]string{}, Artifacts: map[string]any{}}
+	res := &Result{Diags: bag, IR: map[string]string{}, bindText: map[string]string{}, Artifacts: map[string]any{}}
 	man := manifest.Load(root, bag)
 	if man == nil {
 		return res
@@ -299,6 +303,7 @@ func bindCpack(prj *project.Project, imp *ast.Import, res *Result, target bindge
 		return "", "", false
 	}
 	text := br.Header(name, target) + "\n\n" + br.Text
+	res.bindText[name] = text
 	// 缓存：同一份头（哈希）+ 同一档位 + 同一映射规则版本才复用同一份绑定
 	// （映射规则改了就换 schema，避免拿旧缓存装作成功）
 	const bindgenSchema = "v2"
@@ -398,6 +403,21 @@ func Build(root string, opts Options) *Result {
 			"安装 clang 或 MinGW-w64，并把 `clang`/`gcc` 放进 PATH")
 		return res
 	}
+	// C 绑定产物（`--emit-bindings`）：`.ail` 是机器生成的声明文件，`.aila` 才是源码
+	if opts.EmitBindings {
+		bindDir := filepath.Join(outDir, "bindgen")
+		if err := os.MkdirAll(bindDir, 0o777); err == nil {
+			names := make([]string, 0, len(res.bindText))
+			for name := range res.bindText {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			for _, name := range names {
+				_ = os.WriteFile(filepath.Join(bindDir, name+".ail"), []byte(res.bindText[name]), 0o666)
+			}
+		}
+	}
+
 	// 先把 IR 全部落盘（`--emit-ir`），再逐个降成目标文件
 	for _, name := range res.Program.Order {
 		ir, ok := irs[name]

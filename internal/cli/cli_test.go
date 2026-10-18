@@ -114,17 +114,49 @@ func TestNewProject(t *testing.T) {
 	}
 }
 
-// TestPendingCommandsReportE9003 守护「还没到批次」的命令：它们必须显式报 E9003，
-// 而不是静默成功或抛内部错误。
-func TestPendingCommandsReportE9003(t *testing.T) {
-	for _, cmd := range []string{"bindgen"} {
-		code, _, errs := run(t, cmd)
-		if code != ExitDiag {
-			t.Fatalf("%s 应返回 1，实得 %d", cmd, code)
+// TestBindgenCommandGeneratesAil 守护 `aila bindgen`：它产出的是 `.ail` 绑定文件
+// （不是 `.aila` 源码），且默认落在 `build/bindgen/`。
+func TestBindgenCommandGeneratesAil(t *testing.T) {
+	root := t.TempDir()
+	write := func(name, body string) {
+		t.Helper()
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
+			t.Fatal(err)
 		}
-		if !strings.Contains(errs, "E9003") {
-			t.Fatalf("%s 应报 E9003：%s", cmd, errs)
+		if err := os.WriteFile(path, []byte(body), 0o666); err != nil {
+			t.Fatal(err)
 		}
+	}
+	write("aila.toml", "[package]\nname = \"bg\"\nversion = \"0.1.0\"\nentry = \"_.main\"\n\n[target]\nboard = \"host\"\n")
+	write("main.aila", "import ch _.cpacks.kit;\n\nfunc main() {\n    _ = kit.kit_add(1, 2);\n}\n")
+	write("cpacks/kit/include/kit.h", "int kit_add(int a, int b);\n")
+	write("cpacks/kit/kit.c", "int kit_add(int a, int b) { return a + b; }\n")
+
+	// 切到临时工程目录前先把 AILA_HOME 指回仓库：错误码表与 stdlib 从这里读
+	wd, _ := os.Getwd()
+	t.Setenv("AILA_HOME", filepath.Clean(filepath.Join(wd, "..", "..")))
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(wd) }()
+
+	code, out, errs := run(t, "bindgen")
+	if code != ExitOK {
+		t.Fatalf("bindgen 应成功（exit=0），实得 %d：%s", code, errs)
+	}
+	if !strings.Contains(out, "kit.ail") {
+		t.Fatalf("输出应提到 kit.ail：%s", out)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "build", "bindgen", "kit.ail"))
+	if err != nil {
+		t.Fatalf("没有生成 build/bindgen/kit.ail：%v", err)
+	}
+	if !strings.Contains(string(data), "kit_add") {
+		t.Fatalf("绑定文件里应有 kit_add：%s", string(data))
+	}
+	if strings.Contains(string(data), "func kit_add(int") {
+		t.Fatalf("绑定文件应是 AILA 声明，不该是 C 源码：%s", string(data))
 	}
 }
 

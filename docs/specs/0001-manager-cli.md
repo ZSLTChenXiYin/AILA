@@ -159,7 +159,7 @@ aila [--version] [--help] <command> ...
 | `aila build [路径]` | 全流程到可执行 / `.o` | `-o` `--target` `--opt` `--emit ir\|json\|bindings\|all` `--no-cache` | 失败 = 1 |
 | `aila run [路径]` | `build` 后执行，透传 `-- ARGS` | 同 build + `--` | 被执行程序退出码透传 |
 | `aila clean [路径]` | 删 `build/` | `--cache-only` | 0 |
-| `aila bindgen <目标> [--out <文件>]` | 手动跑 C 绑定生成（调试用，§11.1 工具化） | `--backend auto\|clang\|builtin` `--target` `--out` | 有未映射项但产物成立 = 0（带 `W3001`）；完全失败 = 1 |
+| `aila bindgen [目标]` | 生成 C 绑定 `.ail`（不给目标 = 项目内全部 cpack；目标可为 cpack 名 / `cpacks/<名>` / 含头文件的目录） | `--backend auto\|clang\|builtin` `--target` `--out` | 有未映射项但产物成立 = 0（带 `W3001`）；完全失败 = 1 |
 | `aila target list\|show\|add` | 目标与地形表可发现性三件套（§5.9） | `show <board>` | 未知 board = 2 |
 | `aila explain <CODE>` | 错误码解释 + 傻瓜式修复步骤 | `--json` | 未知码 = 2 |
 | `aila parse <文件>` | 解析一份 `.aila`，打印 token 流（`--tokens`）或语法树 S-表达式 | `--tokens` | 有诊断 = 1 |
@@ -270,6 +270,24 @@ build/
 ---
 
 ## 6. bindgen（`import ch` → `.ail`）
+
+### 6.0 两种文件别混：`.aila` 是源码，`.ail` 是产物
+
+| 扩展名 | 内容 | 谁生成 | 进版本库 | 参与编译 |
+|---|---|---|---|---|
+| `.aila` | AILA **源码**模块（可有 `module {}` 块、函数体、`state`…） | 人写 | 是 | 是 |
+| `.ail` | **C 绑定声明**：只有壳内声明（`#[c] public func …`、`public const …`、`type X = …`），没有函数体 | `bindgen` 生成 | **否**（`build/` 下，可随时重生成） | 是（当普通 AILA 模块参与前端） |
+
+**用户不需要手动绑定**：把 `cpacks/<名字>/{include/*.h, *.c}` 放好，源码里写 `import ch _.cpacks.<名字>;`
+即可——`aila build/run/check` 在解析阶段自动跑 bindgen（缓存键 = 头文件内容 + 档位 + 三元组），
+产物落在 `build/.cache/bindgen/`。`aila bindgen` 只是把同一份产物显式写出来（给人看 / 预生成）：
+
+```text
+aila bindgen                       # 项目内全部 cpack → build/bindgen/<cpack>.ail
+aila bindgen cpacks/mathkit        # 单个 cpack
+aila bindgen cpacks/mathkit --backend builtin --out /tmp/mathkit.ail
+aila build --emit-bindings         # 把 .ail 一并复制进 build/<board>/bindgen/
+```
 
 ### 6.1 产物形态（§11.1）
 

@@ -18,6 +18,7 @@ func loadOpts() build.Options {
 		CC:       buildCC,
 		EmitIR:   buildEmitIR,
 		EmitJSON: buildEmitJSON,
+		EmitBindings: buildEmitBnd,
 		OutName:  buildOutName,
 		UpdateDeps: buildDepsUpd,
 		Vendor:     buildVendor,

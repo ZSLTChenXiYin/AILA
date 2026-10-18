@@ -11,6 +11,9 @@ tests/tmp*/
 
 # `.ll` 在 tests/corpus 下是**契约快照**（要进版本库），这里只忽略构建目录里的
 build/**/*.ll
+# .ail 是 bindgen 产物：除 tests/corpus 里的契约快照外一律不进库
+*.ail
+!tests/corpus/**/*.ail
 
 # 随包工具链与打包中间物（由 ci/fetch-llvm.* 生成，发布时随 release 分发）
 /toolchain/

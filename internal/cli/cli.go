@@ -74,7 +74,7 @@ func newRootCmd() *cobra.Command {
 		newVersionCmd(), newDoctorCmd(), newToolchainCmd(), newTargetCmd(),
 		newExplainCmd(), newNewCmd(), newCleanCmd(), newIRCmd(),
 		checkCmd, buildCmd, runCmd, newDepsCmd(),
-		newPendingCmd("bindgen", "生成 C 绑定"),
+		newBindgenCmd(),
 		newParseCmd(),
 	)
 	return root
