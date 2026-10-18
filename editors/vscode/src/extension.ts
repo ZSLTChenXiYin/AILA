@@ -85,6 +85,19 @@ export function activate(ctx: vscode.ExtensionContext): void {
 
   ctx.subscriptions.push(
     vscode.tasks.registerTaskProvider("aila", {
+      // resolveTask：把 tasks.json 里 "type": "aila" 的定义补全成可执行任务
+      resolveTask: (task: vscode.Task) => {
+        const def = task.definition as { command?: string };
+        const sub = def.command ?? "build";
+        return new vscode.Task(
+          task.definition,
+          task.scope ?? vscode.TaskScope.Workspace,
+          task.name || `aila ${sub}`,
+          "aila",
+          new vscode.ShellExecution(ailaPath(), [sub]),
+          ["$aila"],
+        );
+      },
       provideTasks: async () => {
         const root = await workspaceRoot();
         const defs = ["build", "run", "check"] as const;

@@ -9,13 +9,13 @@
     { "include": "#strings" },
     { "include": "#chars" },
     { "include": "#numbers" },
+    { "include": "#modulepaths" },
+    { "include": "#functions" },
+    { "include": "#regionblocks" },
+    { "include": "#calls" },
     { "include": "#keywords" },
     { "include": "#types" },
-    { "include": "#effects" },
-    { "include": "#functions" },
-    { "include": "#modulepaths" },
-    { "include": "#regionblocks" },
-    { "include": "#calls" }
+    { "include": "#effects" }
   ],
   "repository": {
     "comments": {
@@ -35,7 +35,7 @@
       "patterns": [
         {
           "name": "meta.attribute.aila",
-          "match": "#\\[[A-Za-z_][A-Za-z0-9_]*",
+    "match": "#\\[[^\\]\\n]*\\]",
           "captures": {
             "0": { "name": "entity.name.function.decorator.aila" }
           }

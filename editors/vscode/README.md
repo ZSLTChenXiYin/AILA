@@ -23,6 +23,15 @@ ln -s "$(pwd)" ~/.vscode/extensions/ailang.aila-0.1.0
 
 重启 VSCode，打开任意 `.aila` 文件即可（右下角语言模式显示 **AILA**）。
 
+### 本机已验证过的完整命令（Windows + Node 24）
+```bash
+npm install                 # 4 个包：typescript / @types/*
+npm run check               # = tsc 编译 + 语法高亮冒烟（19 条断言，119 个 token）
+npx @vscode/vsce package --allow-missing-repository   # → aila-0.1.0.vsix（16 KB）
+code --install-extension aila-0.1.0.vsix --force       # 装进本机 VSCode
+code --list-extensions --show-versions | findstr aila  # → ailang.aila@0.1.0
+```
+
 ### B. 打包成 `.vsix` 分发
 
 ```bash

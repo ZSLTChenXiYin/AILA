@@ -101,11 +101,15 @@
   },
   "scripts": {
     "compile": "tsc -p ./",
+    "smoke": "node scripts/grammar-smoke.mjs",
+    "check": "npm run compile && npm run smoke",
     "package": "vsce package"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.80.0",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.3.2"
   }
 }

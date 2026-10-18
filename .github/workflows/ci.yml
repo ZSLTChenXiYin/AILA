@@ -63,6 +63,27 @@ jobs:
           ./aila build examples/hello --emit-ir
           ./aila run examples/hello
 
+  vscode-extension:
+    # 编辑器插件：TypeScript 编译 + 语法高亮冒烟（TextMate 真正跑一遍）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: 安装依赖
+        run: npm install --no-audit --no-fund
+      - name: 编译 + 语法高亮冒烟
+        run: npm run check
+      - name: 打包 vsix
+        run: npx --yes @vscode/vsce@latest package --allow-missing-repository
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aila-vscode
+          path: editors/vscode/*.vsix
   go-cross:
     runs-on: ubuntu-latest
     steps:
