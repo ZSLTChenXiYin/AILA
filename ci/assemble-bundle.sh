@@ -30,7 +30,7 @@ case "$PLATFORM" in
 esac
 
 ( cd "$ROOT" && CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
-    go build -trimpath -ldflags "-s -w -X github.com/ailang/aila/internal/cli.Version=$VERSION" \
+    go build -trimpath -ldflags "-s -w -X aila/internal/cli.Version=$VERSION" \
     -o "$BUNDLE/aila" ./cmd/aila )
 if [ "$GOOS" = "windows" ]; then
   mv "$BUNDLE/aila" "$BUNDLE/aila.exe"
@@ -40,6 +40,8 @@ mkdir -p "$BUNDLE/share/aila"
 cp -r "$ROOT/runtime" "$BUNDLE/share/aila/runtime"
 cp -r "$ROOT/stdlib" "$BUNDLE/share/aila/stdlib"
 cp -r "$ROOT/share/aila/data" "$BUNDLE/share/aila/data"
+# 给 AI 编程工具的技能包（`aila skill` 读它；也可单独拿 aila-skill-<版本>.zip 分发）
+cp -r "$ROOT/share/aila/skills" "$BUNDLE/share/aila/skills"
 
 if [ -d "$ROOT/toolchain" ]; then
   cp -r "$ROOT/toolchain" "$BUNDLE/toolchain"
@@ -63,8 +65,13 @@ LLVM/Clang 部分按 Apache-2.0 WITH LLVM-exception 再分发，
 只有当项目清单显式写 [build.toolchain] cc = "system:..." 时才会去系统里找。
 
 自检：./aila doctor     编译并运行：./aila run examples/hello
+给 AI 用：./aila skill  （技能包在 share/aila/skills/aila/）
 EOF
 
 echo "== 打包 =="
 ( cd "$OUT" && zip -qr "aila-$VERSION-$PLATFORM.zip" "aila-$VERSION-$PLATFORM" )
 echo "产物：$OUT/aila-$VERSION-$PLATFORM.zip"
+
+# 单独发一份「技能包」zip：不装 AILA 也能把这份技能喂给 AI 工具
+( cd "$ROOT/share/aila/skills" && zip -qr "$OUT/aila-skill-$VERSION-$PLATFORM.zip" "aila" )
+echo "产物：$OUT/aila-skill-$VERSION-$PLATFORM.zip"

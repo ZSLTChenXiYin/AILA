@@ -50,6 +50,9 @@ jobs:
       - name: 黄金快照一致性（token / AST / 布局 / 签名 / 绑定 / IR）
         run: go run ./tools/goldengen -check
 
+      - name: AI 技能参考一致性（cli.md / errors.md 必须与实现同步）
+        run: go run ./tools/skillgen -check
+
       - name: go test（含示例 IR 逐字节 + 端到端运行）
         run: go test ./... -v
 

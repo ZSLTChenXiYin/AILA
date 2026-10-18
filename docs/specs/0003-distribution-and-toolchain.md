@@ -17,6 +17,8 @@ aila-<version>-<platform>/
   aila[.exe]                    ← 管理器（Go 单文件；移植完成前为 Python 启动器 + src/）
   share/aila/runtime/aila_rt.c  ← 语言运行时（C 薄层）
   share/aila/stdlib/*.aila      ← 标准库（AILA 源码）
+  share/aila/data/*.json        ← 错误码目录与 board 表
+  share/aila/skills/aila/       ← 给 AI 编程工具的技能包（`aila skill` 读它）
   toolchain/<triple>/
     bin/{clang, llc, ld.lld, llvm-ar, llvm-objcopy}   ← 随包 LLVM/Clang（裁剪）
     lib/clang/<ver>/include/                          ← clang 内建头（bindgen / C 编译需要）
@@ -25,6 +27,10 @@ aila-<version>-<platform>/
     LICENSE.TXT                                        ← Apache-2.0 WITH LLVM-exception
   VERSION  NOTICES.md  README.md  LICENSE
 ```
+
+另有一份 **`aila-skill-<version>-<platform>.zip`**：只含 `aila/`（`SKILL.md` + `reference/*.md`），
+不含任何二进制。用途是「不装 AILA 也能把这份技能喂给 AI 工具」——技能讲的是怎么用 `aila` 命令，
+所以它必须能独立分发（见 specs/0001 §6.7）。
 
 ### 1.1 三个角色，别混为一谈（常见误解）
 

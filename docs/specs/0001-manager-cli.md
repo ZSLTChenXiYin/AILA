@@ -166,6 +166,7 @@ aila [--version] [--help] <command> ...
 | `aila ir <文件>` | 单文件走完「解析 → 语义 → LLVM IR」并打印 IR 文本 | `--triple` | 有诊断 = 1 |
 | `aila deps [路径]` | 打印依赖图 / 重写 `aila.lock` / 生成 `vendor/` | `--update` `--vendor` `--json` | 0；有诊断 = 1 |
 | `aila lsp` | 启动语言服务器（JSON-RPC over stdio）：大纲 / 跳转定义 / 类型定义 / 跳到实现 / import 链接 / 悬停 / 引用 / 同文件高亮 / 工程符号 / 诊断推送 / 补全 / 签名帮助 / 重命名 / 折叠 / 选区 / 格式化 / 内联提示（§6.6） | `--log <文件>` | 0；内部错误 = 4 |
+| `aila skill [文件]` | 给 AI 编程工具的技能包：默认把 `SKILL.md` 打到 stdout，也可打印单篇 / 列出 / 装进 AI 工具目录（§6.7） | `--path` `--list` `--install <目录>` | 0；找不到技能目录 = 1 |
 
 ### 3.3 诊断输出格式（人读）
 
@@ -405,6 +406,21 @@ C 包在编译器侧是「导入时现算 bindgen → 生成 `.ail` → 当普�
 | 诊断 | cpack 目录不存在 → `E3001`；路径写错 → `E7010`（与编译器同码同话术，直接标在 `import` 那一行） |
 | `import cc` | 只让 C 源参与编译、不产生绑定模块，因此编辑器里不索引（符合编译器的语义） |
 | 只读保护 | 生成的 `.ail` 上拒绝改名与格式化（改了也会被下次生成覆盖） |
+
+### 6.7 给 AI 编程工具的技能包（`aila skill`）
+
+**定位**：用户的 AI 面向的是**这个工具**（`aila` 命令），不是编译器源码。所以技能讲的全是
+「怎么用打包好的 aila 把程序做出来」，一份二进制也不用带。
+
+| 项 | 约定 |
+|---|---|
+| 位置 | `<AILA_HOME>/share/aila/skills/aila/`（仓库里同一相对路径；既随发布包分发，也可单独 zip） |
+| 入口 | `SKILL.md`，带 YAML frontmatter（`name: aila` + 一句 description），供 AI 工具识别与触发 |
+| 结构 | `SKILL.md`（铁律 / 上手 / 工作循环 / 可见性阶梯 / 最小子集 / 报错速查 / 排错剧本）+ `reference/{language,recipes,manifest,cli,errors}.md` |
+| 生成物 | `reference/cli.md` 与 `reference/errors.md` 由 `go run ./tools/skillgen` 从命令树与 `share/aila/data/diag_codes.json` 生成；CI 用 `-check` 卡住漂移 |
+| 命令 | `aila skill`（打印入口）/ `aila skill <文件>`（打印单篇）/ `--list` / `--path` / `--install <目录>`（复制成 `<目录>/aila/`） |
+| 分发 | 发布包内 `share/aila/skills/`；另出 `aila-skill-<version>-<platform>.zip`（只含 `aila/`，见 specs/0003 §1） |
+| 判据 | `internal/skill` 单测（目录随 AILA_HOME / 列文件 / 读 / 安装）；`tools/skillgen -check` 在 CI 全绿；发布包解开后 `./aila skill --list` 列出 6 个文件 |
 
 ---
 

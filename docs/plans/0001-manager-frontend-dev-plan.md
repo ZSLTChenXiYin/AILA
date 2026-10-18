@@ -335,7 +335,7 @@ M1 冻结条件（**四条全绿才算完**）：
 
 | 项 | 结论 |
 |---|---|
-| 模块路径 | `go.mod` 从 `github.com/aila-lang/aila` 改成 **`github.com/ailang/aila`**（138 处 import + 打包脚本的 `-X` 注入路径同步） |
+| 模块路径 | `go.mod` 从 `github.com/aila-lang/aila` 改成 **`aila`**（138 处 import + 打包脚本的 `-X` 注入路径同步） |
 | 可见性语义确认 | 同项目内**跨子包**也算「包外」——`import` 本来就是导入一个子包，与跨项目同义，不需要额外一级（designs §2.2 已写明） |
 | 语言原语 | ~~新增 `#[intrinsic]`~~ → **已撤回**（见 §24）：按设计决定不新增声明形态，OS 边界用 `#[c]` |
 | 标准库去 C 化 | `stdlib/io.aila` 重写成纯 AILA：十进制转换、符号、UTF-8 编码、浮点 6 位小数、换行/冲刷全部自己实现；缓冲区用 `region` 块就地分配，不留模块级可变状态 |
@@ -407,3 +407,19 @@ M1 冻结条件（**四条全绿才算完**）：
 | 只读纪律 | 生成的 `.ail` 上 `prepareRename` / `rename` / `formatting` 一律拒绝——改了下一次生成也会被覆盖，不如不给改 |
 | `import cc` | 只登记 C 源参与编译、不产生绑定（与编译器一致），因此编辑器不索引它 |
 | 判据 | Go 新增 5 个单测（模块解析 / 补全+悬停 / 跳转+签名帮助+链接 / 缺 cpack 报 E3001 / 缓存与只读保护）；`scripts/lsp-smoke.mjs` 增 6 条 C 导入断言（对 `examples/cinterop` 真跑），共 **53 条**全绿；六示例 `run` 输出不变 |
+
+## 28. 给 AI 编程工具的技能包（`aila skill`）
+
+要求：写一份面向 AI 的技能，讲「怎么用打包好的 AILA」，并参与 GitHub CI 打包分发；
+用户的 AI 面向的是 `aila` 这个工具，不关心源码。
+
+| 项 | 结论 |
+|---|---|
+| 形态 | `share/aila/skills/aila/`：`SKILL.md`（带 YAML frontmatter，AI 工具据此触发）+ `reference/{language,recipes,manifest,cli,errors}.md`。放在 `share/aila/` 下是为了让「仓库里」与「解压后」共用同一个相对路径，复用 AILA_HOME 的相对目录铁律 |
+| 内容取向 | 只讲工具：铁律（只用 `aila`、改完先 `check`、错误码先 `explain`）、30 秒上手、工作循环、可见性阶梯、最小可用子集、13 个「别的语言不是这样」的点、排错剧本。语言细节刻意只写**本批次实测可用**的写法——并发那节直接写「语法在、代码生成没落地」，避免 AI 硬写不存在的形态 |
+| 准确性来源 | 每个配方都用真二进制验证：`aila check` 全绿 + `aila run` 输出与文中标注一致（打印 / 数学 / 结构体方法 / 枚举 match / 错误通道 / 区域 / 数组视图 / C 互操作）。探测中还纠正了三处想当然：`if` 不产出值、**轻量形态与 `module {}` 不能混**（混了块外带体函数即 E2010）、`Some`/`None` 当前不存在 |
+| 防漂移 | 新增 `tools/skillgen`：从 cobra 命令树生成 `reference/cli.md`、从 `share/aila/data/diag_codes.json` 生成 `reference/errors.md`（87 条），`-check` 进 CI。手写的三篇（language/recipes/manifest）靠真跑验证，不自动生成 |
+| 命令 | `aila skill`（打印 `SKILL.md`，可直接管道给 AI）/ `aila skill <文件>` / `--list` / `--path` / `--install <目录>`（复制成 `<目录>/aila/`）。`internal/skill` 负责定位、列举、读取、安装，位置由 `home.Root()` 决定 |
+| 分发 | 两个 assemble 脚本都把 `share/aila/skills` 复制进 bundle，并额外产 `aila-skill-<版本>-<平台>.zip`（只含 `aila/`、不带二进制）；`release.yml` 的 `dist/*.zip` 通配自动带上 |
+| 判据 | `internal/skill` 三个单测（目录随 AILA_HOME / 列举与读取 / 安装）全绿；`go run ./tools/skillgen -check` 全绿并进 CI；本地真打一次包：`dist/aila-0.1.0-windows-x64.zip` 解开后 `./aila skill --list` 列出 6 个文件、`./aila run examples/hello` 仍打印 `hello, AILA!`；`aila-skill-0.1.0-windows-x64.zip` 的条目就是那 6 个 md |
+| 文档 | README 新增「给 AI 编程工具的技能包」一节；specs/0001 新增 §6.7 与命令表一行；specs/0003 §1 的发布目录加上 `share/aila/skills` 与技能 zip 说明 |

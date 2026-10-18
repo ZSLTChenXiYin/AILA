@@ -207,6 +207,30 @@ import cc _.cpacks.legacy;    // 实现导入：只编译链接，不产生声�
 悬停显示「来自 C 包 `mathkit` 的绑定」、`import` 行可点击；cpack 目录缺失会直接在
 `import` 那行标红（`E3001`）。生成的 `.ail` 是只读产物，改名/格式化会被拒绝。
 
+## 给 AI 编程工具的技能包（skill）
+
+AILA 自带一份**写给 AI 用的手册**，讲的是「怎么用这个打包好的 `aila`」，不是编译器源码：
+
+```bash
+aila skill                              # 打印入口文档 SKILL.md（管道给 AI 就完事）
+aila skill reference/language.md        # 打某一篇
+aila skill --list                       # 看有哪些
+aila skill --install ~/.claude/skills   # 复制成 <目录>/aila/，登记进你的 AI 工具
+```
+
+| 文件 | 讲什么 |
+|---|---|
+| `SKILL.md` | 铁律、30 秒上手、标准工作循环、可见性阶梯、最小可用子集、报错速查、排错剧本 |
+| `reference/language.md` | 语言速查（类型/转换/区域/match/错误/C 互操作）+ 13 个反直觉点 |
+| `reference/recipes.md` | 15 个可抄的配方（新建、打印、C 库、跨包、交叉编译、热替换…），每条都跑过 |
+| `reference/manifest.md` | `aila.toml` 全字段 |
+| `reference/cli.md` | 命令 / 参数 / 退出码（**生成物**，从命令树生成） |
+| `reference/errors.md` | 87 条诊断码 → 含义 → 修法（**生成物**，从错误码目录生成） |
+
+技能随发布包分发（`share/aila/skills/aila/`），release 同时产出只含技能文本的
+`aila-skill-<版本>-<平台>.zip`——不装 AILA 也能先把手册交给 AI。
+后两份参考由 `go run ./tools/skillgen` 生成，CI 用 `-check` 保证与实现不漂移。
+
 ## 当前实现范围（M1）
 
 已落地：**全部 v0 语法解析** + 名字/类型/布局/区域效果/match 完备性/主名字检查 + LLVM IR 生成与目标文件产出，

@@ -36,17 +36,19 @@ $prevGOARCH = $env:GOARCH
 $env:CGO_ENABLED = "0"
 $env:GOOS = if ($Platform -like "windows*") { "windows" } else { "linux" }
 $env:GOARCH = if ($Platform -like "*arm64") { "arm64" } else { "amd64" }
-go build -trimpath -ldflags "-s -w -X github.com/ailang/aila/internal/cli.Version=$Version" `
+go build -trimpath -ldflags "-s -w -X aila/internal/cli.Version=$Version" `
     -o (Join-Path $Bundle "aila$(if ($env:GOOS -eq 'windows') { '.exe' } else { '' })") ./cmd/aila
 $env:GOOS = $prevGOOS
 $env:GOARCH = $prevGOARCH
 Pop-Location
 
-# 2) 运行时 + 标准库 + 数据表（相对目录，AILA_HOME 解析靠它）
+# 2) 运行时 + 标准库 + 数据表 + AI 技能包（相对目录，AILA_HOME 解析靠它）
 New-Item -ItemType Directory -Force -Path (Join-Path $Bundle "share\aila") | Out-Null
 Copy-Item (Join-Path $Root "runtime") (Join-Path $Bundle "share\aila\runtime") -Recurse
 Copy-Item (Join-Path $Root "stdlib") (Join-Path $Bundle "share\aila\stdlib") -Recurse
 Copy-Item (Join-Path $Root "share\aila\data") (Join-Path $Bundle "share\aila\data") -Recurse
+# 给 AI 编程工具的技能包（`aila skill` 读它；也可单独拿 aila-skill-<版本>.zip 分发）
+Copy-Item (Join-Path $Root "share\aila\skills") (Join-Path $Bundle "share\aila\skills") -Recurse
 
 # 3) 随包工具链
 $tc = Join-Path $Root "toolchain"
@@ -75,6 +77,7 @@ LLVM/Clang 部分按 Apache-2.0 WITH LLVM-exception 再分发，
 只有当项目清单显式写 [build.toolchain] cc = "system:..." 时才会去系统里找。
 
 自检：./aila doctor     编译并运行：./aila run examples/hello
+给 AI 用：./aila skill  （技能包在 share/aila/skills/aila/）
 "@
 [System.IO.File]::WriteAllText((Join-Path $Bundle "NOTICES.md"), $notice, [System.Text.Encoding]::UTF8)
 
@@ -83,3 +86,9 @@ $zip = Join-Path $OutDir "aila-$Version-$Platform.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path $Bundle -DestinationPath $zip
 Write-Host "产物：$zip"
+
+# 6) 单独发一份「技能包」zip：不装 AILA 也能把这份技能喂给 AI 工具
+$skillZip = Join-Path $OutDir "aila-skill-$Version-$Platform.zip"
+if (Test-Path $skillZip) { Remove-Item $skillZip -Force }
+Compress-Archive -Path (Join-Path $Root "share\aila\skills\aila") -DestinationPath $skillZip
+Write-Host "产物：$skillZip"
