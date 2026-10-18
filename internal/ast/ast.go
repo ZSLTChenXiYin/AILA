@@ -7,7 +7,7 @@
 //  3. 位置信息在 Span 里，不参与序列化。
 package ast
 
-import "github.com/ailang/aila/internal/diag"
+import "aila/internal/diag"
 
 // Node 是语法树节点。
 type Node interface {

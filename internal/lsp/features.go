@@ -4,10 +4,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ailang/aila/internal/ast"
-	"github.com/ailang/aila/internal/lexer"
-	"github.com/ailang/aila/internal/sema"
-	"github.com/ailang/aila/internal/types"
+	"aila/internal/ast"
+	"aila/internal/lexer"
+	"aila/internal/sema"
+	"aila/internal/types"
 )
 
 // 本文件实现「编辑器基础能力」：补全 / 签名帮助 / 重命名 / 折叠 / 选区 /

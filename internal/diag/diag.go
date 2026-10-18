@@ -12,7 +12,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ailang/aila/internal/home"
+	"aila/internal/home"
 )
 
 // 严重级别。

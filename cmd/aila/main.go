@@ -8,7 +8,7 @@ package main
 import (
 	"os"
 
-	"github.com/ailang/aila/internal/cli"
+	"aila/internal/cli"
 )
 
 func main() {

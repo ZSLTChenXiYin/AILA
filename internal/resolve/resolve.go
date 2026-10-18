@@ -13,8 +13,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ailang/aila/internal/home"
-	"github.com/ailang/aila/internal/targets"
+	"aila/internal/home"
+	"aila/internal/targets"
 )
 
 // 工具来源。

@@ -9,7 +9,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"github.com/ailang/aila/internal/diag"
+	"aila/internal/diag"
 )
 
 // LockFileName 是锁文件名（放在包根，与 aila.toml 同级）。

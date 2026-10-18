@@ -1,9 +1,9 @@
 package sema
 
 import (
-	"github.com/ailang/aila/internal/ast"
-	"github.com/ailang/aila/internal/diag"
-	"github.com/ailang/aila/internal/types"
+	"aila/internal/ast"
+	"aila/internal/diag"
+	"aila/internal/types"
 )
 
 func isVoidOrNever(t types.Type) bool {

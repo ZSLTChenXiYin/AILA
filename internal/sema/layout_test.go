@@ -7,9 +7,9 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/ailang/aila/internal/diag"
-	"github.com/ailang/aila/internal/parser"
-	"github.com/ailang/aila/internal/types"
+	"aila/internal/diag"
+	"aila/internal/parser"
+	"aila/internal/types"
 )
 
 // layoutSnapshot 是 tools/gen_layout.py 生成的期望值。

@@ -24,8 +24,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ailang/aila/internal/diag"
-	"github.com/ailang/aila/internal/manifest"
+	"aila/internal/diag"
+	"aila/internal/manifest"
 )
 
 // Source 是依赖的取值方式。

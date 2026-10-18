@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ailang/aila/internal/diag"
+	"aila/internal/diag"
 )
 
 func repoRoot(t *testing.T) string {

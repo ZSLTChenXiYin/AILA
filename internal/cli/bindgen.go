@@ -9,11 +9,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ailang/aila/internal/bindgen"
-	"github.com/ailang/aila/internal/diag"
-	"github.com/ailang/aila/internal/manifest"
-	"github.com/ailang/aila/internal/project"
-	"github.com/ailang/aila/internal/resolve"
+	"aila/internal/bindgen"
+	"aila/internal/diag"
+	"aila/internal/manifest"
+	"aila/internal/project"
+	"aila/internal/resolve"
 )
 
 // newBindgenCmd 是 `aila bindgen`：把 cpack 的 C 头文件翻成 `.ail` 绑定模块。

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ailang/aila/internal/ast"
+	"aila/internal/ast"
 )
 
 func corpusDir(t *testing.T) string {

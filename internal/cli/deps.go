@@ -6,9 +6,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ailang/aila/internal/deps"
-	"github.com/ailang/aila/internal/diag"
-	"github.com/ailang/aila/internal/manifest"
+	"aila/internal/deps"
+	"aila/internal/diag"
+	"aila/internal/manifest"
 )
 
 // newDepsCmd 是 `aila deps`：打印依赖图 / 更新锁 / 生成 vendor。

@@ -1,8 +1,8 @@
 package sema
 
 import (
-	"github.com/ailang/aila/internal/ast"
-	"github.com/ailang/aila/internal/types"
+	"aila/internal/ast"
+	"aila/internal/types"
 )
 
 // 本文件存放「代码生成注解」：语义检查阶段顺带记下 codegen 需要的静态事实。

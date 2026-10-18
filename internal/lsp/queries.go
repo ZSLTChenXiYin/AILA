@@ -3,7 +3,7 @@ package lsp
 import (
 	"strings"
 
-	"github.com/ailang/aila/internal/types"
+	"aila/internal/types"
 )
 
 // 本文件实现查询类能力：大纲 / 跳转定义 / 悬停 / 查找引用 / 同文件高亮 / 工程符号搜索。

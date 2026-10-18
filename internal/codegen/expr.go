@@ -4,9 +4,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ailang/aila/internal/ast"
-	"github.com/ailang/aila/internal/sema"
-	"github.com/ailang/aila/internal/types"
+	"aila/internal/ast"
+	"aila/internal/sema"
+	"aila/internal/types"
 )
 
 // lowerExpr 把表达式降成 (IR 类型, SSA 值)。

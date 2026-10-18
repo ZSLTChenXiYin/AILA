@@ -3,8 +3,8 @@ package sema
 import (
 	"strings"
 
-	"github.com/ailang/aila/internal/ast"
-	"github.com/ailang/aila/internal/types"
+	"aila/internal/ast"
+	"aila/internal/types"
 )
 
 // 可见性阶梯（designs/0001 §2.2）：`public` 的含义是「提一级」。

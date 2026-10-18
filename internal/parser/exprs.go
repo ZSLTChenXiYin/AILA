@@ -1,9 +1,9 @@
 package parser
 
 import (
-	"github.com/ailang/aila/internal/ast"
-	"github.com/ailang/aila/internal/diag"
-	"github.com/ailang/aila/internal/lexer"
+	"aila/internal/ast"
+	"aila/internal/diag"
+	"aila/internal/lexer"
 )
 
 // --------------------------------------------------------------------------- //

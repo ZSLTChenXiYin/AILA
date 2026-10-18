@@ -1,4 +1,4 @@
-module github.com/ailang/aila
+module aila
 
 go 1.22
 

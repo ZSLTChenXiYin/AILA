@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/ailang/aila/internal/home"
+	"aila/internal/home"
 )
 
 func repoRoot(t *testing.T) string {

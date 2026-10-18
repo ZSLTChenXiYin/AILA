@@ -3,8 +3,8 @@ package lsp
 import (
 	"strings"
 
-	"github.com/ailang/aila/internal/ast"
-	"github.com/ailang/aila/internal/lexer"
+	"aila/internal/ast"
+	"aila/internal/lexer"
 )
 
 // 本文件实现「跳转类」补充能力：

@@ -6,11 +6,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ailang/aila/internal/codegen"
-	"github.com/ailang/aila/internal/parser"
-	"github.com/ailang/aila/internal/resolve"
-	"github.com/ailang/aila/internal/sema"
-	"github.com/ailang/aila/internal/types"
+	"aila/internal/codegen"
+	"aila/internal/parser"
+	"aila/internal/resolve"
+	"aila/internal/sema"
+	"aila/internal/types"
 )
 
 // newIRCmd 是 G3 落地的可见入口：单文件走完「解析 → 语义 → LLVM IR」，把 IR 打到 stdout。

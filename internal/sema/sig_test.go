@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ailang/aila/internal/parser"
-	"github.com/ailang/aila/internal/types"
+	"aila/internal/parser"
+	"aila/internal/types"
 )
 
 // sigSnapshot 是 tools/gen_sigs.py 生成的期望值。

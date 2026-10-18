@@ -7,9 +7,9 @@ package parser
 import (
 	"strings"
 
-	"github.com/ailang/aila/internal/ast"
-	"github.com/ailang/aila/internal/diag"
-	"github.com/ailang/aila/internal/lexer"
+	"aila/internal/ast"
+	"aila/internal/diag"
+	"aila/internal/lexer"
 )
 
 // primTypes 是内置标量类型字（C32/Text 等族名见 lexer.TypeWords）。

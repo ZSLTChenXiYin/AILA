@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ailang/aila/internal/diag"
+	"aila/internal/diag"
 )
 
 func write(t *testing.T, dir, content string) {

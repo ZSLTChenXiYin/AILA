@@ -1,6 +1,6 @@
 package ast
 
-import "github.com/ailang/aila/internal/diag"
+import "aila/internal/diag"
 
 // --------------------------------------------------------------------------- //
 // 表达式

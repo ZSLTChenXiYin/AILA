@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strconv"
 
-	"github.com/ailang/aila/internal/diag"
+	"aila/internal/diag"
 )
 
 // 与参考实现完全一致的序列化规则（现由 tools/goldengen 生成快照）：

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ailang/aila/internal/diag"
+	"aila/internal/diag"
 )
 
 // repoRoot 从本文件定位仓库根（internal/build → ../..）。

@@ -3,9 +3,9 @@ package sema
 import (
 	"sort"
 
-	"github.com/ailang/aila/internal/ast"
-	"github.com/ailang/aila/internal/diag"
-	"github.com/ailang/aila/internal/types"
+	"aila/internal/ast"
+	"aila/internal/diag"
+	"aila/internal/types"
 )
 
 // FuncSig 是函数签名（docs/specs/0002 §4 / §6 的承载结构）。

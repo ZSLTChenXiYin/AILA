@@ -10,12 +10,12 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ailang/aila/internal/ast"
-	"github.com/ailang/aila/internal/bindgen"
-	"github.com/ailang/aila/internal/diag"
-	"github.com/ailang/aila/internal/manifest"
-	"github.com/ailang/aila/internal/project"
-	"github.com/ailang/aila/internal/resolve"
+	"aila/internal/ast"
+	"aila/internal/bindgen"
+	"aila/internal/diag"
+	"aila/internal/manifest"
+	"aila/internal/project"
+	"aila/internal/resolve"
 )
 
 // 本文件让编辑器也认得 **C 导入**：`import ch _.cpacks.<名字>`。

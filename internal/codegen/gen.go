@@ -12,10 +12,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ailang/aila/internal/ast"
-	"github.com/ailang/aila/internal/diag"
-	"github.com/ailang/aila/internal/sema"
-	"github.com/ailang/aila/internal/types"
+	"aila/internal/ast"
+	"aila/internal/diag"
+	"aila/internal/sema"
+	"aila/internal/types"
 )
 
 // Lowerer 生成单个模块的 IR。

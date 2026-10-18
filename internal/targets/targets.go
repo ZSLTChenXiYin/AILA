@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/ailang/aila/internal/home"
+	"aila/internal/home"
 )
 
 // Board 是一个内置目标。

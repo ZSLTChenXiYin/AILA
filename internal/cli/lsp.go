@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ailang/aila/internal/lsp"
+	"aila/internal/lsp"
 )
 
 // newLSPCmd 是 `aila lsp`：给编辑器用的语言服务器（JSON-RPC over stdio）。

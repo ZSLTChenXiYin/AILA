@@ -1,8 +1,8 @@
 package sema
 
 import (
-	"github.com/ailang/aila/internal/ast"
-	"github.com/ailang/aila/internal/types"
+	"aila/internal/ast"
+	"aila/internal/types"
 )
 
 type pathKind int

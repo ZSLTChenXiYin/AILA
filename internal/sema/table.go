@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ailang/aila/internal/ast"
-	"github.com/ailang/aila/internal/diag"
-	"github.com/ailang/aila/internal/types"
+	"aila/internal/ast"
+	"aila/internal/diag"
+	"aila/internal/types"
 )
 
 // Table 是一个模块的类型表。

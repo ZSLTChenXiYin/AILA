@@ -16,12 +16,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ailang/aila/internal/diag"
-	"github.com/ailang/aila/internal/home"
-	"github.com/ailang/aila/internal/manifest"
-	"github.com/ailang/aila/internal/resolve"
-	"github.com/ailang/aila/internal/targets"
-	"github.com/ailang/aila/internal/toolchain"
+	"aila/internal/diag"
+	"aila/internal/home"
+	"aila/internal/manifest"
+	"aila/internal/resolve"
+	"aila/internal/targets"
+	"aila/internal/toolchain"
 )
 
 // 退出码（与 Python 版一致，docs/specs/0001 §3.1）。
@@ -74,11 +74,13 @@ func newRootCmd() *cobra.Command {
 		newVersionCmd(), newDoctorCmd(), newToolchainCmd(), newTargetCmd(),
 		newExplainCmd(), newNewCmd(), newCleanCmd(), newIRCmd(),
 		checkCmd, buildCmd, runCmd, newDepsCmd(), newLSPCmd(),
-		newBindgenCmd(),
-		newParseCmd(),
+		newBindgenCmd(), newParseCmd(), newSkillCmd(),
 	)
 	return root
 }
+
+// RootCommand 暴露命令树（`tools/skillgen` 用它生成 CLI 参考文档，保证文档与实现同步）。
+func RootCommand() *cobra.Command { return newRootCmd() }
 
 // Execute 是入口；返回进程退出码。
 func Execute() int {

@@ -1,8 +1,8 @@
 package sema
 
 import (
-	"github.com/ailang/aila/internal/ast"
-	"github.com/ailang/aila/internal/types"
+	"aila/internal/ast"
+	"aila/internal/types"
 )
 
 // 本文件处理「壳内前向声明 + 块内实现」的配对检查（designs/0001 §2.1 壳/块分工）。

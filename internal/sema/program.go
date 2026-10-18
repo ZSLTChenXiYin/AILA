@@ -3,8 +3,8 @@ package sema
 import (
 	"strings"
 
-	"github.com/ailang/aila/internal/ast"
-	"github.com/ailang/aila/internal/diag"
+	"aila/internal/ast"
+	"aila/internal/diag"
 )
 
 // Unit 是一个已装载模块的语义产物。

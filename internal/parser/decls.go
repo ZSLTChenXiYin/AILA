@@ -1,8 +1,8 @@
 package parser
 
 import (
-	"github.com/ailang/aila/internal/ast"
-	"github.com/ailang/aila/internal/lexer"
+	"aila/internal/ast"
+	"aila/internal/lexer"
 )
 
 // isEffectClause 判断 `@` 之后的子句名：region / mut / move。

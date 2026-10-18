@@ -8,13 +8,13 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/ailang/aila/internal/ast"
-	"github.com/ailang/aila/internal/diag"
-	"github.com/ailang/aila/internal/manifest"
-	"github.com/ailang/aila/internal/parser"
-	"github.com/ailang/aila/internal/project"
-	"github.com/ailang/aila/internal/sema"
-	"github.com/ailang/aila/internal/types"
+	"aila/internal/ast"
+	"aila/internal/diag"
+	"aila/internal/manifest"
+	"aila/internal/parser"
+	"aila/internal/project"
+	"aila/internal/sema"
+	"aila/internal/types"
 )
 
 // symbol 是索引里的一条符号。
