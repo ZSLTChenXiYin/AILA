@@ -390,5 +390,20 @@ M1 冻结条件（**四条全绿才算完**）：
 | 新能力 | `completion`（局部/模块符号/导入别名/关键字/类型；`alias.`→目标模块公开符号、`变量.`/`类型.`→字段+方法+变体；`#[`→属性名；`@`→效果名；`import `→模块路径；函数项是 `name(${1:参数})` 片段）、`signatureHelp`（按逗号定位当前形参）、`prepareRename`+`rename`（跨模块限定引用一起改；局部只在本文件；关键字/内置类型拒绝）、`foldingRange`（代码块/连续行注释/块注释/import 段）、`selectionRange`（标识符→括号→行→文件）、`formatting`（花括号层级缩进 4 空格 + 去行尾空白 + 末行一个换行；多行字符串与块注释内部原样保留；幂等，返回空数组表示无需改动）、`inlayHint`（`let`/`var` 未标注类型时显示推断类型）、`typeDefinition`（变量→类型声明）、`implementation`（壳内前向声明 ↔ 块内实现，AILA 特有）、`documentLink`（`import` 路径可点击） |
 | 词法/文本基础设施 | 新增 `scanCode`（把注释与字符串/字符字面量原地抹成空格，并标记「行首处在多行字面量内」），补全/签名/折叠/选区/格式化共用这一层，避免被字面量里的括号带跑偏 |
 | 符号索引 | `symbol` 增加 `Public`（壳内 + public），`alias.` 补全据此只列跨包可见符号；`typeShortName` 之前用 `String()` 取不到类型名（恒为 `?`），改为 `types.TypeName`——顺带修好了「字段跳转」的老问题 |
-| 判据 | Go：`internal/lsp` 新增 13 个单测（补全 3 / 签名帮助 / 重命名 2 / 折叠 / 选区 / 格式化 / 内联提示 / scanCode / 类型定义 / 跳实现 / import 链接）全绿；端到端 `scripts/lsp-smoke.mjs` 扩到 **47 条**协议断言（含临时工程里的格式化幂等）全绿；`npm run check` = tsc + 文法冒烟 21 条 + 覆盖检查 + LSP 冒烟 |
+| 判据 | Go：`internal/lsp` 新增 13 个单测（补全 3 / 签名帮助 / 重命名 2 / 折叠 / 选区 / 格式化 / 内联提示 / scanCode / 类型定义 / 跳实现 / import 链接）全绿；端到端 `scripts/lsp-smoke.mjs` 扩到 **47 条**协议断言（含临时工程里的格式化幂等）全绿；`npm run check` = tsc + 文法冒烟 21 条 + 覆盖检查 + LSP 冒烟；C 导入另见 §27（再加 6 条，共 53 条） |
 | 插件侧 | `extension.ts` 注册 10 个 provider（含类型定义 / 跳实现 / import 链接），`initialize` 里补上对应客户端能力（snippet / prepareRename / inlayHint 等）；补全项按 `CompletionItemKind` 映射、片段用 `SnippetString`、`FoldingRangeKind`/`InlayHintKind` 正确映射 |
+
+## 27. IDE 里的 C 导入（`import ch _.cpacks.<名字>`）
+
+要求：「我说的是 IDE 中导入 c 包的正确解析」——编译器早就能用，编辑器此前认不出来。
+
+| 项 | 结论 |
+|---|---|
+| 原来的问题 | `internal/lsp/analysis.go` 的导入闭包只认 `_` 与 `std` 两个根：`import ch _.cpacks.mathkit` 因为**没有对应的 `.aila` 文件**被直接跳过，于是 `mathkit.` 补全空、`F12` 跳不动、悬停没有、`import` 也没有链接——C 包在编辑器里等于不存在（`builtin` 推导符号表那一层根本没加载） |
+| 做法 | 复用编译器的同一条流水线：遇到 `kind == ch` 就 `bindgen.Run` → 拿到 `.ail` 文本 → 当模块索引，模块名 `_.cpacks.<名字>`（与 `internal/build` 一字不差）。统一由 `importTargetModule` / `importBindingName` 两个小函数算「import 指向哪个模块」「绑定成什么名字」，分析和 `documentLink` 共用，避免两套规则漂移 |
+| 缓存 | 两层：进程内 `Workspace.cbind`（键 = 工程根 + cpack）与磁盘 `build/.cache/bindgen-lsp/<cpack>.ail` + `.key`；有效性判据 = `规则版本 + triple + cpack 指纹`，指纹只取「相对路径 + 大小 + 修改时间」，不做内容哈希（够快也够准）。生成失败同样进负缓存，避免每次按键重跑 bindgen |
+| 诊断 | 目录不存在 → `E3001`、路径不合约定 → `E7010`，码与话术跟编译器一致，直接标在 `import` 那一行 |
+| 编辑器里能用的东西 | `mathkit.` 补全（函数 + `MATHKIT_MAX` 这类 `public const`）、`F12` → 生成的 `.ail`、悬停注明「来自 C 包 `mathkit` 的绑定（符号名与 C 一致）」、签名帮助（拿得到 C 形参）、`import` 链接 → 绑定文件、跨文件引用 |
+| 只读纪律 | 生成的 `.ail` 上 `prepareRename` / `rename` / `formatting` 一律拒绝——改了下一次生成也会被覆盖，不如不给改 |
+| `import cc` | 只登记 C 源参与编译、不产生绑定（与编译器一致），因此编辑器不索引它 |
+| 判据 | Go 新增 5 个单测（模块解析 / 补全+悬停 / 跳转+签名帮助+链接 / 缺 cpack 报 E3001 / 缓存与只读保护）；`scripts/lsp-smoke.mjs` 增 6 条 C 导入断言（对 `examples/cinterop` 真跑），共 **53 条**全绿；六示例 `run` 输出不变 |

@@ -726,6 +726,9 @@ func (w *Workspace) PrepareRename(uri string, pos Position) *PrepareRenameResult
 	if !ok || isReservedWord(word) {
 		return nil
 	}
+	if info.Generated {
+		return nil // 生成的 C 绑定不许改名
+	}
 	if kind, _, _ := w.describe(info, a, pos, word); kind == "" {
 		return nil // 未解析的符号（比如语法错误处）不给改名
 	}
@@ -746,6 +749,9 @@ func (w *Workspace) Rename(uri string, pos Position, newName string) *WorkspaceE
 	word, _, ok := identifierAt(info.Text, pos)
 	if !ok || isReservedWord(word) || word == newName {
 		return nil
+	}
+	if info.Generated {
+		return nil // 生成的 C 绑定不许改名
 	}
 	// 目标符号：先按跳转解析，再取声明处的符号种类
 	target := info
@@ -1064,6 +1070,9 @@ func (w *Workspace) Format(uri string, opts FormattingOptions) []TextEdit {
 	width := opts.TabSize
 	if width <= 0 || width > 8 {
 		width = 4
+	}
+	if info.Generated {
+		return []TextEdit{} // 生成的 C 绑定不格式化（改了也会被下次生成覆盖）
 	}
 	formatted := formatText(info.Text, width)
 	if formatted == info.Text {

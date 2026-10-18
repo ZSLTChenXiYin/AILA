@@ -124,7 +124,7 @@ func (w *Workspace) DocumentLinks(uri string) []DocumentLink {
 	lines := lineContents(info.Text)
 	out := []DocumentLink{}
 	for _, imp := range info.Mod.Imports {
-		target := importTargetName(imp)
+		target := importTargetModule(imp)
 		if target == "" {
 			continue
 		}
@@ -140,26 +140,13 @@ func (w *Workspace) DocumentLinks(uri string) []DocumentLink {
 		if !ok {
 			continue
 		}
-		out = append(out, DocumentLink{Range: r, Target: dep.URI, Tooltip: "打开模块 " + target})
+		tip := "打开模块 " + target
+		if dep.Generated {
+			tip = "C 包 " + dep.Cpack + " 的绑定（bindgen 生成）"
+		}
+		out = append(out, DocumentLink{Range: r, Target: dep.URI, Tooltip: tip})
 	}
 	return out
-}
-
-// importTargetName 把 import 语句映射成模块名（与分析阶段的规则一致）。
-func importTargetName(imp *ast.Import) string {
-	switch imp.Root {
-	case "_":
-		if len(imp.Path) == 0 {
-			return "_"
-		}
-		return "_." + strings.Join(imp.Path, ".")
-	case "std":
-		if len(imp.Path) == 0 {
-			return "std"
-		}
-		return "std." + strings.Join(imp.Path, ".")
-	}
-	return "" // `import ch` 之类走 bindgen 产物，没有 AILA 源文件可跳
 }
 
 // importPathRange 在 import 那一行里圈出路径部分（`import std.io as io;` → `std.io`）。

@@ -362,6 +362,60 @@ try {
     }
   }
 
+  // ---- C 导入（`import ch _.cpacks.mathkit`）：编辑器里也要能补全 / 跳转 ----
+  const cMainFile = join(repo, "examples", "cinterop", "main.aila");
+  if (existsSync(cMainFile)) {
+    const cText = readFileSync(cMainFile, "utf8");
+    const cURI = pathToFileURL(cMainFile).href;
+    notify("textDocument/didOpen", {
+      textDocument: { uri: cURI, languageId: "aila", version: 1, text: cText },
+    });
+    await new Promise((r) => setTimeout(r, 900)); // 等 bindgen 生成 + 诊断推送
+
+    const cDiags = diagnostics.filter((d) => d.uri === cURI).flatMap((d) => d.diagnostics ?? []);
+    check(cDiags.length === 0, "C 导入：编辑器里解析成功、没有诊断", JSON.stringify(cDiags).slice(0, 240));
+
+    const cAt = lineOf(cText, "mathkit.mathkit_add");
+    if (!cAt) throw new Error("cinterop 样例里找不到 mathkit_add 调用");
+    const cComp = await request("textDocument/completion", {
+      textDocument: { uri: cURI },
+      position: { line: cAt.line, character: cAt.character + "mathkit".length + 1 },
+    });
+    const cLabels = (cComp.result?.items ?? []).map((i) => i.label);
+    check(
+      cLabels.includes("mathkit_add") && cLabels.includes("MATHKIT_MAX"),
+      "C 导入：`mathkit.` 之后补全出 C 函数与常量",
+      cLabels.slice(0, 12).join(","),
+    );
+
+    const cDef = await request("textDocument/definition", {
+      textDocument: { uri: cURI },
+      position: { line: cAt.line, character: cAt.character + "mathkit.".length + 2 },
+    });
+    const cDefs = cDef.result ?? [];
+    check(cDefs.length > 0, "C 导入：C 函数能跳转");
+    check((cDefs[0]?.uri ?? "").endsWith(".ail"), "C 导入：跳转目标是 bindgen 生成的 .ail", cDefs[0]?.uri);
+
+    const cHover = await request("textDocument/hover", {
+      textDocument: { uri: cURI },
+      position: { line: cAt.line, character: cAt.character + "mathkit.".length + 2 },
+    });
+    check(
+      JSON.stringify(cHover.result ?? {}).includes("C 包"),
+      "C 导入：悬停说明来自哪个 C 包",
+      JSON.stringify(cHover.result ?? {}).slice(0, 200),
+    );
+
+    const cLinks = await request("textDocument/documentLink", { textDocument: { uri: cURI } });
+    const cLinkList = cLinks.result ?? [];
+    check(
+      cLinkList.some((l) => (l.target ?? "").endsWith(".ail")),
+      "C 导入：import 链接指向绑定文件",
+      JSON.stringify(cLinkList).slice(0, 200),
+    );
+    notify("textDocument/didClose", { textDocument: { uri: cURI } });
+  }
+
   await request("shutdown", null);
   notify("exit", {});
 } catch (err) {

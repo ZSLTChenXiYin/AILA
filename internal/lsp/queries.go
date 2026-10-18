@@ -205,7 +205,11 @@ func (w *Workspace) Hover(uri string, pos Position) *Hover {
 		value += "\n\n```aila\n" + detail + "\n```"
 	}
 	if mod != "" && mod != info.Name {
-		value += "\n\n来自模块 `" + mod + "`"
+		if dep := a.Modules[mod]; dep != nil && dep.Generated {
+			value += "\n\n来自 C 包 `" + dep.Cpack + "` 的绑定（bindgen 生成，符号名与 C 一致）"
+		} else {
+			value += "\n\n来自模块 `" + mod + "`"
+		}
 	}
 	return &Hover{Contents: MarkupContent{Kind: "markdown", Value: value}, Range: &wordRange}
 }

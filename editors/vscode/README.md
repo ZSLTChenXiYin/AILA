@@ -67,6 +67,7 @@ code --install-extension aila-0.1.0.vsix
 | **折叠 / 选区** | 代码块（`{}`）、连续 `//` 注释、多行 `/* */`、连续 `import` 段可折叠；`Shift+Alt+→/←` 按「标识符 → 括号 → 行 → 文件」逐级扩大/收缩 |
 | **格式化**（`Shift+Alt+F`） | 按花括号层级重排缩进（4 空格）、去行尾空白、末行恰好一个换行；多行字符串与块注释内部原样保留（改缩进会改语义）；幂等 |
 | **内联提示** | `let`/`var` 没写类型标注时，在名字后显示编译器推断出的类型（如 `: I32`） |
+| **C 包**（`import ch _.cpacks.<名字>`） | 语言服务器就地跑 bindgen（缓存到 `build/.cache/bindgen-lsp/`），于是 `mathkit.` 能补全 C 函数与常量、`F12` 跳进生成的 `.ail`、悬停说明「来自 C 包 `mathkit` 的绑定」、`import` 行可点击、签名帮助拿得到 C 形参；cpack 目录缺失直接在 `import` 那行标红（`E3001`）。生成的 `.ail` 是只读产物，改名/格式化被拒绝 |
 | **命令** | 命令面板里搜 `AILA:` —— 构建 / 构建并运行 / 只做检查 / 环境自检 / 生成 C 绑定 / 重启语言服务器 |
 | **任务** | `Terminal → Run Task` 里出现 `aila build` / `aila run` / `aila check`，可绑快捷键或放进 `tasks.json` |
 
@@ -120,6 +121,6 @@ editors/vscode/
   src/extension.ts             语言服务器客户端 + 命令与任务入口（TypeScript）
   scripts/grammar-smoke.mjs    文法冒烟（21 条断言）
   scripts/grammar-coverage.mjs 高亮完整性检查（所有 token 必须有 scope）
-  scripts/lsp-smoke.mjs        语言服务器端到端（47 条协议断言）
+  scripts/lsp-smoke.mjs        语言服务器端到端（53 条协议断言，含 C 导入）
   tsconfig.json
 ```

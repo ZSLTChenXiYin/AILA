@@ -42,6 +42,11 @@ type moduleInfo struct {
 	Symbols []*symbol
 	Imports map[string]string // 绑定名 → 模块名
 	Diags   []Diagnostic
+	// Generated 表示这是 bindgen 生成的 C 绑定（`.ail`），不是人手写的源码：
+	// 改名 / 格式化这类会写文件的动作一律拒绝。
+	Generated bool
+	Cpack     string // 绑定来自哪个 cpack
+	Key       string // 绑定的缓存键（指纹变了就得重算符号表）
 }
 
 // analysis 是一次工程分析的产物。
@@ -56,6 +61,8 @@ type Workspace struct {
 	root    string
 	buffers map[string]string // uri → 文本
 	last    map[string]*analysis
+	// cbind 是 C 导入解析结果的进程内缓存（键：工程根 + cpack，值带指纹）。
+	cbind map[string]*cBinding
 }
 
 // NewWorkspace 构造工作区。
@@ -201,19 +208,36 @@ func (w *Workspace) analyze(root string) *analysis {
 			continue
 		}
 		for _, imp := range info.Mod.Imports {
-			target := ""
-			switch imp.Root {
-			case "_":
-				target = "_"
-				if len(imp.Path) > 0 {
-					target = "_." + strings.Join(imp.Path, ".")
+			// C 导入：`import ch _.cpacks.<名字>` → 复用 bindgen 生成 `.ail` 当模块索引；
+			// `import cc` 只让 C 源参与编译，不产生绑定模块。
+			if imp.KindV == "ch" || imp.KindV == "cc" {
+				if imp.KindV == "cc" {
+					continue
 				}
-			case "std":
-				target = "std"
-				if len(imp.Path) > 0 {
-					target = "std." + strings.Join(imp.Path, ".")
+				b := w.cBindingFor(root, prj, man, imp)
+				if b != nil && len(b.Problems) > 0 {
+					for _, d := range b.Problems {
+						info.Diags = append(info.Diags, toDiagnostic(d))
+					}
 				}
+				if b == nil || b.Text == "" || loaded[b.Name] {
+					continue
+				}
+				mod, cbag := parser.Parse(b.Path, b.Text)
+				mod.Name = b.Name
+				sub := &moduleInfo{Name: b.Name, Path: b.Path, URI: Path2URI(b.Path), Text: b.Text,
+					Mod: mod, Imports: map[string]string{}, Generated: true, Cpack: b.Cpack}
+				for _, d := range cbag.Items {
+					sub.Diags = append(sub.Diags, toDiagnostic(d))
+				}
+				mods[b.Name] = mod
+				order = append(order, b.Name)
+				out.Modules[b.Name] = sub
+				out.ByPath[sub.Path] = sub
+				loaded[b.Name] = true
+				continue
 			}
+			target := importTargetModule(imp)
 			if target == "" || loaded[target] {
 				continue
 			}
@@ -265,27 +289,11 @@ func (w *Workspace) analyze(root string) *analysis {
 		}
 		info.Symbols = buildSymbols(info)
 		for _, imp := range info.Mod.Imports {
-			binding := imp.Alias
-			if binding == "" && len(imp.Path) > 0 {
-				binding = imp.Path[len(imp.Path)-1]
-			}
+			binding := importBindingName(imp)
 			if binding == "" {
 				continue
 			}
-			target := ""
-			switch imp.Root {
-			case "_":
-				target = "_"
-				if len(imp.Path) > 0 {
-					target = "_." + strings.Join(imp.Path, ".")
-				}
-			case "std":
-				target = "std"
-				if len(imp.Path) > 0 {
-					target = "std." + strings.Join(imp.Path, ".")
-				}
-			}
-			if target != "" {
+			if target := importTargetModule(imp); target != "" {
 				info.Imports[binding] = target
 			}
 		}

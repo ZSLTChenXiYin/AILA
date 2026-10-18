@@ -202,6 +202,11 @@ import cc _.cpacks.legacy;    // 实现导入：只编译链接，不产生声�
 想单独看产物就 `aila bindgen`（默认写到 `build/bindgen/<cpack>.ail`），
 或 `aila build --emit-bindings` 把 `.ail` 一并放进产物目录。
 
+**编辑器里也一样**：语言服务器遇到 `import ch` 会就地跑同一条 bindgen 流水线
+（缓存到 `build/.cache/bindgen-lsp/`），于是 `mathkit.` 补全、`F12` 跳进生成的 `.ail`、
+悬停显示「来自 C 包 `mathkit` 的绑定」、`import` 行可点击；cpack 目录缺失会直接在
+`import` 那行标红（`E3001`）。生成的 `.ail` 是只读产物，改名/格式化会被拒绝。
+
 ## 当前实现范围（M1）
 
 已落地：**全部 v0 语法解析** + 名字/类型/布局/区域效果/match 完备性/主名字检查 + LLVM IR 生成与目标文件产出，
