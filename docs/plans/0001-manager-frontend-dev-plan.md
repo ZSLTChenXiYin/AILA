@@ -337,7 +337,7 @@ M1 冻结条件（**四条全绿才算完**）：
 |---|---|
 | 模块路径 | `go.mod` 从 `github.com/aila-lang/aila` 改成 **`github.com/ailang/aila`**（138 处 import + 打包脚本的 `-X` 注入路径同步） |
 | 可见性语义确认 | 同项目内**跨子包**也算「包外」——`import` 本来就是导入一个子包，与跨项目同义，不需要额外一级（designs §2.2 已写明） |
-| 语言原语 | 新增 `#[intrinsic]`：壳内无体声明，符号固定为 `aila_rt_<名字>`，由运行时实现；只给标准库用 |
+| 语言原语 | ~~新增 `#[intrinsic]`~~ → **已撤回**（见 §24）：按设计决定不新增声明形态，OS 边界用 `#[c]` |
 | 标准库去 C 化 | `stdlib/io.aila` 重写成纯 AILA：十进制转换、符号、UTF-8 编码、浮点 6 位小数、换行/冲刷全部自己实现；缓冲区用 `region` 块就地分配，不留模块级可变状态 |
 | 运行时收窄 | `runtime/aila_rt.c` 只剩三类：`aila_rt_write`/`aila_rt_flush`（唯一 OS 边界）、区域账本、`aila_rt_trap`；`aila_print_*` 全删 |
 | 判据 | 六示例输出与 `expected.out` 逐字节一致（含 `score=0.75` 的浮点路径）；`std_io.ll` 快照随之更新；`stdlib/*.aila` 里 `#[c]` 计数为 0 |
@@ -355,3 +355,14 @@ M1 冻结条件（**四条全绿才算完**）：
 | 编辑器 | 插件把 `.ail` 注册成**独立语言** `aila-binding`（状态栏显示「AILA C 绑定（生成物）」），复用同一套文法；片段只给 `.aila` |
 | 判据 | `internal/cli/TestBindgenCommandGeneratesAil`：临时工程里真实生成 `build/bindgen/kit.ail`，断言它是 AILA 声明而不是 C 源码；`aila bindgen` 实跑 cinterop 输出 `mathkit → build/bindgen/mathkit.ail（clang 档，12 行）` |
 | 文档 | specs/0001 新增 §6.0（两种文件对照表 + 自动绑定 + 命令用法）、CLI 表更新；README 新增「`.aila` 与 `.ail` 不是一种文件」小节 |
+
+## 24. 撤回 `#[intrinsic]`（按设计决定：有 `#[c]` 就够了）
+
+| 项 | 结论 |
+|---|---|
+| 决定 | **删除 `#[intrinsic]`**：它是上一轮为解决「标准库不出现 C」而临时加的声明形态；设计方确认「有 C 绑定就够了，不要随便加东西」，故整体撤回 |
+| 标准库现状 | `stdlib/io.aila` 的算法仍是纯 AILA（十进制转换、符号、UTF-8、浮点 6 位小数、换行、组合函数）；**只有 OS 边界**是两条 `#[c]` 绑定：`aila_rt_write(bytes, n)` / `aila_rt_flush()`，实现放在 `runtime/aila_rt.c`——各平台的 IO 差异在那里消化 |
+| 代码撤回范围 | `internal/ast`（`FuncDecl.IsIntrinsic`）、`internal/parser`（`hasIntrinsicAttr` 与无体豁免）、`internal/sema`（`FuncSig.IsIntrinsic`、前向声明跳过条件）、`internal/codegen`（符号 `aila_rt_<名字>` 与参数映射分支）全部移除；`go test ./...` 全绿 |
+| 快照 | `tests/corpus/examples/*/std_io.ll` 随标准库回退重生成；六示例输出与 `expected.out` 仍逐字节一致 |
+| 文档 | designs §12.3 改为「标准库的 C 边界（`#[c]`，不用新机制）」；rfcs/0005 重写为「能用 AILA 写的就用 AILA 写」；specs/0002 §7.0 同步；README、docs/README、编辑器 README 与文法冒烟去掉 `#[intrinsic]` |
+| 后续原则 | 标准库需要新的系统调用时：加一条 `#[c]` 绑定 + 运行时实现，**不加语法**；能用 AILA 算的尽量用 AILA 算 |

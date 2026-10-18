@@ -24,8 +24,6 @@ type FuncSig struct {
 	IsCoroutine bool
 	IsThread    bool
 	IsExtern    bool
-	// IsIntrinsic 是语言原语（#[intrinsic]）：符号由运行时提供。
-	IsIntrinsic bool
 	IsPublic    bool
 	InShell     bool
 	// Impl 是壳里前向声明对应的块内实现（没有前向声明时为空）。
@@ -178,7 +176,7 @@ func buildFuncSig(x *ast.FuncDecl, table *Table, bag *diag.Bag, module string) *
 		Module: module,
 		Name: x.Name, Owner: x.OwnerType,
 		IsCoroutine: x.IsCoroutine, IsThread: x.IsThread, IsExtern: x.IsExtern,
-		IsPublic: x.IsPublic, InShell: x.InShell, IsIntrinsic: x.IsIntrinsic, Variadic: x.Variadic, Span: x.Span,
+		IsPublic: x.IsPublic, InShell: x.InShell, Variadic: x.Variadic, Span: x.Span,
 	}
 	for _, p := range x.Params {
 		if p.IsSelf {

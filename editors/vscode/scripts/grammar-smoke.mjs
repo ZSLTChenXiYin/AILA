@@ -85,7 +85,7 @@ import mylib.math.ops as ops;
 
 public func twice(v: I32) -> I32;
 
-#[intrinsic] func write(bytes: [U8], n: USize);
+#[c] func aila_rt_write(bytes: [U8], n: USize);
 #[c] public func c_add(a: I32, b: I32) -> I32;
 
 public struct Point {
@@ -119,7 +119,7 @@ ok = expectScope(tokens, "public", "keyword.declaration", "public 关键字") &&
 ok = expectScope(tokens, "func", "keyword.declaration", "func 关键字") && ok;
 ok = expectScope(tokens, "twice", "entity.name.function", "函数名") && ok;
 ok = expectScope(tokens, "I32", "support.type.primitive", "内建类型 I32") && ok;
-ok = expectScope(tokens, "#[intrinsic]", "entity.name.function.decorator", "#[intrinsic] 属性") && ok;
+
 ok = expectScope(tokens, "#[c]", "entity.name.function.decorator", "#[c] 属性") && ok;
 ok = expectScope(tokens, "#size", "support.function.builtin", "#size 内建查询") && ok;
 ok = expectScope(tokens, "@region", "keyword.operator.effect", "@region 效果子句") && ok;

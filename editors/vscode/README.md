@@ -49,7 +49,7 @@ code --install-extension aila-0.1.0.vsix
 
 | 功能 | 说明 |
 |---|---|
-| **语法高亮** | 关键字（`func`/`module`/`region`/`match`/`defer`…）、内建类型（`I32`/`U8`/`Text`/`USize`…）、`#[c]`/`#[intrinsic]`/`#size` 属性、`@region`/`@mut`/`@move` 效果子句、`@[区域名]`、字符串（含 `r"..."` 原始串）、数字（十六进制/浮点/下划线分隔）、`import` 路径与别名 |
+| **语法高亮** | 关键字（`func`/`module`/`region`/`match`/`defer`…）、内建类型（`I32`/`U8`/`Text`/`USize`…）、`#[c]` 属性、`#size`/`#align` 查询、`@region`/`@mut`/`@move` 效果子句、`@[区域名]`、字符串（含 `r"..."` 原始串）、数字（十六进制/浮点/下划线分隔）、`import` 路径与别名 |
 | **语言配置** | `//` 与 `/* */` 注释、括号自动配对、`module`/`func`/`struct`/`region`/`match` 等块自动缩进 |
 | **代码片段** | `pubfunc`（壳内 public + 块内实现）、`func`、`method`、`struct`、`enum`、`result`（`T ! E`）、`opt`（`T?`）、`region`、`match`、`forc`、`forin`、`module`、`hotmodule`、`cop`（`#[c]` 绑定） |
 | **命令** | 命令面板里搜 `AILA:` —— 构建 / 构建并运行 / 只做检查 / 环境自检 |

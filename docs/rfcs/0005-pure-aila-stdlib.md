@@ -1,8 +1,8 @@
-# RFC 0005 · 标准库必须用 AILA 自己实现
+# RFC 0005 · 标准库：能用 AILA 写的就用 AILA 写
 
 > **编号**：0005 · **类型**：RFC · **状态**：已采纳并落地
 > **上游**：[designs/0001](../designs/0001-language-spec.md) §12.3（运行时薄层四件套）、§13.1（标准库边界）
-> **实现**：`stdlib/io.aila`（纯 AILA）、`runtime/aila_rt.c`（只剩两条原语）、`internal/parser` + `internal/sema` + `internal/codegen`（`#[intrinsic]`）
+> **实现**：`stdlib/io.aila`（AILA 算法 + 两条 `#[c]` 边界）、`runtime/aila_rt.c`（`aila_rt_write` / `aila_rt_flush`）
 
 ## 1. 动机
 
@@ -17,26 +17,19 @@ M1 最初的 `stdlib/io.aila` 是「C 打印函数的薄包装」：每个 `prin
 
 ## 2. 裁决
 
-1. **标准库源码里不出现任何 C**：`stdlib/**/*.aila` 不允许 `#[c]` 声明、不允许 `import ch`/`import cc`。
-2. **OS 边界只能有一条**：标准输出 = 两条**语言原语**（`#[intrinsic]`），由运行时实现：
+1. **能用 AILA 实现的，就用 AILA 实现**：数字格式化、符号处理、UTF-8 编码、浮点小数位、换行与组合函数
+   全部写在 `stdlib/*.aila` 里，不转手给 libc 的 `printf`。
+2. **只有跨平台的 OS 边界交给 C**：写标准输出在各平台的差异（`fwrite` / `write(2)` / ESP-IDF）由
+   `runtime/aila_rt.c` 消化，标准库只声明两条最小绑定：
 
 ```aila
-#[intrinsic] func write(bytes: [U8], n: USize);
-#[intrinsic] func flush();
+#[c] func aila_rt_write(bytes: [U8], n: USize);
+#[c] func aila_rt_flush();
 ```
 
-`#[intrinsic]` 与 `#[c]` 的区别是语义上的、也是纪律上的：
-
-| | `#[c]` | `#[intrinsic]` |
-|---|---|---|
-| 符号来源 | 用户/第三方 C 库 | **运行时**（`aila_rt_<名字>`） |
-| 谁可以写 | 任意 AILA 代码（C 互操作） | 只允许标准库（`stdlib/`） |
-| 语义 | 外部 C 函数 | **语言原语**，跨目标由运行时适配 |
-| 可见性 | 生成的绑定默认 `public` | 标准库内部使用，不对外导出 |
-
-3. **其余全部用 AILA 写**：十进制转换、符号处理、UTF-8 编码、浮点小数位、换行与组合函数，
-   都在 `stdlib/io.aila` 里，用 `for` / `if` / 索引 / `trunc` / `as` 完成。
-
+3. **不新增语言机制**。曾试用过 `#[intrinsic]`（「语言原语」）来把 C 名字从标准库里抹掉，
+   按设计决定**已删除**：有 `#[c]` 就够了，多一个声明形态只会让语言表面变复杂。
+   如果将来某个平台需要别的系统调用，就再加一条 `#[c]` 绑定 + 运行时实现，而不是加新语法。
 ## 3. AILA 侧的实现要点
 
 | 关注点 | 做法 |
@@ -67,12 +60,12 @@ M1 最初的 `stdlib/io.aila` 是「C 打印函数的薄包装」：每个 `prin
 | stdlib 里没有 C | `grep -c '#\[c\]' stdlib/*.aila` 为 0（CI 可加） |
 | 六个示例输出不变 | `tests/corpus/examples/*/expected.out` 逐字节比对（`TestExamplesEndToEnd`） |
 | IR 快照更新 | `tests/corpus/examples/*/std_io.ll`（`std_io` 现在是纯 AILA 实现） |
-| 原语可替换 | `internal/codegen` 把 `#[intrinsic] func f` 调成 `@aila_rt_f`；换实现只动 runtime |
+| 边界可替换 | 换平台只动 `runtime/aila_rt.c` 的两个函数；标准库源码不动 |
 
 ## 6. 刻意不做
 
 | 不做 | 理由 |
 |---|---|
-| 在标准库里引入 `#[c]`（哪怕是「临时」） | 这是本 RFC 的唯一红线；有需要就补语言原语或改设计 |
+| 为了省事把整块格式化交给 C | 边界只允许是「平台相关的系统调用」，不允许把数字/字符串处理搬进 C |
 | 浮点的最短往返表示（Ryu/Grisu） | M1 用 6 位小数即可；对嵌入式更可预测，且不需要大整数 |
 | 把 `printf` 语义照搬 | 标准库定义自己的输出格式，不继承 libc 的平台差异 |

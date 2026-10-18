@@ -195,8 +195,6 @@ type FuncDecl struct {
 	IsCoroutine bool
 	IsThread    bool
 	IsExtern    bool
-	// IsIntrinsic 表示这是语言原语（#[intrinsic]）：由运行时实现，标准库不出现 C 
-	IsIntrinsic bool
 	Params      []*Param
 	Effects     []*Effect
 	Ret         *TypeRef

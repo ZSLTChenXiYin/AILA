@@ -159,17 +159,18 @@ module {
 
 ## 标准库与运行时边界
 
-标准库**只用 AILA 写**（[`rfcs/0005`](docs/rfcs/0005-pure-aila-stdlib.md)）：十进制转换、UTF-8 编码、
-浮点小数位、换行全在 `stdlib/io.aila` 里，`stdlib` 中不出现任何 `#[c]`。唯一的 OS 边界是两条
-**语言原语**（由运行时实现）：
+标准库遵循「**能用 AILA 写的就用 AILA 写**」（[`rfcs/0005`](docs/rfcs/0005-pure-aila-stdlib.md)）：
+十进制转换、符号、UTF-8 编码、浮点小数位、换行与组合函数全在 `stdlib/io.aila` 里，不走 libc 的 `printf`。
+只有真正跨平台的 OS 边界（写标准输出）交给 C，以两条最小 `#[c]` 绑定出现：
 
 ```aila
-#[intrinsic] func write(bytes: [U8], n: USize);
-#[intrinsic] func flush();
+#[c] func aila_rt_write(bytes: [U8], n: USize);
+#[c] func aila_rt_flush();
 ```
 
-`runtime/aila_rt.c` 只剩三类东西：输出原语、区域账本、`aila_rt_trap` 陷阱出口。
-换平台只需实现这两条原语与区域账本——标准库不用动。
+各平台差异（`fwrite` / `write(2)` / ESP-IDF）由 `runtime/aila_rt.c` 消化；运行时里只剩这三类东西：
+输出边界、区域账本、`aila_rt_trap` 陷阱出口。换平台只改运行时，标准库不动。
+**不为它新增语言机制**——`#[c]` 已经够用（曾试过 `#[intrinsic]`，已删除）。
 
 ## 编辑器支持
 

@@ -79,10 +79,9 @@ func (p *Parser) parseFunc(attrs []*ast.Attr, allowBodyless bool) ast.Node {
 	effects = append(effects, p.parseEffects()...)
 	var body *ast.Block
 	isExtern := hasCAttr(attrs)
-	isIntrinsic := hasIntrinsicAttr(attrs)
 	if p.atPunct(";") {
 		p.adv()
-		if !isExtern && !isIntrinsic && !allowBodyless {
+		if !isExtern && !allowBodyless {
 			p.errSpan(p.spanTo(start, p.spanOf(p.cur())),
 				"E2001", "函数 `"+nameTok.Text+"` 没有函数体",
 				"只有 `#[c]` 外部声明或壳里的前向声明可以省略函数体",
@@ -92,7 +91,7 @@ func (p *Parser) parseFunc(attrs []*ast.Attr, allowBodyless bool) ast.Node {
 		body = p.parseBlock()
 	}
 	return &ast.FuncDecl{Span: p.spanTo(start, p.spanOf(p.cur())), Name: nameTok.Text,
-		OwnerType: owner, IsCoroutine: isCoro, IsThread: isThread, IsExtern: isExtern, IsIntrinsic: isIntrinsic,
+		OwnerType: owner, IsCoroutine: isCoro, IsThread: isThread, IsExtern: isExtern,
 		Params: params, Effects: effects, Ret: ret, Body: body, Variadic: variadic}
 }
 

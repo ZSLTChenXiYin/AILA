@@ -29,8 +29,8 @@ func (c *Checker) sigForDecl(fn *ast.FuncDecl) *FuncSig {
 func (c *Checker) checkForwardDeclarations() {
 	for _, d := range c.mod.AllDecls() {
 		fn, ok := d.(*ast.FuncDecl)
-		if !ok || fn.Body != nil || fn.IsExtern || fn.IsIntrinsic || !fn.InShell {
-			continue // 只关心壳里的非 #[c] / 非 #[intrinsic] 前向声明
+		if !ok || fn.Body != nil || fn.IsExtern || !fn.InShell {
+			continue // 只关心壳里的非 #[c] 前向声明
 		}
 		sig := c.sigForDecl(fn)
 		if sig == nil || sig.Decl != fn {

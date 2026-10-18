@@ -1,17 +1,16 @@
 // AILA 标准库 · std.io
 //
-// 纪律：**标准库必须用 AILA 自己实现**，不得为了省事去封装 C——
-// 一旦标准库依赖 C，跨目标平台（宿主 / xtensa / riscv32 / aarch64）维护就会失控。
-//
-// 所以这里只有两条**语言原语**（`#[intrinsic]`，由运行时提供，是唯一的 OS 边界）：
-//   write(bytes, n)  把 n 个字节写到标准输出
-//   flush()          冲刷输出缓冲
-// 其余全部是 AILA：十进制转换、UTF-8 编码、浮点小数位、换行与组合函数。
+// 分工（designs/0001 §12.3、§13.1）：
+//   - **能用 AILA 实现的，就用 AILA 实现**：十进制转换、符号、UTF-8 编码、浮点小数位、
+//     换行与组合函数全在下面，不经过 libc 的 printf；
+//   - **只有 OS 边界交给 C**：写标准输出这件事各平台差异大（fwrite / write(2) / ESP-IDF），
+//     由 runtime/aila_rt.c 用 `#[c]` 提供两条最小绑定（write / flush）。
 //
 // 缓冲区用 `region` 块就地分配：打印一次、回收一次，不占全局状态。
 
-#[intrinsic] func write(bytes: [U8], n: USize);
-#[intrinsic] func flush();
+// 唯一的 OS 边界：C 绑定（各平台的实现差异在 runtime/aila_rt.c 里消化）
+#[c] func aila_rt_write(bytes: [U8], n: USize);
+#[c] func aila_rt_flush();
 
 // ---- 对外接口（壳里 public = 包外可见） ----
 
@@ -45,7 +44,7 @@ module {
         region one {
             var buf: [U8] = [0; 1]@one;
             buf[0] = b;
-            write(buf, 1);
+            aila_rt_write(buf, 1);
         }
     }
 
@@ -89,7 +88,7 @@ module {
         region fmt {
             var buf: [U8] = [0; 24]@fmt;
             let n: USize = fill_u64(v trunc U64, buf);
-            write(buf, n);
+            aila_rt_write(buf, n);
         }
     }
 
@@ -97,7 +96,7 @@ module {
         region fmt {
             var buf: [U8] = [0; 24]@fmt;
             let n: USize = fill_i64(v as I64, buf);
-            write(buf, n);
+            aila_rt_write(buf, n);
         }
     }
 
@@ -105,7 +104,7 @@ module {
         region fmt {
             var buf: [U8] = [0; 24]@fmt;
             let n: USize = fill_u64(v trunc U64, buf);
-            write(buf, n);
+            aila_rt_write(buf, n);
         }
     }
 
@@ -140,11 +139,11 @@ module {
                 }
                 if last > 0 {
                     buf[pos] = 46;
-                    write(buf, pos + 1 + last);
+                    aila_rt_write(buf, pos + 1 + last);
                     return;
                 }
             }
-            write(buf, pos);
+            aila_rt_write(buf, pos);
         }
     }
 
@@ -167,42 +166,42 @@ module {
             let cp: U32 = c as U32;
             if cp < 128 {
                 buf[0] = cp trunc U8;
-                write(buf, 1);
+                aila_rt_write(buf, 1);
                 return;
             }
             if cp < 2048 {
                 buf[0] = (192 + (cp >> 6)) trunc U8;
                 buf[1] = (128 + (cp & 63)) trunc U8;
-                write(buf, 2);
+                aila_rt_write(buf, 2);
                 return;
             }
             if cp < 65536 {
                 buf[0] = (224 + (cp >> 12)) trunc U8;
                 buf[1] = (128 + ((cp >> 6) & 63)) trunc U8;
                 buf[2] = (128 + (cp & 63)) trunc U8;
-                write(buf, 3);
+                aila_rt_write(buf, 3);
                 return;
             }
             buf[0] = (240 + (cp >> 18)) trunc U8;
             buf[1] = (128 + ((cp >> 12) & 63)) trunc U8;
             buf[2] = (128 + ((cp >> 6) & 63)) trunc U8;
             buf[3] = (128 + (cp & 63)) trunc U8;
-            write(buf, 4);
+            aila_rt_write(buf, 4);
         }
     }
 
     func print_nl() {
         put_byte(10);
-        flush();
+        aila_rt_flush();
     }
 
     func print_text(t: Text) {
         view bytes: [U8] = t;
-        write(bytes, len bytes);
+        aila_rt_write(bytes, len bytes);
     }
 
     func print_bytes(b: [U8]) {
-        write(b, len b);
+        aila_rt_write(b, len b);
     }
 
     func print_i32_nl(v: I32) {

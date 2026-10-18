@@ -489,13 +489,3 @@ func (p *Parser) parseTypeAlias() ast.Node {
 	return &ast.TypeAlias{Span: p.spanTo(start, p.spanOf(end)), Name: name.Text, Target: target}
 }
 
-// hasIntrinsicAttr 判断是否是语言原语声明（`#[intrinsic]`）：
-// 与 `#[c]` 一样允许无体，但符号来自运行时（afa_rt_<名字>），标准库源码里不出现 C。
-func hasIntrinsicAttr(attrs []*ast.Attr) bool {
-	for _, a := range attrs {
-		if a.Name == "intrinsic" {
-			return true
-		}
-	}
-	return false
-}
