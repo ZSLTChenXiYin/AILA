@@ -102,7 +102,7 @@
         "aila.executable": {
           "type": "string",
           "default": "aila",
-          "description": "aila 可执行文件路径（默认取 PATH 里的 `aila`）"
+          "description": "aila 可执行文件路径。留默认 `aila` 时会自动找：$AILA_HOME/bin/aila → 从工程根逐级向上找 bin/aila(.exe) → PATH"
         },
         "aila.lsp.enable": {
           "type": "boolean",

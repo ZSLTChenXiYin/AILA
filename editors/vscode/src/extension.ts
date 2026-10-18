@@ -10,6 +10,7 @@
 // 一个三百行的分帧客户端足够，既不引运行时依赖，也不绑定编辑器 API 版本。
 import * as vscode from "vscode";
 import * as cp from "node:child_process";
+import * as fs from "node:fs";
 import * as path from "node:path";
 
 type Json = any;
@@ -46,6 +47,65 @@ async function workspaceRoot(): Promise<string | undefined> {
 }
 
 // --------------------------------------------------------------------------- //
+// 找 `aila` 可执行文件（傻瓜式：不配也能用）
+//
+// 顺序：显式配置 → $AILA_HOME → 从工程根逐级向上找 bin/aila(.exe) / aila(.exe) → PATH 里的 aila。
+// 「从工程根向上找」是为了源码仓库里直接打开 examples/xxx 就能用（仓库自带 bin/aila.exe）。
+// --------------------------------------------------------------------------- //
+
+let resolvedExe: string | undefined;
+
+function exeName(): string {
+  return process.platform === "win32" ? "aila.exe" : "aila";
+}
+
+function existsFile(p: string): boolean {
+  try {
+    return fs.existsSync(p) && fs.statSync(p).isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function resolveExecutable(): Promise<string> {
+  if (resolvedExe) return resolvedExe;
+  const configured = cfg<string>("executable", "").trim();
+  const name = exeName();
+  if (configured && configured !== "aila") {
+    resolvedExe = configured;
+    return resolvedExe;
+  }
+  const cands: string[] = [];
+  const home = process.env.AILA_HOME;
+  if (home) cands.push(path.join(home, "bin", name), path.join(home, name));
+  const root = await workspaceRoot();
+  if (root) {
+    let dir = root;
+    for (let i = 0; i < 6; i++) {
+      cands.push(path.join(dir, "bin", name), path.join(dir, name));
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+  for (const c of cands) {
+    if (existsFile(c)) {
+      resolvedExe = c;
+      channel().appendLine(`[aila] 使用 ${c}`);
+      return resolvedExe;
+    }
+  }
+  resolvedExe = "aila"; // 兜底交给 PATH
+  channel().appendLine("[aila] PATH 里找 aila（未在工作区里发现 bin/aila）");
+  return resolvedExe;
+}
+
+// forgetExecutable 在用户改了设置或重启语言服务器时清缓存。
+function forgetExecutable(): void {
+  resolvedExe = undefined;
+}
+
+// --------------------------------------------------------------------------- //
 // 极简 LSP 客户端（分帧 + 请求/通知 + 诊断推送）
 // --------------------------------------------------------------------------- //
 
@@ -70,8 +130,20 @@ class LSPClient implements vscode.Disposable {
       proc.stdout.on("data", (d: Buffer) => this.onData(d));
       proc.stderr?.on("data", (d: Buffer) => channel().append(d.toString()));
       proc.on("error", (err: Error) => {
-        channel().appendLine(`[lsp] 启动失败：${err.message}`);
-        void vscode.window.showWarningMessage("AILA：启动语言服务器失败（检查 aila.executable 设置）");
+        channel().appendLine(`[lsp] 启动失败：${err.message}（用的是 ${this.exe}）`);
+        void vscode.window
+          .showWarningMessage(
+            `AILA：启动语言服务器失败。找不到 \`${this.exe}\`——请把设置 aila.executable 指向 aila 可执行文件（例如 <仓库>/bin/aila.exe）。`,
+            "打开设置",
+            "查看日志",
+          )
+          .then((pick) => {
+            if (pick === "打开设置") {
+              void vscode.commands.executeCommand("workbench.action.openSettings", "aila.executable");
+            } else if (pick === "查看日志") {
+              channel().show(true);
+            }
+          });
         resolve();
       });
       proc.on("exit", (code: number | null) => {
@@ -272,7 +344,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     if (client) return client;
     const root = await workspaceRoot();
     if (!root) return undefined;
-    client = new LSPClient(cfg<string>("executable", "aila"), root, collection);
+    client = new LSPClient(await resolveExecutable(), root, collection);
     await client.start();
     return client;
   };
@@ -614,8 +686,18 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     vscode.commands.registerCommand("aila.restartLSP", async () => {
       client?.dispose();
       client = undefined;
+      forgetExecutable();
       await ensureClient();
       void vscode.window.showInformationMessage("AILA：语言服务器已重启");
+    }),
+
+    // 改了 `aila.executable` 就重开，别让缓存的可执行文件路径挡住
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration("aila.executable")) return;
+      forgetExecutable();
+      client?.dispose();
+      client = undefined;
+      void ensureClient();
     }),
   );
 
@@ -626,7 +708,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         const dir = await workspaceRoot();
         const ch = channel();
         ch.show(true);
-        const exe = cfg<string>("executable", "aila");
+        const exe = await resolveExecutable();
         ch.appendLine(`$ ${exe} ${sub}${dir ? `    (cwd: ${dir})` : ""}`);
         const proc = cp.spawn(exe, [sub], { cwd: dir, shell: process.platform === "win32" });
         proc.stdout?.on("data", (d: Buffer) => ch.append(d.toString()));
@@ -655,13 +737,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     vscode.tasks.registerTaskProvider("aila", {
       provideTasks: async () => {
         const dir = await workspaceRoot();
+        const exe = await resolveExecutable();
         return (["build", "run", "check"] as const).map((sub) => {
           const task = new vscode.Task(
             { type: "aila", command: sub },
             vscode.TaskScope.Workspace,
             `aila ${sub}`,
             "aila",
-            new vscode.ShellExecution(cfg<string>("executable", "aila"), [sub], {
+            new vscode.ShellExecution(exe, [sub], {
               cwd: dir ?? "${workspaceFolder}",
             }),
             ["$aila"],
@@ -670,7 +753,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           return task;
         });
       },
-      resolveTask: (task) => {
+      resolveTask: async (task) => {
         const def = task.definition as { command?: string };
         const sub = def.command ?? "build";
         return new vscode.Task(
@@ -678,7 +761,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           task.scope ?? vscode.TaskScope.Workspace,
           task.name || `aila ${sub}`,
           "aila",
-          new vscode.ShellExecution(cfg<string>("executable", "aila"), [sub]),
+          new vscode.ShellExecution(await resolveExecutable(), [sub]),
           ["$aila"],
         );
       },

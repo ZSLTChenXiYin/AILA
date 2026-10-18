@@ -70,7 +70,15 @@ code --install-extension aila-0.1.0.vsix
 | **命令** | 命令面板里搜 `AILA:` —— 构建 / 构建并运行 / 只做检查 / 环境自检 / 生成 C 绑定 / 重启语言服务器 |
 | **任务** | `Terminal → Run Task` 里出现 `aila build` / `aila run` / `aila check`，可绑快捷键或放进 `tasks.json` |
 
-命令都调用**外部 `aila` 可执行文件**（不内嵌编译器）：
+命令与语言服务器都调用**外部 `aila` 可执行文件**（不内嵌编译器）。**一般不用配**：
+`aila.executable` 保持默认时按这个顺序自动找
+
+1. 环境变量 `AILA_HOME` 下的 `bin/aila(.exe)` / `aila(.exe)`
+2. 从**工程根**（含 `aila.toml` 的目录）逐级向上 6 层里的 `bin/aila(.exe)` / `aila(.exe)`
+   —— 所以在源码仓库里直接打开 `examples/xxx` 就能用仓库自带的 `bin/aila.exe`
+3. `PATH` 里的 `aila`
+
+要指定别的编译器就写绝对路径：
 
 ```jsonc
 // settings.json（可选）
