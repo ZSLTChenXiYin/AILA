@@ -2,6 +2,8 @@ package lsp
 
 import (
 	"strings"
+
+	"github.com/ailang/aila/internal/types"
 )
 
 // 本文件实现查询类能力：大纲 / 跳转定义 / 悬停 / 查找引用 / 同文件高亮 / 工程符号搜索。
@@ -172,13 +174,9 @@ func typeOfLocal(info *moduleInfo, name string) string {
 
 // typeShortName 取类型名的最后一段（`_.sub.Type` → `Type`）。
 func typeShortName(t any) string {
-	s := ""
-	switch v := t.(type) {
-	case interface{ String() string }:
-		s = v.String()
-	}
-	if s == "" {
-		s = "?"
+	s := "?"
+	if tt, ok := t.(types.Type); ok {
+		s = types.TypeName(tt)
 	}
 	if i := strings.LastIndex(s, "."); i >= 0 {
 		s = s[i+1:]

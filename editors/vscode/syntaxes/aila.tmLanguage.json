@@ -2,32 +2,37 @@
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
   "name": "AILA",
   "scopeName": "source.aila",
-  "comment": "AILA 语法高亮：关键字 / 类型 / 字符串 / 数字 / 属性 / 特性子句 / 注释",
+  "comment": "AILA 语法高亮（全量）。关键字表与 internal/lexer 的 Keywords/TypeWords 一致；完整性由 scripts/grammar-coverage.mjs 断言：任何 token 落到纯文本即判失败。",
   "patterns": [
     { "include": "#comments" },
     { "include": "#attributes" },
+    { "include": "#builtins" },
     { "include": "#strings" },
     { "include": "#chars" },
     { "include": "#numbers" },
-    { "include": "#modulepaths" },
-    { "include": "#functions" },
-    { "include": "#regionblocks" },
-    { "include": "#calls" },
+    { "include": "#imports" },
+    { "include": "#declarations" },
+    { "include": "#effects" },
+    { "include": "#match-arms" },
     { "include": "#keywords" },
     { "include": "#types" },
-    { "include": "#effects" }
+    { "include": "#calls" },
+    { "include": "#member-access" },
+    { "include": "#variables" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
   ],
   "repository": {
     "comments": {
       "patterns": [
-        {
-          "name": "comment.line.double-slash.aila",
-          "match": "//.*$"
-        },
+        { "name": "comment.line.documentation.aila", "match": "///.*$" },
+        { "name": "comment.line.double-slash.aila", "match": "//.*$" },
         {
           "name": "comment.block.aila",
           "begin": "/\\*",
-          "end": "\\*/"
+          "end": "\\*/",
+          "beginCaptures": { "0": { "name": "punctuation.definition.comment.begin.aila" } },
+          "endCaptures": { "0": { "name": "punctuation.definition.comment.end.aila" } }
         }
       ]
     },
@@ -35,17 +40,23 @@
       "patterns": [
         {
           "name": "meta.attribute.aila",
-    "match": "#\\[[^\\]\\n]*\\]",
-          "captures": {
-            "0": { "name": "entity.name.function.decorator.aila" }
-          }
-        },
+          "begin": "#\\[",
+          "end": "\\]",
+          "beginCaptures": { "0": { "name": "punctuation.definition.attribute.begin.aila" } },
+          "endCaptures": { "0": { "name": "punctuation.definition.attribute.end.aila" } },
+          "patterns": [
+            { "name": "entity.name.function.decorator.aila", "match": "[A-Za-z_][A-Za-z0-9_]*" },
+            { "include": "#numbers" },
+            { "name": "punctuation.separator.aila", "match": "," }
+          ]
+        }
+      ]
+    },
+    "builtins": {
+      "patterns": [
         {
-          "name": "meta.builtin-query.aila",
-          "match": "#(size|align)(?=\\()",
-          "captures": {
-            "0": { "name": "support.function.builtin.aila" }
-          }
+          "name": "support.function.builtin.aila",
+          "match": "#(size|align)(?=\\()"
         }
       ]
     },
@@ -59,8 +70,10 @@
           "name": "string.quoted.double.aila",
           "begin": "\"",
           "end": "\"",
+          "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.aila" } },
+          "endCaptures": { "0": { "name": "punctuation.definition.string.end.aila" } },
           "patterns": [
-            { "name": "constant.character.escape.aila", "match": "\\\\." }
+            { "name": "constant.character.escape.aila", "match": "\\\\[ntr\\\\\"'0]" }
           ]
         }
       ]
@@ -71,33 +84,155 @@
           "name": "string.quoted.single.aila",
           "begin": "'",
           "end": "'",
+          "beginCaptures": { "0": { "name": "punctuation.definition.char.begin.aila" } },
+          "endCaptures": { "0": { "name": "punctuation.definition.char.end.aila" } },
           "patterns": [
-            { "name": "constant.character.escape.aila", "match": "\\\\." }
+            { "name": "constant.character.escape.aila", "match": "\\\\[ntr\\\\\"'0]" }
           ]
         }
       ]
     },
     "numbers": {
       "patterns": [
-        { "name": "constant.numeric.hex.aila", "match": "\\b0[xX][0-9a-fA-F][0-9a-fA-F_]*\\b" },
-        { "name": "constant.numeric.float.aila", "match": "\\b[0-9][0-9_]*\\.[0-9][0-9_]*(?:[eE][-+]?[0-9]+)?\\b" },
-        { "name": "constant.numeric.integer.aila", "match": "\\b[0-9][0-9_]*\\b" }
+        { "name": "constant.numeric.hex.aila", "match": "0[xX][0-9a-fA-F][0-9a-fA-F_]*" },
+        {
+          "name": "constant.numeric.float.aila",
+          "match": "(?:[0-9][0-9_]*\\.[0-9][0-9_]*(?:[eE][-+]?[0-9]+)?|\\.[0-9][0-9_]*(?:[eE][-+]?[0-9]+)?|[0-9][0-9_]*[eE][-+]?[0-9]+)"
+        },
+        { "name": "constant.numeric.integer.aila", "match": "[0-9][0-9_]*" }
+      ]
+    },
+    "imports": {
+      "patterns": [
+        {
+          "name": "meta.import.aila",
+          "match": "(\\bimport\\s+)(ch|cc)?(\\s*)(_|std|[A-Za-z_][A-Za-z0-9_]*)((?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(\\s+as\\s+([A-Za-z_][A-Za-z0-9_]*))?",
+          "captures": {
+            "1": { "name": "keyword.control.import.aila" },
+            "2": { "name": "storage.modifier.import-kind.aila" },
+            "4": { "name": "entity.name.namespace.root.aila" },
+            "5": { "name": "entity.name.namespace.aila" },
+            "7": { "name": "variable.other.alias.aila" }
+          }
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "name": "meta.function.declaration.aila",
+          "match": "((?:coroutine|thread)?\\s*\\bfunc\\s+)([A-Z][A-Za-z0-9_]*\\.)?([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.func.aila" },
+            "2": { "name": "entity.name.type.aila" },
+            "3": { "name": "entity.name.function.aila" }
+          }
+        },
+        {
+          "name": "meta.type.declaration.aila",
+          "match": "\\b(struct|enum|type)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.type.aila" },
+            "2": { "name": "entity.name.type.aila" }
+          }
+        },
+        {
+          "name": "meta.module.declaration.aila",
+          "match": "\\b(module)(\\s+)(hot)",
+          "captures": {
+            "1": { "name": "keyword.declaration.module.aila" },
+            "3": { "name": "keyword.storage.hot.aila" }
+          }
+        },
+        {
+          "name": "meta.binding.declaration.aila",
+          "match": "\\b(let|var|const|state)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.binding.aila" },
+            "2": { "name": "variable.other.declaration.aila" }
+          }
+        },
+        {
+          "name": "meta.view.declaration.aila",
+          "match": "\\b(view)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.view.aila" },
+            "2": { "name": "variable.other.declaration.aila" }
+          }
+        },
+        {
+          "name": "meta.region.block.aila",
+          "match": "\\b(region)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.region.aila" },
+            "2": { "name": "entity.name.namespace.region.aila" }
+          }
+        }
+      ]
+    },
+    "effects": {
+      "patterns": [
+        {
+          "name": "meta.effect-clause.aila",
+          "match": "(@)(region|mut|move)(\\[)([^\\]]*)(\\])",
+          "captures": {
+            "1": { "name": "punctuation.definition.effect.aila" },
+            "2": { "name": "keyword.operator.effect.aila" },
+            "4": { "name": "entity.name.namespace.region.aila" }
+          }
+        },
+        {
+          "name": "meta.allocation.aila",
+          "match": "(@\\[)([A-Za-z_][A-Za-z0-9_]*)(\\])",
+          "captures": {
+            "1": { "name": "keyword.operator.allocate.aila" },
+            "2": { "name": "entity.name.namespace.region.aila" }
+          }
+        },
+        { "name": "keyword.operator.allocate.aila", "match": "@(static|heap|[A-Za-z_][A-Za-z0-9_]*)" }
+      ]
+    },
+    "match-arms": {
+      "patterns": [
+        { "name": "keyword.operator.arrow.aila", "match": "=>|->|<-" }
+      ]
+    },
+    "calls": {
+      "patterns": [
+        {
+          "name": "meta.function-call.aila",
+          "match": "\\b([a-z_][A-Za-z0-9_]*)(\\s*)(\\()",
+          "captures": {
+            "1": { "name": "entity.name.function.call.aila" },
+            "3": { "name": "punctuation.definition.parameters.begin.aila" }
+          }
+        }
+      ]
+    },
+    "member-access": {
+      "patterns": [
+        {
+          "match": "(\\.)([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "punctuation.accessor.aila" },
+            "2": { "name": "variable.other.property.aila" }
+          }
+        }
       ]
     },
     "keywords": {
       "patterns": [
         {
           "name": "keyword.control.aila",
-          "match": "\\b(if|else|for|in|match|return|break|continue|defer|trap|yield|out|resume|move|copy|len|try)\\b"
+          "match": "\\b(if|else|for|in|match|return|break|continue|defer|trap|yield|out|resume|copy|move|len|as|trunc)\\b"
         },
         {
           "name": "keyword.declaration.aila",
-          "match": "\\b(func|struct|enum|type|let|var|const|state|view|module|import|public|coroutine|thread|as|trunc|hot|unsafe|chan|send|recv|coro)\\b"
+          "match": "\\b(func|let|var|const|type|struct|enum|state|view|module|import|public|hot|unsafe|coroutine|thread|region)\\b"
         },
-        {
-          "name": "keyword.other.aila",
-          "match": "\\b(self|true|false|_)\\b"
-        }
+        { "name": "constant.language.aila", "match": "\\b(true|false)\\b" },
+        { "name": "variable.language.self.aila", "match": "\\bself\\b" },
+        { "name": "keyword.other.wildcard.aila", "match": "(?<![A-Za-z0-9_])_(?![A-Za-z0-9_])" }
       ]
     },
     "types": {
@@ -106,82 +241,43 @@
           "name": "support.type.primitive.aila",
           "match": "\\b(I8|I16|I32|I64|U8|U16|U32|U64|F32|F64|Bool|C32|Text|USize|ISize|Unsafe|Never|Void)\\b"
         },
+        { "name": "support.type.channel.aila", "match": "\\b(chan|send|recv|coro)\\b" },
+        { "name": "entity.name.type.aila", "match": "\\b[A-Z][A-Za-z0-9_]*\\b" }
+      ]
+    },
+    "variables": {
+      "patterns": [
         {
-          "name": "entity.name.type.aila",
-          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+          "comment": "兜底：排除关键字/类型/调用/成员访问后剩下的标识符当作变量（保证没有任何 token 是纯文本）。不加左侧 \\b，这样 `1u8` 这类非法后缀也不会露成纯文本。",
+          "name": "variable.other.aila",
+          "match": "[a-z_][A-Za-z0-9_]*"
         }
       ]
     },
-    "effects": {
+    "operators": {
       "patterns": [
         {
-          "name": "meta.effect-clause.aila",
-          "match": "@(region|mut|move)\\b",
-          "captures": {
-            "0": { "name": "keyword.operator.effect.aila" }
-          }
+          "name": "keyword.operator.assignment.compound.aila",
+          "match": "<<=|>>=|\\+=|-=|\\*=|/=|%=|&=|\\|=|\\^="
         },
-        {
-          "name": "variable.other.region.aila",
-          "match": "@\\[\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\]",
-          "captures": {
-            "1": { "name": "entity.name.namespace.region.aila" }
-          }
-        },
-        {
-          "name": "keyword.operator.allocate.aila",
-          "match": "@(static|heap)\\b"
-        }
+        { "name": "keyword.operator.comparison.aila", "match": "==|!=|<=|>=|&&|\\|\\||\\.\\.\\." },
+        { "name": "keyword.operator.bitwise.aila", "match": "<<|>>|&|\\||\\^|~" },
+        { "name": "keyword.operator.assignment.aila", "match": "(?<![=!<>+\\-*/%&|^])=(?!=|>)" },
+        { "name": "keyword.operator.arithmetic.aila", "match": "[-+*/%]" },
+        { "name": "keyword.operator.logical.aila", "match": "!" },
+        { "name": "keyword.operator.comparison.aila", "match": "[<>]" },
+        { "name": "keyword.operator.other.aila", "match": "::|\\?" }
       ]
     },
-    "functions": {
+    "punctuation": {
       "patterns": [
-        {
-          "name": "entity.name.function.aila",
-          "match": "(\\bfunc\\s+)(?:([A-Za-z_][A-Za-z0-9_]*)\\.)?([A-Za-z_][A-Za-z0-9_]*)",
-          "captures": {
-            "1": { "name": "keyword.declaration.aila" },
-            "2": { "name": "entity.name.type.aila" },
-            "3": { "name": "entity.name.function.aila" }
-          }
-        }
-      ]
-    },
-    "calls": {
-      "patterns": [
-        {
-          "name": "meta.function-call.aila",
-          "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*\\(",
-          "captures": {
-            "1": { "name": "entity.name.function.call.aila" }
-          }
-        }
-      ]
-    },
-    "modulepaths": {
-      "patterns": [
-        {
-          "name": "meta.import.aila",
-          "match": "(\\bimport\\s+(?:ch|cc)?\\s*)(_|std|[A-Za-z_][A-Za-z0-9_]*)((?:\\.[A-Za-z_][A-Za-z0-9_]*)+)(\\s+as\\s+([A-Za-z_][A-Za-z0-9_]*))?",
-          "captures": {
-            "1": { "name": "keyword.control.import.aila" },
-            "2": { "name": "entity.name.namespace.root.aila" },
-            "3": { "name": "entity.name.namespace.aila" },
-            "5": { "name": "variable.other.alias.aila" }
-          }
-        }
-      ]
-    },
-    "regionblocks": {
-      "patterns": [
-        {
-          "name": "meta.region-block.aila",
-          "match": "(\\bregion\\s+)([A-Za-z_][A-Za-z0-9_]*)",
-          "captures": {
-            "1": { "name": "keyword.declaration.aila" },
-            "2": { "name": "entity.name.namespace.region.aila" }
-          }
-        }
+        { "name": "punctuation.section.braces.aila", "match": "[{}]" },
+        { "name": "punctuation.section.brackets.aila", "match": "[\\[\\]]" },
+        { "name": "punctuation.section.parens.aila", "match": "[()]" },
+        { "name": "punctuation.separator.aila", "match": "[,;:]" },
+        { "name": "punctuation.accessor.dot.aila", "match": "\\." },
+        { "name": "punctuation.definition.effect.aila", "match": "@" },
+        { "name": "punctuation.definition.attribute.aila", "match": "#" }
       ]
     }
   }

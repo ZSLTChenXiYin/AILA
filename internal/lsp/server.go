@@ -161,13 +161,25 @@ func (s *Server) handle(msg *rpcMessage) error {
 		s.ws.SetRoot(URI2Path(root))
 		res := initializeResult{}
 		res.Capabilities = serverCapabilities{
-			TextDocumentSync: 1, // 全量同步
-			DocumentSymbolProvider:    true,
-			DefinitionProvider:        true,
-			HoverProvider:             true,
-			ReferencesProvider:        true,
-			DocumentHighlightProvider: true,
-			WorkspaceSymbolProvider:   true,
+			TextDocumentSync:           1, // 全量同步
+			DocumentSymbolProvider:     true,
+			DefinitionProvider:         true,
+			HoverProvider:              true,
+			ReferencesProvider:         true,
+			DocumentHighlightProvider:  true,
+			WorkspaceSymbolProvider:    true,
+			RenameProvider:             true,
+			FoldingRangeProvider:       true,
+			SelectionRangeProvider:     true,
+			DocumentFormattingProvider: true,
+			InlayHintProvider:          true,
+			CompletionProvider: triggerServerCap{
+				TriggerCharacters: []string{".", "@", "#", ":", "("},
+			},
+			SignatureHelpProvider: triggerServerCap{
+				TriggerCharacters:   []string{"(", ","},
+				RetriggerCharacters: []string{","},
+			},
 		}
 		res.ServerInfo.Name = "aila-lsp"
 		res.ServerInfo.Version = "0.1.0"
@@ -266,6 +278,91 @@ func (s *Server) handle(msg *rpcMessage) error {
 			return err
 		}
 		s.reply(msg.ID, s.ws.WorkspaceSymbols(p.Query))
+		return nil
+
+	case "textDocument/completion":
+		var p textDocumentPositionParams
+		if err := msg.decode(&p); err != nil {
+			return err
+		}
+		s.reply(msg.ID, s.ws.Completion(p.TextDocument.URI, p.Position))
+		return nil
+
+	case "textDocument/signatureHelp":
+		var p textDocumentPositionParams
+		if err := msg.decode(&p); err != nil {
+			return err
+		}
+		s.reply(msg.ID, s.ws.SignatureHelp(p.TextDocument.URI, p.Position))
+		return nil
+
+	case "textDocument/prepareRename":
+		var p textDocumentPositionParams
+		if err := msg.decode(&p); err != nil {
+			return err
+		}
+		s.reply(msg.ID, s.ws.PrepareRename(p.TextDocument.URI, p.Position))
+		return nil
+
+	case "textDocument/rename":
+		var p struct {
+			TextDocument struct {
+				URI string `json:"uri"`
+			} `json:"textDocument"`
+			Position Position `json:"position"`
+			NewName  string   `json:"newName"`
+		}
+		if err := msg.decode(&p); err != nil {
+			return err
+		}
+		s.reply(msg.ID, s.ws.Rename(p.TextDocument.URI, p.Position, p.NewName))
+		return nil
+
+	case "textDocument/foldingRange":
+		var p textDocumentPositionParams
+		if err := msg.decode(&p); err != nil {
+			return err
+		}
+		s.reply(msg.ID, s.ws.FoldingRanges(p.TextDocument.URI))
+		return nil
+
+	case "textDocument/selectionRange":
+		var p struct {
+			TextDocument struct {
+				URI string `json:"uri"`
+			} `json:"textDocument"`
+			Positions []Position `json:"positions"`
+		}
+		if err := msg.decode(&p); err != nil {
+			return err
+		}
+		s.reply(msg.ID, s.ws.SelectionRanges(p.TextDocument.URI, p.Positions))
+		return nil
+
+	case "textDocument/formatting":
+		var p struct {
+			TextDocument struct {
+				URI string `json:"uri"`
+			} `json:"textDocument"`
+			Options FormattingOptions `json:"options"`
+		}
+		if err := msg.decode(&p); err != nil {
+			return err
+		}
+		s.reply(msg.ID, s.ws.Format(p.TextDocument.URI, p.Options))
+		return nil
+
+	case "textDocument/inlayHint":
+		var p struct {
+			TextDocument struct {
+				URI string `json:"uri"`
+			} `json:"textDocument"`
+			Range Range `json:"range"`
+		}
+		if err := msg.decode(&p); err != nil {
+			return err
+		}
+		s.reply(msg.ID, s.ws.InlayHints(p.TextDocument.URI, p.Range))
 		return nil
 	}
 	if msg.isRequest() {

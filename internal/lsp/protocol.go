@@ -11,6 +11,13 @@
 //	textDocument/references          查找引用（工程内按名字 + 模块解析）
 //	textDocument/documentHighlight   同文件高亮
 //	workspace/symbol                 跨模块符号搜索
+//	textDocument/completion          补全（关键字 / 类型 / 模块符号 / 局部 / 成员）
+//	textDocument/signatureHelp       签名帮助（光标在实参列表里）
+//	textDocument/prepareRename|rename 重命名（含跨模块限定名）
+//	textDocument/foldingRange        折叠（代码块 / 注释 / import 段）
+//	textDocument/selectionRange      逐级扩大选区
+//	textDocument/formatting          格式化（缩进 / 行尾空白 / 末行换行）
+//	textDocument/inlayHint           内联提示（let 推断出的类型）
 package lsp
 
 import (
@@ -51,18 +58,18 @@ type Diagnostic struct {
 
 // SymbolKind 用 LSP 的枚举值（只需要几个）。
 const (
-	KindFile     = 1
-	KindModule   = 2
-	KindNamespace = 3
-	KindStruct   = 23
-	KindEnum     = 10
+	KindFile       = 1
+	KindModule     = 2
+	KindNamespace  = 3
+	KindStruct     = 23
+	KindEnum       = 10
 	KindEnumMember = 22
-	KindFunction = 12
-	KindMethod   = 6
-	KindConstant = 14
-	KindVariable = 13
-	KindField    = 8
-	KindTypeParam = 26
+	KindFunction   = 12
+	KindMethod     = 6
+	KindConstant   = 14
+	KindVariable   = 13
+	KindField      = 8
+	KindTypeParam  = 26
 )
 
 // DocumentSymbol 是大纲节点（支持层级）。
@@ -92,6 +99,111 @@ type MarkupContent struct {
 type Hover struct {
 	Contents MarkupContent `json:"contents"`
 	Range    *Range        `json:"range,omitempty"`
+}
+
+// --------------------------------------------------------------------------- //
+// 补全 / 签名帮助 / 重命名 / 折叠 / 选区 / 格式化 / 内联提示
+// --------------------------------------------------------------------------- //
+
+// CompletionItemKind 用 LSP 的枚举值（只列用到的）。
+const (
+	CIKindText          = 1
+	CIKindMethod        = 2
+	CIKindFunction      = 3
+	CIKindField         = 5
+	CIKindVariable      = 6
+	CIKindModule        = 9
+	CIKindEnum          = 13
+	CIKindKeyword       = 14
+	CIKindSnippet       = 15
+	CIKindEnumMember    = 20
+	CIKindConstant      = 21
+	CIKindStruct        = 22
+	CIKindTypeParameter = 25
+)
+
+// CompletionItem 是一个补全项。
+type CompletionItem struct {
+	Label            string         `json:"label"`
+	Kind             int            `json:"kind,omitempty"`
+	Detail           string         `json:"detail,omitempty"`
+	Documentation    *MarkupContent `json:"documentation,omitempty"`
+	InsertText       string         `json:"insertText,omitempty"`
+	InsertTextFormat int            `json:"insertTextFormat,omitempty"` // 2 = snippet
+	SortText         string         `json:"sortText,omitempty"`
+	FilterText       string         `json:"filterText,omitempty"`
+}
+
+// CompletionList 是补全结果。
+type CompletionList struct {
+	IsIncomplete bool             `json:"isIncomplete"`
+	Items        []CompletionItem `json:"items"`
+}
+
+// ParameterInformation 是一个形参说明。
+type ParameterInformation struct {
+	Label         string         `json:"label"`
+	Documentation *MarkupContent `json:"documentation,omitempty"`
+}
+
+// SignatureInformation 是一个候选签名。
+type SignatureInformation struct {
+	Label           string                 `json:"label"`
+	Documentation   *MarkupContent         `json:"documentation,omitempty"`
+	Parameters      []ParameterInformation `json:"parameters,omitempty"`
+	ActiveParameter *int                   `json:"activeParameter,omitempty"`
+}
+
+// SignatureHelp 是签名帮助响应。
+type SignatureHelp struct {
+	Signatures      []SignatureInformation `json:"signatures"`
+	ActiveSignature int                    `json:"activeSignature"`
+	ActiveParameter int                    `json:"activeParameter"`
+}
+
+// TextEdit 是一次文本替换。
+type TextEdit struct {
+	Range   Range  `json:"range"`
+	NewText string `json:"newText"`
+}
+
+// WorkspaceEdit 是跨文件编辑（重命名用）。
+type WorkspaceEdit struct {
+	Changes map[string][]TextEdit `json:"changes"`
+}
+
+// PrepareRenameResult 告诉编辑器「这里可以改名」以及默认占位文本。
+type PrepareRenameResult struct {
+	Range       Range  `json:"range"`
+	Placeholder string `json:"placeholder"`
+}
+
+// FoldingRange 是一个可折叠区间。
+type FoldingRange struct {
+	StartLine int    `json:"startLine"`
+	EndLine   int    `json:"endLine"`
+	Kind      string `json:"kind,omitempty"` // comment | region | imports
+}
+
+// SelectionRange 是「逐级扩大选区」的链。
+type SelectionRange struct {
+	Range  Range           `json:"range"`
+	Parent *SelectionRange `json:"parent,omitempty"`
+}
+
+// InlayHint 是行内提示（如推断出的类型）。
+type InlayHint struct {
+	Position     Position `json:"position"`
+	Label        string   `json:"label"`
+	Kind         int      `json:"kind,omitempty"` // 1 = Type
+	PaddingLeft  bool     `json:"paddingLeft,omitempty"`
+	PaddingRight bool     `json:"paddingRight,omitempty"`
+}
+
+// FormattingOptions 是格式化选项（只用到缩进宽度）。
+type FormattingOptions struct {
+	TabSize      int  `json:"tabSize"`
+	InsertSpaces bool `json:"insertSpaces"`
 }
 
 // --------------------------------------------------------------------------- //
@@ -133,10 +245,10 @@ func (m *rpcMessage) decode(v any) error {
 // --------------------------------------------------------------------------- //
 
 type textDocumentItem struct {
-	URI     string `json:"uri"`
+	URI      string `json:"uri"`
 	Language string `json:"languageId,omitempty"`
-	Version int    `json:"version,omitempty"`
-	Text    string `json:"text"`
+	Version  int    `json:"version,omitempty"`
+	Text     string `json:"text"`
 }
 
 type textDocumentPositionParams struct {
@@ -161,21 +273,34 @@ type didChangeParams struct {
 }
 
 type initializeParams struct {
-	RootURI string `json:"rootUri"`
-	RootPath string `json:"rootPath"`
+	RootURI          string `json:"rootUri"`
+	RootPath         string `json:"rootPath"`
 	WorkspaceFolders []struct {
 		URI string `json:"uri"`
 	} `json:"workspaceFolders"`
 }
 
 type serverCapabilities struct {
-	TextDocumentSync         int  `json:"textDocumentSync"`
-	DocumentSymbolProvider   bool `json:"documentSymbolProvider"`
-	DefinitionProvider       bool `json:"definitionProvider"`
-	HoverProvider            bool `json:"hoverProvider"`
-	ReferencesProvider       bool `json:"referencesProvider"`
-	DocumentHighlightProvider bool `json:"documentHighlightProvider"`
-	WorkspaceSymbolProvider  bool `json:"workspaceSymbolProvider"`
+	TextDocumentSync           int              `json:"textDocumentSync"`
+	DocumentSymbolProvider     bool             `json:"documentSymbolProvider"`
+	DefinitionProvider         bool             `json:"definitionProvider"`
+	HoverProvider              bool             `json:"hoverProvider"`
+	ReferencesProvider         bool             `json:"referencesProvider"`
+	DocumentHighlightProvider  bool             `json:"documentHighlightProvider"`
+	WorkspaceSymbolProvider    bool             `json:"workspaceSymbolProvider"`
+	RenameProvider             bool             `json:"renameProvider"`
+	FoldingRangeProvider       bool             `json:"foldingRangeProvider"`
+	SelectionRangeProvider     bool             `json:"selectionRangeProvider"`
+	DocumentFormattingProvider bool             `json:"documentFormattingProvider"`
+	InlayHintProvider          bool             `json:"inlayHintProvider"`
+	CompletionProvider         triggerServerCap `json:"completionProvider"`
+	SignatureHelpProvider      triggerServerCap `json:"signatureHelpProvider"`
+}
+
+// triggerServerCap 是带触发字符的能力声明。
+type triggerServerCap struct {
+	TriggerCharacters   []string `json:"triggerCharacters,omitempty"`
+	RetriggerCharacters []string `json:"retriggerCharacters,omitempty"`
 }
 
 type initializeResult struct {

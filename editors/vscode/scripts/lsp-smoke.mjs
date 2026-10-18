@@ -6,7 +6,8 @@
 // 用法：node scripts/lsp-smoke.mjs [工程目录]
 // 默认对仓库 examples/result 工程跑：initialize → didOpen → documentSymbol → definition → hover → shutdown。
 import { spawn } from "node:child_process";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -112,6 +113,22 @@ function lineOf(text, needle) {
   return null;
 }
 
+// applyEdits 把一组 LSP 文本编辑应用到文本上（从后往前，避免偏移错位）。
+function applyEdits(text, edits) {
+  const lines = text.split("\n");
+  const offsetAt = (p) => {
+    let off = 0;
+    for (let i = 0; i < p.line; i++) off += lines[i].length + 1;
+    return off + p.character;
+  };
+  const sorted = [...edits].sort((a, b) => offsetAt(b.range.start) - offsetAt(a.range.start));
+  let out = text;
+  for (const e of sorted) {
+    out = out.slice(0, offsetAt(e.range.start)) + e.newText + out.slice(offsetAt(e.range.end));
+  }
+  return out;
+}
+
 try {
   const init = await request("initialize", {
     processId: process.pid,
@@ -122,6 +139,16 @@ try {
   check(caps.documentSymbolProvider === true, "initialize：声明大纲能力");
   check(caps.definitionProvider === true, "initialize：声明跳转定义能力");
   check(caps.hoverProvider === true, "initialize：声明悬停能力");
+  check(caps.referencesProvider === true, "initialize：声明查找引用能力");
+  check(caps.documentHighlightProvider === true, "initialize：声明同文件高亮能力");
+  check(caps.workspaceSymbolProvider === true, "initialize：声明工程符号能力");
+  check(caps.completionProvider !== undefined, "initialize：声明补全能力");
+  check(caps.signatureHelpProvider !== undefined, "initialize：声明签名帮助能力");
+  check(caps.renameProvider === true, "initialize：声明重命名能力");
+  check(caps.foldingRangeProvider === true, "initialize：声明折叠能力");
+  check(caps.selectionRangeProvider === true, "initialize：声明选区能力");
+  check(caps.documentFormattingProvider === true, "initialize：声明格式化能力");
+  check(caps.inlayHintProvider === true, "initialize：声明内联提示能力");
   notify("initialized", {});
 
   notify("textDocument/didOpen", {
@@ -172,6 +199,137 @@ try {
   // 工程符号
   const ws = await request("workspace/symbol", { query: "parse" });
   check((ws.result ?? []).length >= 1, "workspace/symbol：按前缀搜到符号");
+
+  // 补全：`io.` 之后应列出 std.io 的公开函数
+  const ioAt = lineOf(srcText, "io.print_text(");
+  if (!ioAt) throw new Error("样例里找不到 io.print_text 调用点");
+  const comp = await request("textDocument/completion", {
+    textDocument: { uri: srcURI },
+    position: { line: ioAt.line, character: ioAt.character + 3 },
+  });
+  const labels = (comp.result?.items ?? []).map((i) => i.label);
+  check(labels.includes("print_text"), "completion：`io.` 之后列出 print_text", labels.slice(0, 12).join(","));
+  check((comp.result?.items ?? []).length > 5, "completion：候选不止一条");
+
+  // 补全：普通位置的局部变量与关键字
+  const localAt = lineOf(srcText, "let v = parse_header(buf)?;");
+  if (localAt) {
+    const comp2 = await request("textDocument/completion", {
+      textDocument: { uri: srcURI },
+      position: { line: localAt.line, character: localAt.character + 4 },
+    });
+    const l2 = (comp2.result?.items ?? []).map((i) => i.label);
+    check(l2.includes("func") && l2.includes("I32"), "completion：裸位置给出关键字与内置类型", l2.slice(0, 12).join(","));
+  }
+
+  // 签名帮助：第二个实参处 activeParameter = 1
+  const callAt = lineOf(srcText, "maybe_scale(14,");
+  if (!callAt) throw new Error("样例里找不到 maybe_scale 调用点");
+  const sig = await request("textDocument/signatureHelp", {
+    textDocument: { uri: srcURI },
+    position: { line: callAt.line, character: callAt.character + "maybe_scale(14, ".length },
+  });
+  check((sig.result?.signatures ?? []).length === 1, "signatureHelp：给出唯一候选签名");
+  check(sig.result?.activeParameter === 1, "signatureHelp：逗号之后定位到第 2 个形参",
+    JSON.stringify(sig.result ?? {}).slice(0, 200));
+  check(JSON.stringify(sig.result ?? {}).includes("maybe_scale"), "signatureHelp：签名里带函数名");
+
+  // 重命名：函数名跨引用
+  const ready = await request("textDocument/prepareRename", {
+    textDocument: { uri: srcURI },
+    position: { line: at.line, character: at.character + 2 },
+  });
+  check(ready.result?.placeholder === "parse_header", "prepareRename：可改名并给出占位文本",
+    JSON.stringify(ready.result ?? {}));
+  const ren = await request("textDocument/rename", {
+    textDocument: { uri: srcURI },
+    position: { line: at.line, character: at.character + 2 },
+    newName: "parse_hdr",
+  });
+  const edits = Object.values(ren.result?.changes ?? {}).flat();
+  check(edits.length >= 2, "rename：声明与调用一起改", JSON.stringify(edits).slice(0, 200));
+  check(edits.every((e) => e.newText === "parse_hdr"), "rename：新名字正确");
+
+  // 折叠：代码块与注释
+  const folds = await request("textDocument/foldingRange", { textDocument: { uri: srcURI } });
+  const foldList = folds.result ?? [];
+  check(foldList.length >= 2, "foldingRange：给出多个可折叠区间");
+  check(foldList.some((f) => f.kind === "region"), "foldingRange：包含代码块");
+  check(foldList.every((f) => f.endLine > f.startLine), "foldingRange：区间必须跨行");
+
+  // 选区：逐级扩大
+  const sel = await request("textDocument/selectionRange", {
+    textDocument: { uri: srcURI },
+    positions: [{ line: at.line, character: at.character + 2 }],
+  });
+  const first = (sel.result ?? [])[0];
+  check(first !== undefined && first.parent !== undefined, "selectionRange：返回带父级的选区链");
+
+  // 格式化：幂等（已格式化的样例不应改动）
+  const fmt = await request("textDocument/formatting", {
+    textDocument: { uri: srcURI },
+    options: { tabSize: 4, insertSpaces: true },
+  });
+  check(Array.isArray(fmt.result), "formatting：返回编辑数组");
+  if ((fmt.result ?? []).length > 0) {
+    const applied = applyEdits(srcText, fmt.result);
+    const again = await request("textDocument/formatting", {
+      textDocument: { uri: srcURI },
+      options: { tabSize: 4, insertSpaces: true },
+    });
+    check(applyEdits(applied, again.result ?? []) === applied, "formatting：格式化结果幂等");
+  }
+
+  // 内联提示：`let` 推断出的类型
+  const hints = await request("textDocument/inlayHint", {
+    textDocument: { uri: srcURI },
+    range: { start: { line: 0, character: 0 }, end: { line: 100000, character: 0 } },
+  });
+  const hintList = hints.result ?? [];
+  check(hintList.length >= 1, "inlayHint：`let x = ...` 给出推断类型", JSON.stringify(hintList).slice(0, 200));
+  check(hintList.every((h) => typeof h.label === "string" && h.label.startsWith(":")),
+    "inlayHint：标签形如 `: T`");
+
+  // 格式化：临时工程里放一份缩进凌乱的文件，验证真的会改且幂等
+  const fmtDir = mkdtempSync(join(tmpdir(), "aila-fmt-"));
+  try {
+    writeFileSync(
+      join(fmtDir, "aila.toml"),
+      '[package]\nname = "demo"\nversion = "0.1.0"\nentry = "_.main"\n\n[target]\nboard = "host"\n',
+    );
+    const messy = "module {\n   func main() {\n         let x: I32 = 1;   \n  }\n}\n";
+    writeFileSync(join(fmtDir, "main.aila"), messy);
+    const messyURI = pathToFileURL(join(fmtDir, "main.aila")).href;
+    notify("textDocument/didOpen", {
+      textDocument: { uri: messyURI, languageId: "aila", version: 1, text: messy },
+    });
+    const f1 = await request("textDocument/formatting", {
+      textDocument: { uri: messyURI },
+      options: { tabSize: 4, insertSpaces: true },
+    });
+    check((f1.result ?? []).length === 1, "formatting：凌乱文件给出一处整文档替换");
+    const formatted = applyEdits(messy, f1.result ?? []);
+    check(
+      formatted === "module {\n    func main() {\n        let x: I32 = 1;\n    }\n}\n",
+      "formatting：缩进改成 4 空格、去掉行尾空白",
+      JSON.stringify(formatted),
+    );
+    notify("textDocument/didChange", {
+      textDocument: { uri: messyURI, version: 2 },
+      contentChanges: [{ text: formatted }],
+    });
+    const f2 = await request("textDocument/formatting", {
+      textDocument: { uri: messyURI },
+      options: { tabSize: 4, insertSpaces: true },
+    });
+    check((f2.result ?? []).length === 0, "formatting：已格式化的文件不再改动（幂等）");
+  } finally {
+    try {
+      rmSync(fmtDir, { recursive: true, force: true });
+    } catch {
+      /* 清理失败不影响结论 */
+    }
+  }
 
   await request("shutdown", null);
   notify("exit", {});

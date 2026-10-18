@@ -22,7 +22,8 @@
   },
   "main": "./out/extension.js",
   "activationEvents": [
-    "onLanguage:aila"
+    "onLanguage:aila",
+    "onLanguage:aila-binding"
   ],
   "contributes": {
     "languages": [
@@ -58,7 +59,7 @@
       {
         "language": "aila-binding",
         "scopeName": "source.aila.binding",
-        "path": "./syntaxes/aila.tmLanguage.json"
+        "path": "./syntaxes/aila-binding.tmLanguage.json"
       }
     ],
     "snippets": [
@@ -132,8 +133,9 @@
   "scripts": {
     "compile": "tsc -p ./",
     "smoke": "node scripts/grammar-smoke.mjs",
+    "smoke:coverage": "node scripts/grammar-coverage.mjs",
     "smoke:lsp": "node scripts/lsp-smoke.mjs",
-    "check": "npm run compile && npm run smoke",
+    "check": "npm run compile && npm run smoke && npm run smoke:coverage && npm run smoke:lsp",
     "package": "vsce package"
   },
   "devDependencies": {

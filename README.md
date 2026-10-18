@@ -108,7 +108,7 @@ examples/   六个可运行示例（hello / control / region / struct / result /
 tests/corpus/  黄金语料与契约快照（token / AST / 布局 / 签名 / 绑定 / IR / 示例输出）
 tools/goldengen/  快照生成器（`go run ./tools/goldengen [-check]`）
 ci/         打包脚本（拉 llvm-mingw 并裁剪到 toolchain/、拼发布目录）
-editors/vscode/  VSCode 扩展（语法高亮 / 片段 / 构建运行命令）
+editors/vscode/  VSCode 扩展（语法高亮 / 片段 / 语言服务器客户端 / 构建运行命令）
 toolchain/  随包工具链（ci/fetch-llvm.* 生成，不进版本库；发布时随 zip 分发）
 ```
 
@@ -175,7 +175,10 @@ module {
 ## 编辑器支持
 
 `editors/vscode/` 是 AILA 的 VSCode 扩展。**语义能力来自编译器本体**（`aila lsp` 语言服务器）：
-跳转定义、查找引用、悬停签名、大纲、工程符号搜索、诊断标红；语法高亮 / 括号 / 片段是纯声明式贡献点。
+跳转定义、查找引用、悬停签名、大纲、工程符号搜索、诊断标红、补全、签名帮助、重命名、折叠、
+选区、格式化、内联类型提示；语法高亮 / 括号 / 片段是纯声明式贡献点。
+高亮覆盖 `internal/lexer` 的全部关键字 / 内置类型 / 标点，并由 `scripts/grammar-coverage.mjs`
+保证「仓库里每个 token 都有 scope」。
 另有 `AILA: 构建 / 构建并运行 / 只做检查 / 环境自检 / 生成 C 绑定 / 重启语言服务器` 命令与 `aila` 任务类型。
 装法见 [`editors/vscode/README.md`](editors/vscode/README.md)（软链进 `~/.vscode/extensions` 或 `vsce package`）。
 

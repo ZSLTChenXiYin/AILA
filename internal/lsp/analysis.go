@@ -26,6 +26,8 @@ type symbol struct {
 	Container string // 所属函数 / 类型（局部符号与成员才有）
 	Detail    string
 	Local     bool
+	// Public 表示该符号能跨包可见（壳内 + public，designs/0001 §2.2）。
+	Public bool
 }
 
 // moduleInfo 是一个已分析的模块。
@@ -325,13 +327,15 @@ func toDiagnostic(d diag.Diagnostic) Diagnostic {
 // buildSymbols 走一遍 AST，收集模块级声明与函数内的局部绑定。
 func buildSymbols(info *moduleInfo) []*symbol {
 	var out []*symbol
-	add := func(name string, kind int, span diag.Span, container, detail string, local bool) {
+	add := func(name string, kind int, span diag.Span, container, detail string, local, public bool) {
 		if name == "" || name == "_" {
 			return
 		}
 		out = append(out, &symbol{Name: name, Kind: kind, Range: spanRange(span), Module: info.Name,
-			Container: container, Detail: detail, Local: local})
+			Container: container, Detail: detail, Local: local, Public: public})
 	}
+	// crossPublic 判断一条声明是否能跨包可见（壳内 + public）。
+	crossPublic := func(a ast.Attrs) bool { return a.IsPublic && a.InShell }
 	for _, d := range info.Mod.AllDecls() {
 		switch x := d.(type) {
 		case *ast.FuncDecl:
@@ -344,28 +348,30 @@ func buildSymbols(info *moduleInfo) []*symbol {
 				display = x.OwnerType + "." + x.Name
 			}
 			detail := funcDetail(info, x)
-			add(display, kind, x.Span, x.OwnerType, detail, false)
+			add(display, kind, x.Span, x.OwnerType, detail, false, crossPublic(x.Attrs))
 			collectLocals(x, func(name string, kind int, span diag.Span, detail string) {
-				add(name, kind, span, display, detail, true)
+				add(name, kind, span, display, detail, true, false)
 			})
 		case *ast.StructDecl:
-			add(x.Name, KindStruct, x.Span, "", "struct", false)
+			pub := crossPublic(x.Attrs)
+			add(x.Name, KindStruct, x.Span, "", "struct", false, pub)
 			for _, f := range x.Fields_ {
-				add(f.Name, KindField, f.Span, x.Name, "字段", false)
+				add(f.Name, KindField, f.Span, x.Name, "字段", false, pub)
 			}
 		case *ast.EnumDecl:
-			add(x.Name, KindEnum, x.Span, "", "enum", false)
+			pub := crossPublic(x.Attrs)
+			add(x.Name, KindEnum, x.Span, "", "enum", false, pub)
 			for _, v := range x.Variants {
-				add(x.Name+"."+v.Name, KindEnumMember, v.Span, x.Name, "变体", false)
+				add(x.Name+"."+v.Name, KindEnumMember, v.Span, x.Name, "变体", false, pub)
 			}
 		case *ast.TypeAlias:
-			add(x.Name, KindTypeParam, x.Span, "", "type 别名", false)
+			add(x.Name, KindTypeParam, x.Span, "", "type 别名", false, crossPublic(x.Attrs))
 		case *ast.LetDecl:
 			kind := KindConstant
 			if x.KindV != "const" {
 				kind = KindVariable
 			}
-			add(x.Name, kind, x.Span, "", x.KindV, false)
+			add(x.Name, kind, x.Span, "", x.KindV, false, crossPublic(x.Attrs))
 		}
 	}
 	return out

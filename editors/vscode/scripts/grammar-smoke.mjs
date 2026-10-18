@@ -65,6 +65,18 @@ function expectPrefix(tokens, prefix, want, label) {
   return true;
 }
 
+// 断言：只要样例里存在某个 token 命中 want（用于字符串这种会被 begin/end 拆开的语法）
+function expectAnyScope(tokens, want, label, sampleText) {
+  const hit = tokens.find(([, scopes]) => scopes.some((s) => s.includes(want)));
+  if (!hit) {
+    console.error(`✘ ${label}：期望有 token 命中 ${want}`);
+    return false;
+  }
+  const shown = sampleText ?? hit[0].trim().slice(0, 18);
+  console.log(`✔ ${label}：${shown} → ${hit[1].join(" ")}`);
+  return true;
+}
+
 function expectScope(tokens, snippet, want, label) {
   const hit = tokens.find(([text, scopes]) =>
     text.trim() === snippet && scopes.some((s) => s.includes(want)));
@@ -104,6 +116,7 @@ module {
         for!, i < 3; i = i + 1 {
             if i == 0 { continue; }
         }
+        let s: Text = "a\\nb";
         return;
     }
 }
@@ -120,11 +133,15 @@ ok = expectScope(tokens, "func", "keyword.declaration", "func 关键字") && ok;
 ok = expectScope(tokens, "twice", "entity.name.function", "函数名") && ok;
 ok = expectScope(tokens, "I32", "support.type.primitive", "内建类型 I32") && ok;
 
-ok = expectScope(tokens, "#[c]", "entity.name.function.decorator", "#[c] 属性") && ok;
+ok = expectScope(tokens, "c", "entity.name.function.decorator", "#[c] 属性名") && ok;
 ok = expectScope(tokens, "#size", "support.function.builtin", "#size 内建查询") && ok;
-ok = expectScope(tokens, "@region", "keyword.operator.effect", "@region 效果子句") && ok;
-ok = expectScope(tokens, "@mut", "keyword.operator.effect", "@mut 效果子句") && ok;
+ok = expectScope(tokens, "region", "keyword.operator.effect", "@region 效果关键字") && ok;
+ok = expectScope(tokens, "mut", "keyword.operator.effect", "@mut 效果关键字") && ok;
 ok = expectScope(tokens, "@static", "keyword.operator.allocate", "@static 分配") && ok;
+ok = expectAnyScope(tokens, "string.quoted.double", "字符串字面量", '"a\\nb"') && ok;
+ok = expectAnyScope(tokens, "constant.character.escape", "字符串转义", "\\n") && ok;
+ok = expectScope(tokens, "0", "constant.numeric.integer", "整数字面量") && ok;
+ok = expectScope(tokens, "==", "keyword.operator.comparison", "比较运算符") && ok;
 ok = expectScope(tokens, "struct", "keyword.declaration", "struct 关键字") && ok;
 ok = expectScope(tokens, "Point", "entity.name.type", "类型名 Point") && ok;
 ok = expectScope(tokens, "module", "keyword.declaration", "module 关键字") && ok;

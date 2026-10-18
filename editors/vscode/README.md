@@ -5,7 +5,7 @@ AILA 语言的 VSCode 扩展。分两层：
 | 层 | 内容 | 依赖 |
 |---|---|---|
 | **声明式**（不跑代码） | 语法高亮、括号/注释、代码片段 | 无 |
-| **语言服务器**（`aila lsp`） | 大纲、跳转定义、悬停、查找引用、同文件高亮、工程符号搜索、诊断标红 | 需要 `aila` 可执行文件 |
+| **语言服务器**（`aila lsp`） | 大纲、跳转定义、悬停、查找引用、同文件高亮、工程符号、诊断标红、补全、签名帮助、重命名、折叠、选区、格式化、内联类型提示 | 需要 `aila` 可执行文件 |
 
 再加构建/运行/检查/绑定生成等命令与 `aila` 任务类型。
 
@@ -33,7 +33,7 @@ ln -s "$(pwd)" ~/.vscode/extensions/ailang.aila-0.1.0
 ### 本机已验证过的完整命令（Windows + Node 24）
 ```bash
 npm install                 # 4 个包：typescript / @types/*
-npm run check               # = tsc 编译 + 语法高亮冒烟（19 条断言，119 个 token）
+npm run check               # = tsc 编译 + 文法冒烟 + 全量高亮覆盖 + LSP 端到端
 npx @vscode/vsce package --allow-missing-repository   # → aila-0.1.0.vsix（16 KB）
 code --install-extension aila-0.1.0.vsix --force       # 装进本机 VSCode
 code --list-extensions --show-versions | findstr aila  # → ailang.aila@0.1.0
@@ -56,10 +56,17 @@ code --install-extension aila-0.1.0.vsix
 
 | 功能 | 说明 |
 |---|---|
-| **语法高亮** | 关键字（`func`/`module`/`region`/`match`/`defer`…）、内建类型（`I32`/`U8`/`Text`/`USize`…）、`#[c]` 属性、`#size`/`#align` 查询、`@region`/`@mut`/`@move` 效果子句、`@[区域名]`、字符串（含 `r"..."` 原始串）、数字（十六进制/浮点/下划线分隔）、`import` 路径与别名 |
+| **语法高亮** | 覆盖 `internal/lexer` 的**全部** 37 个关键字、20 个内置类型名与 49 个标点：声明（`func`/`struct`/`enum`/`type`/`let`/`var`/`const`/`state`/`view`/`module hot`/`region`）、控制（`if`/`else`/`for`/`in`/`match`/`return`/`break`/`continue`/`defer`/`trap`/`yield`/`out`/`resume`/`copy`/`move`/`len`/`as`/`trunc`）、`true`/`false`、内建类型、`#[c]` 等属性、`#size`/`#align` 查询、`@region[...]`/`@mut[...]`/`@move[...]` 效果子句、`@[区域名]`、`@static`/`@heap`、字符串（含 `r"..."` 原始串与转义）、字符字面量、数字（十六进制/浮点/指数/下划线分隔）、`import` 路径与 `as` 别名、调用与成员访问、全部运算符（含 `<<=`/`>>=` 等复合赋值）。<br>**完整性由 `scripts/grammar-coverage.mjs` 断言**：仓库里所有 `.aila` + `.ail` 文件的每一个非空白 token 都必须拿到 scope，退化成纯文本即判失败 |
 | **语言配置** | `//` 与 `/* */` 注释、括号自动配对、`module`/`func`/`struct`/`region`/`match` 等块自动缩进 |
+| **绑定文件高亮** | `.ail`（`aila bindgen` 生成物）单独一个语言 `aila-binding` / `source.aila.binding`，复用主文法，避免和手写源码混在一起 |
 | **代码片段** | `pubfunc`（壳内 public + 块内实现）、`func`、`method`、`struct`、`enum`、`result`（`T ! E`）、`opt`（`T?`）、`region`、`match`、`forc`、`forin`、`module`、`hotmodule`、`cop`（`#[c]` 绑定） |
-| **语言智能**（LSP） | `F12` 跳转定义（含 `import` 别名、方法、枚举变体、字段）、`Shift+F12` 查找引用、悬停看签名、`Ctrl+Shift+O` 大纲、`Ctrl+T` 工程符号搜索、同名高亮、诊断标红（保存即推） |
+| **语言智能**（LSP） | `F12` 跳转定义（含 `import` 别名、方法、枚举变体、字段）、`Shift+F12` 查找引用、悬停看签名、`Ctrl+Shift+O` 大纲、`Ctrl+T` 工程符号、同名高亮、诊断标红（输入即推） |
+| **补全** | 局部变量 / 模块级符号 / 导入别名 / 关键字 / 内置类型；`qual.` 之后按语义给成员（`alias.` → 目标模块公开符号，`变量.`/`类型.` → 字段 + 方法 + 变体）；`#[` 给属性名、`@` 给效果名、`import ` 之后给模块路径；函数项插入 `name(${1:参数})` 片段 |
+| **签名帮助** | 光标在实参列表里时显示签名，并按已敲的逗号定位当前形参（`(`、`,` 触发） |
+| **重命名**（`F2`） | 声明 + 同文件引用 + 跨模块的 `别名.名字` 限定引用一起改；局部符号只在本文件内改；关键字与内置类型拒绝改名 |
+| **折叠 / 选区** | 代码块（`{}`）、连续 `//` 注释、多行 `/* */`、连续 `import` 段可折叠；`Shift+Alt+→/←` 按「标识符 → 括号 → 行 → 文件」逐级扩大/收缩 |
+| **格式化**（`Shift+Alt+F`） | 按花括号层级重排缩进（4 空格）、去行尾空白、末行恰好一个换行；多行字符串与块注释内部原样保留（改缩进会改语义）；幂等 |
+| **内联提示** | `let`/`var` 没写类型标注时，在名字后显示编译器推断出的类型（如 `: I32`） |
 | **命令** | 命令面板里搜 `AILA:` —— 构建 / 构建并运行 / 只做检查 / 环境自检 / 生成 C 绑定 / 重启语言服务器 |
 | **任务** | `Terminal → Run Task` 里出现 `aila build` / `aila run` / `aila check`，可绑快捷键或放进 `tasks.json` |
 
@@ -86,20 +93,25 @@ code --install-extension aila-0.1.0.vsix
 
 ## 刻意不做
 
-- **LSP / 语义跳转 / 重命名**：这些必须由 `aila` 导出一份稳定的「解析结果接口」再做，
-  否则插件里另写一遍语法树就是第二事实源（和 `designs/0001 §1.1` 的纪律冲突）。
-  目前排查语法问题用 `aila parse <文件> [--tokens]`。
-- **诊断标红**：`aila check` 的输出现阶段走输出通道；等诊断有了稳定 JSON 结构（`--json`）再接入
-  `DiagnosticCollection`，避免解析人读文本。
+- **插件里另写一套分析**：语义一律问 `aila lsp`。插件只做「协议 → 编辑器 API」的翻译，
+  这样编译器改语义时插件不用跟着改（和 `designs/0001 §1.1` 的纪律一致）。
+- **语义着色（Semantic Tokens）**：TextMate 文法已经覆盖全部 token 且有覆盖检查兜底，
+  再叠一层语义着色只会和主题打架；等真需要「同名变量同色」时再说。
+- **代码动作 / 快速修复**：诊断现在只报错不自动改。要加也是先让 `aila check --json` 输出稳定结构。
+- **索引依赖包**：语言服务器索引「当前工程 + 标准库」；`deps` 里的外部包只在跳转时按需读取。
 
 ## 目录
 
 ```text
 editors/vscode/
-  package.json               扩展清单（语言/语法/片段/命令/任务/设置）
-  language-configuration.json 注释、括号、缩进
-  syntaxes/aila.tmLanguage.json TextMate 语法
-  snippets/aila.json          代码片段
-  src/extension.ts            命令与任务入口（TypeScript）
+  package.json                 扩展清单（语言/语法/片段/命令/任务/设置）
+  language-configuration.json  注释、括号、缩进
+  syntaxes/aila.tmLanguage.json        TextMate 语法（.aila，全量覆盖）
+  syntaxes/aila-binding.tmLanguage.json 生成物 .ail 的语法（复用主文法）
+  snippets/aila.json           代码片段
+  src/extension.ts             语言服务器客户端 + 命令与任务入口（TypeScript）
+  scripts/grammar-smoke.mjs    文法冒烟（21 条断言）
+  scripts/grammar-coverage.mjs 高亮完整性检查（所有 token 必须有 scope）
+  scripts/lsp-smoke.mjs        语言服务器端到端（42 条协议断言）
   tsconfig.json
 ```

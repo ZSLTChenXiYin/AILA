@@ -2,11 +2,12 @@
 //
 // 架构：**插件只做渲染，语义全部来自编译器**。
 //   - 语法高亮 / 括号 / 片段：纯声明式贡献点（package.json + tmLanguage + snippets）
-//   - 大纲 / 跳转定义 / 悬停 / 查找引用 / 同文件高亮 / 工程符号搜索 / 诊断标红：一律问 `aila lsp`
+//   - 大纲 / 跳转定义 / 悬停 / 查找引用 / 同文件高亮 / 工程符号 / 诊断标红 /
+//     补全 / 签名帮助 / 重命名 / 折叠 / 选区 / 格式化 / 内联提示：一律问 `aila lsp`
 //
 // 为什么自己写一个极简 LSP 客户端而不是引 vscode-languageclient：
-// 我们只用到 6 个只读能力（无动态注册、无代码动作、无重命名），
-// 一个两百行的分帧客户端足够，既不引运行时依赖，也不绑定编辑器 API 版本。
+// 我们只用只读 + 少量编辑类能力（无动态注册、无代码动作），
+// 一个三百行的分帧客户端足够，既不引运行时依赖，也不绑定编辑器 API 版本。
 import * as vscode from "vscode";
 import * as cp from "node:child_process";
 import * as path from "node:path";
@@ -82,14 +83,24 @@ class LSPClient implements vscode.Disposable {
         processId: process.pid,
         rootUri: vscode.Uri.file(this.cwd).toString(),
         capabilities: {
+          workspace: { symbol: {} },
           textDocument: {
             documentSymbol: { hierarchicalDocumentSymbolSupport: true },
             hover: { contentFormat: ["markdown", "plaintext"] },
             definition: {},
             references: {},
             documentHighlight: {},
+            completion: {
+              completionItem: { snippetSupport: true, documentationFormat: ["markdown", "plaintext"] },
+              contextSupport: true,
+            },
+            signatureHelp: {},
+            rename: { prepareSupport: true },
+            foldingRange: { lineFoldingOnly: true },
+            selectionRange: {},
+            formatting: {},
+            inlayHint: {},
           },
-          workspace: { symbol: {} },
         },
       }).then(() => {
         this.notify("initialized", {});
@@ -222,6 +233,27 @@ function toSymbol(s: Json): vscode.DocumentSymbol {
   return sym;
 }
 
+// 补全项种类（LSP 的 CompletionItemKind 与 vscode.CompletionItemKind 数值一致）。
+const completionKinds: Record<number, vscode.CompletionItemKind> = {
+  2: vscode.CompletionItemKind.Method,
+  3: vscode.CompletionItemKind.Function,
+  5: vscode.CompletionItemKind.Field,
+  6: vscode.CompletionItemKind.Variable,
+  9: vscode.CompletionItemKind.Module,
+  13: vscode.CompletionItemKind.Enum,
+  14: vscode.CompletionItemKind.Keyword,
+  15: vscode.CompletionItemKind.Snippet,
+  20: vscode.CompletionItemKind.EnumMember,
+  21: vscode.CompletionItemKind.Constant,
+  22: vscode.CompletionItemKind.Struct,
+  25: vscode.CompletionItemKind.TypeParameter,
+};
+
+function toSelectionRange(r: Json): vscode.SelectionRange {
+  const parent = r.parent ? toSelectionRange(r.parent) : undefined;
+  return new vscode.SelectionRange(toRange(r.range), parent);
+}
+
 // --------------------------------------------------------------------------- //
 // 激活
 // --------------------------------------------------------------------------- //
@@ -345,6 +377,169 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           position: { line: pos.line, character: pos.character },
         });
         return (res ?? []).map((h: Json) => new vscode.DocumentHighlight(toRange(h.range)));
+      },
+    }),
+
+    // ---- 补全：关键字 / 类型 / 模块符号 / 局部 / `qual.` 成员 ----
+    vscode.languages.registerCompletionItemProvider(
+      selector,
+      {
+        async provideCompletionItems(doc, pos) {
+          const c = await ensureClient();
+          if (!c) return undefined;
+          const res: Json = await c.request("textDocument/completion", {
+            textDocument: { uri: doc.uri.toString() },
+            position: { line: pos.line, character: pos.character },
+          });
+          if (!res) return undefined;
+          const word = doc.getWordRangeAtPosition(pos);
+          const items: vscode.CompletionItem[] = (res.items ?? []).map((it: Json) => {
+            const item = new vscode.CompletionItem(
+              it.label,
+              completionKinds[it.kind] ?? vscode.CompletionItemKind.Text,
+            );
+            if (it.detail) item.detail = it.detail;
+            if (it.sortText) item.sortText = it.sortText;
+            if (it.insertText) {
+              item.insertText =
+                it.insertTextFormat === 2 ? new vscode.SnippetString(it.insertText) : it.insertText;
+            }
+            if (word) item.range = word;
+            return item;
+          });
+          return new vscode.CompletionList(items, res.isIncomplete ?? false);
+        },
+      },
+      ".",
+      "@",
+      "#",
+      ":",
+      "(",
+    ),
+
+    // ---- 签名帮助：光标落在实参列表里 ----
+    vscode.languages.registerSignatureHelpProvider(
+      selector,
+      {
+        async provideSignatureHelp(doc, pos) {
+          const c = await ensureClient();
+          if (!c) return undefined;
+          const res: Json = await c.request("textDocument/signatureHelp", {
+            textDocument: { uri: doc.uri.toString() },
+            position: { line: pos.line, character: pos.character },
+          });
+          if (!res || !res.signatures?.length) return undefined;
+          const help = new vscode.SignatureHelp();
+          help.signatures = res.signatures.map((s: Json) => {
+            const sig = new vscode.SignatureInformation(s.label);
+            sig.parameters = (s.parameters ?? []).map((p: Json) => new vscode.ParameterInformation(p.label));
+            if (typeof s.activeParameter === "number") sig.activeParameter = s.activeParameter;
+            return sig;
+          });
+          help.activeSignature = res.activeSignature ?? 0;
+          help.activeParameter = res.activeParameter ?? 0;
+          return help;
+        },
+      },
+      "(",
+      ",",
+    ),
+
+    // ---- 重命名（含跨模块限定名） ----
+    vscode.languages.registerRenameProvider(selector, {
+      async prepareRename(doc, pos) {
+        const c = await ensureClient();
+        if (!c) return undefined;
+        const res: Json = await c.request("textDocument/prepareRename", {
+          textDocument: { uri: doc.uri.toString() },
+          position: { line: pos.line, character: pos.character },
+        });
+        if (!res) throw new Error("这里不能重命名（关键字 / 内置类型 / 无法解析的符号）");
+        return { range: toRange(res.range), placeholder: res.placeholder };
+      },
+      async provideRenameEdits(doc, pos, newName) {
+        const c = await ensureClient();
+        if (!c) return undefined;
+        const res: Json = await c.request("textDocument/rename", {
+          textDocument: { uri: doc.uri.toString() },
+          position: { line: pos.line, character: pos.character },
+          newName,
+        });
+        if (!res?.changes) return undefined;
+        const edit = new vscode.WorkspaceEdit();
+        for (const [uri, edits] of Object.entries(res.changes as Record<string, Json[]>)) {
+          const u = vscode.Uri.parse(uri);
+          for (const e of edits) edit.replace(u, toRange(e.range), e.newText);
+        }
+        return edit;
+      },
+    }),
+
+    // ---- 折叠：代码块 / 注释 / import 段 ----
+    vscode.languages.registerFoldingRangeProvider(selector, {
+      async provideFoldingRanges(doc) {
+        const c = await ensureClient();
+        if (!c) return undefined;
+        const res: Json = await c.request("textDocument/foldingRange", {
+          textDocument: { uri: doc.uri.toString() },
+        });
+        const kinds: Record<string, vscode.FoldingRangeKind | undefined> = {
+          comment: vscode.FoldingRangeKind.Comment,
+          region: vscode.FoldingRangeKind.Region,
+          imports: vscode.FoldingRangeKind.Imports,
+        };
+        return (res ?? []).map((f: Json) => new vscode.FoldingRange(f.startLine, f.endLine, kinds[f.kind]));
+      },
+    }),
+
+    // ---- 逐级扩大选区 ----
+    vscode.languages.registerSelectionRangeProvider(selector, {
+      async provideSelectionRanges(doc, positions) {
+        const c = await ensureClient();
+        if (!c) return undefined;
+        const res: Json = await c.request("textDocument/selectionRange", {
+          textDocument: { uri: doc.uri.toString() },
+          positions: positions.map((p) => ({ line: p.line, character: p.character })),
+        });
+        return (res ?? []).map(toSelectionRange);
+      },
+    }),
+
+    // ---- 格式化：缩进 / 行尾空白 / 末行换行 ----
+    vscode.languages.registerDocumentFormattingEditProvider(selector, {
+      async provideDocumentFormattingEdits(doc, options) {
+        const c = await ensureClient();
+        if (!c) return undefined;
+        const res: Json = await c.request("textDocument/formatting", {
+          textDocument: { uri: doc.uri.toString() },
+          options: { tabSize: options.tabSize, insertSpaces: options.insertSpaces },
+        });
+        return (res ?? []).map((e: Json) => vscode.TextEdit.replace(toRange(e.range), e.newText));
+      },
+    }),
+
+    // ---- 内联提示：let 推断出的类型 ----
+    vscode.languages.registerInlayHintsProvider(selector, {
+      async provideInlayHints(doc, range) {
+        const c = await ensureClient();
+        if (!c) return undefined;
+        const res: Json = await c.request("textDocument/inlayHint", {
+          textDocument: { uri: doc.uri.toString() },
+          range: {
+            start: { line: range.start.line, character: range.start.character },
+            end: { line: range.end.line, character: range.end.character },
+          },
+        });
+        return (res ?? []).map((h: Json) => {
+          const hint = new vscode.InlayHint(
+            new vscode.Position(h.position.line, h.position.character),
+            h.label,
+            h.kind === 1 ? vscode.InlayHintKind.Type : undefined,
+          );
+          hint.paddingLeft = !!h.paddingLeft;
+          hint.paddingRight = !!h.paddingRight;
+          return hint;
+        });
       },
     }),
 

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "AILA C 绑定（生成物）",
+  "scopeName": "source.aila.binding",
+  "comment": "`.ail` 是 aila bindgen 生成的 C 绑定声明文件（机器生成、只含壳内声明）。语法就是 AILA 的子集，所以直接复用主文法，只额外把注释头标记成 meta 区，便于主题区分生成物。",
+  "patterns": [
+    { "include": "source.aila" }
+  ]
+}

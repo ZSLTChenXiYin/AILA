@@ -165,7 +165,7 @@ aila [--version] [--help] <command> ...
 | `aila parse <文件>` | 解析一份 `.aila`，打印 token 流（`--tokens`）或语法树 S-表达式 | `--tokens` | 有诊断 = 1 |
 | `aila ir <文件>` | 单文件走完「解析 → 语义 → LLVM IR」并打印 IR 文本 | `--triple` | 有诊断 = 1 |
 | `aila deps [路径]` | 打印依赖图 / 重写 `aila.lock` / 生成 `vendor/` | `--update` `--vendor` `--json` | 0；有诊断 = 1 |
-| `aila lsp` | 启动语言服务器（JSON-RPC over stdio）：大纲 / 跳转定义 / 悬停 / 引用 / 诊断 | `--log <文件>` | 0；内部错误 = 4 |
+| `aila lsp` | 启动语言服务器（JSON-RPC over stdio）：大纲 / 跳转定义 / 悬停 / 引用 / 同文件高亮 / 工程符号 / 诊断推送 / 补全 / 签名帮助 / 重命名 / 折叠 / 选区 / 格式化 / 内联提示（§6.6） | `--log <文件>` | 0；内部错误 = 4 |
 
 ### 3.3 诊断输出格式（人读）
 
@@ -365,6 +365,28 @@ C 侧实现本体（`.c`）不进前端，只进 `cc` 编译与链接（§11.1�
 | packed/aligned | 从 AST 属性透传 | 识别 `__attribute__((packed))` / `__attribute__((aligned(N)))` / `#pragma pack(push,N)` 的文本形态 |
 
 两档产出同一套 §6.2/§6.3 规则，因此 AILA 侧代码无需感知档位。
+
+### 6.6 语言服务器能力矩阵（`aila lsp`）
+
+**纪律**：语义一律由编译器给出，插件只负责「协议 → 编辑器 API」的翻译；插件里不另写语法树。
+
+| LSP 方法 | 能力 | 说明 |
+|---|---|---|
+| `initialize` | 能力声明 | `textDocumentSync=1`（全量同步）；补全触发字符 `.` `@` `#` `:` `(`；签名帮助触发 `(` `,` |
+| `textDocument/publishDiagnostics` | 诊断 | 打开/输入即推；`E**` → Error，`W**` → Warning；同工程其它模块的诊断也一起推 |
+| `textDocument/documentSymbol` | 大纲 | 模块 → struct/enum/函数/方法 → 字段/变体 |
+| `textDocument/definition` | 跳转定义 | 局部 → 模块级 → `import` 别名 → `Type.member` → 字段 |
+| `textDocument/hover` | 悬停 | 种类 + 签名/类型 + 来源模块 |
+| `textDocument/references` | 查找引用 | 工程内按名字匹配 |
+| `textDocument/documentHighlight` | 同名高亮 | 同文件 |
+| `workspace/symbol` | 工程符号 | 按子串模糊搜索 |
+| `textDocument/completion` | 补全 | 局部/模块符号/导入别名/关键字/内置类型；`alias.` → 目标模块公开符号；`变量.`/`类型.` → 字段+方法+变体；`#[` → 属性名；`@` → 效果名；`import ` → 模块路径；函数项为 `name(${1:参数})` 片段 |
+| `textDocument/signatureHelp` | 签名帮助 | 从光标回溯找包住它的 `(`，按深度 0 的逗号定位当前形参 |
+| `textDocument/prepareRename` / `rename` | 重命名 | 声明 + 同文件引用 + 跨模块 `别名.名字` 一起改；局部符号只在本模块；关键字与内置类型拒绝；新名字必须是合法标识符 |
+| `textDocument/foldingRange` | 折叠 | `{}` 块（`{` 独占行时从声明行起折）、连续 `//`、多行 `/* */`、连续 `import` 段 |
+| `textDocument/selectionRange` | 选区 | 标识符 → 括号对（由内到外）→ 行 → 整文件 |
+| `textDocument/formatting` | 格式化 | 花括号层级缩进（`options.tabSize`，默认 4）+ 去行尾空白 + 末行恰好一个换行；多行字符串与块注释内部原样保留；**幂等**，无需改动时返回空数组 |
+| `textDocument/inlayHint` | 内联提示 | `let`/`var` 未标注类型时显示编译器推断的类型（`kind=Type`） |
 
 ---
 
