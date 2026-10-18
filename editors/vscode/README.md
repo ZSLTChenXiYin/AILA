@@ -60,7 +60,7 @@ code --install-extension aila-0.1.0.vsix
 | **语言配置** | `//` 与 `/* */` 注释、括号自动配对、`module`/`func`/`struct`/`region`/`match` 等块自动缩进 |
 | **绑定文件高亮** | `.ail`（`aila bindgen` 生成物）单独一个语言 `aila-binding` / `source.aila.binding`，复用主文法，避免和手写源码混在一起 |
 | **代码片段** | `pubfunc`（壳内 public + 块内实现）、`func`、`method`、`struct`、`enum`、`result`（`T ! E`）、`opt`（`T?`）、`region`、`match`、`forc`、`forin`、`module`、`hotmodule`、`cop`（`#[c]` 绑定） |
-| **语言智能**（LSP） | `F12` 跳转定义（含 `import` 别名、方法、枚举变体、字段）、`Shift+F12` 查找引用、悬停看签名、`Ctrl+Shift+O` 大纲、`Ctrl+T` 工程符号、同名高亮、诊断标红（输入即推） |
+| **语言智能**（LSP） | `F12` 跳转定义（含 `import` 别名、方法、枚举变体、字段）、`Ctrl+Shift+F12` 类型定义（变量 → struct/enum 声明）、`Ctrl+F12` 跳实现（壳内前向声明 ↔ 块内实现）、`Shift+F12` 查找引用、悬停看签名、`Ctrl+Shift+O` 大纲、`Ctrl+T` 工程符号、同名高亮、诊断标红（输入即推）、`import` 路径可点击跳转 |
 | **补全** | 局部变量 / 模块级符号 / 导入别名 / 关键字 / 内置类型；`qual.` 之后按语义给成员（`alias.` → 目标模块公开符号，`变量.`/`类型.` → 字段 + 方法 + 变体）；`#[` 给属性名、`@` 给效果名、`import ` 之后给模块路径；函数项插入 `name(${1:参数})` 片段 |
 | **签名帮助** | 光标在实参列表里时显示签名，并按已敲的逗号定位当前形参（`(`、`,` 触发） |
 | **重命名**（`F2`） | 声明 + 同文件引用 + 跨模块的 `别名.名字` 限定引用一起改；局部符号只在本文件内改；关键字与内置类型拒绝改名 |
@@ -112,6 +112,6 @@ editors/vscode/
   src/extension.ts             语言服务器客户端 + 命令与任务入口（TypeScript）
   scripts/grammar-smoke.mjs    文法冒烟（21 条断言）
   scripts/grammar-coverage.mjs 高亮完整性检查（所有 token 必须有 scope）
-  scripts/lsp-smoke.mjs        语言服务器端到端（42 条协议断言）
+  scripts/lsp-smoke.mjs        语言服务器端到端（47 条协议断言）
   tsconfig.json
 ```

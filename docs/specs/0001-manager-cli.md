@@ -165,7 +165,7 @@ aila [--version] [--help] <command> ...
 | `aila parse <文件>` | 解析一份 `.aila`，打印 token 流（`--tokens`）或语法树 S-表达式 | `--tokens` | 有诊断 = 1 |
 | `aila ir <文件>` | 单文件走完「解析 → 语义 → LLVM IR」并打印 IR 文本 | `--triple` | 有诊断 = 1 |
 | `aila deps [路径]` | 打印依赖图 / 重写 `aila.lock` / 生成 `vendor/` | `--update` `--vendor` `--json` | 0；有诊断 = 1 |
-| `aila lsp` | 启动语言服务器（JSON-RPC over stdio）：大纲 / 跳转定义 / 悬停 / 引用 / 同文件高亮 / 工程符号 / 诊断推送 / 补全 / 签名帮助 / 重命名 / 折叠 / 选区 / 格式化 / 内联提示（§6.6） | `--log <文件>` | 0；内部错误 = 4 |
+| `aila lsp` | 启动语言服务器（JSON-RPC over stdio）：大纲 / 跳转定义 / 类型定义 / 跳到实现 / import 链接 / 悬停 / 引用 / 同文件高亮 / 工程符号 / 诊断推送 / 补全 / 签名帮助 / 重命名 / 折叠 / 选区 / 格式化 / 内联提示（§6.6） | `--log <文件>` | 0；内部错误 = 4 |
 
 ### 3.3 诊断输出格式（人读）
 
@@ -376,6 +376,9 @@ C 侧实现本体（`.c`）不进前端，只进 `cc` 编译与链接（§11.1�
 | `textDocument/publishDiagnostics` | 诊断 | 打开/输入即推；`E**` → Error，`W**` → Warning；同工程其它模块的诊断也一起推 |
 | `textDocument/documentSymbol` | 大纲 | 模块 → struct/enum/函数/方法 → 字段/变体 |
 | `textDocument/definition` | 跳转定义 | 局部 → 模块级 → `import` 别名 → `Type.member` → 字段 |
+| `textDocument/typeDefinition` | 跳到类型定义 | 变量/参数/常量 → 它的 struct/enum/`type` 声明；内置类型没有声明处，返回空 |
+| `textDocument/implementation` | 跳到实现 | **壳内前向声明 ↔ 块内实现**互相跳（`E7031` 报的就是这两半没配上）；两边都在时返回两条让编辑器选 |
+| `textDocument/documentLink` | 可点击链接 | `import <路径>` 圈成链接指向目标模块文件（`ch` 之类走 bindgen 产物的导入不给链接） |
 | `textDocument/hover` | 悬停 | 种类 + 签名/类型 + 来源模块 |
 | `textDocument/references` | 查找引用 | 工程内按名字匹配 |
 | `textDocument/documentHighlight` | 同名高亮 | 同文件 |

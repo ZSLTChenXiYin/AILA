@@ -90,6 +90,9 @@ class LSPClient implements vscode.Disposable {
             definition: {},
             references: {},
             documentHighlight: {},
+            typeDefinition: {},
+            implementation: {},
+            documentLink: {},
             completion: {
               completionItem: { snippetSupport: true, documentationFormat: ["markdown", "plaintext"] },
               contextSupport: true,
@@ -540,6 +543,54 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           hint.paddingRight = !!h.paddingRight;
           return hint;
         });
+      },
+    }),
+
+    // ---- 跳转到类型定义（变量 → 结构体/枚举声明） ----
+    vscode.languages.registerTypeDefinitionProvider(selector, {
+      async provideTypeDefinition(doc, pos) {
+        const c = await ensureClient();
+        if (!c) return undefined;
+        const res: Json = await c.request("textDocument/typeDefinition", {
+          textDocument: { uri: doc.uri.toString() },
+          position: { line: pos.line, character: pos.character },
+        });
+        return (res ?? []).map(
+          (l: Json) => new vscode.Location(vscode.Uri.parse(l.uri), toRange(l.range)),
+        );
+      },
+    }),
+
+    // ---- 跳转到实现（壳内前向声明 ↔ 块内实现，`Ctrl+F12`） ----
+    vscode.languages.registerImplementationProvider(selector, {
+      async provideImplementation(doc, pos) {
+        const c = await ensureClient();
+        if (!c) return undefined;
+        const res: Json = await c.request("textDocument/implementation", {
+          textDocument: { uri: doc.uri.toString() },
+          position: { line: pos.line, character: pos.character },
+        });
+        return (res ?? []).map(
+          (l: Json) => new vscode.Location(vscode.Uri.parse(l.uri), toRange(l.range)),
+        );
+      },
+    }),
+
+    // ---- `import` 路径变成可点击链接 ----
+    vscode.languages.registerDocumentLinkProvider(selector, {
+      async provideDocumentLinks(doc) {
+        const c = await ensureClient();
+        if (!c) return undefined;
+        const res: Json = await c.request("textDocument/documentLink", {
+          textDocument: { uri: doc.uri.toString() },
+        });
+        return (res ?? [])
+          .filter((l: Json) => l.target)
+          .map((l: Json) => {
+            const link = new vscode.DocumentLink(toRange(l.range), vscode.Uri.parse(l.target));
+            if (l.tooltip) link.tooltip = l.tooltip;
+            return link;
+          });
       },
     }),
 

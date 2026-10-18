@@ -64,6 +64,23 @@ func posOfLine(t *testing.T, w *Workspace, uri, needle string, after int) Positi
 	return Position{}
 }
 
+// posAtWord 找到包含 needle 的行，并把光标放在该行 word 的中间（更直观的写法）。
+func posAtWord(t *testing.T, w *Workspace, uri, needle, word string) Position {
+	t.Helper()
+	text := w.analysisFor(URI2Path(uri)).ByPath[URI2Path(uri)].Text
+	for i, line := range lineContents(text) {
+		if strings.Contains(line, needle) {
+			idx := strings.Index(line, word)
+			if idx < 0 {
+				t.Fatalf("行 %q 里找不到 %q", line, word)
+			}
+			return Position{Line: i, Character: idx + len(word)/2}
+		}
+	}
+	t.Fatalf("找不到包含 %q 的行", needle)
+	return Position{}
+}
+
 func TestCompletionOnLocalField(t *testing.T) {
 	w, uri := featureProject(t)
 	// `p.x` 里把光标放在点之后

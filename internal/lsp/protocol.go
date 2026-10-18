@@ -178,6 +178,13 @@ type PrepareRenameResult struct {
 	Placeholder string `json:"placeholder"`
 }
 
+// DocumentLink 是可点击的文档内链接（`import` 路径 → 目标模块文件）。
+type DocumentLink struct {
+	Range   Range  `json:"range"`
+	Target  string `json:"target,omitempty"`
+	Tooltip string `json:"tooltip,omitempty"`
+}
+
 // FoldingRange 是一个可折叠区间。
 type FoldingRange struct {
 	StartLine int    `json:"startLine"`
@@ -287,6 +294,9 @@ type serverCapabilities struct {
 	HoverProvider              bool             `json:"hoverProvider"`
 	ReferencesProvider         bool             `json:"referencesProvider"`
 	DocumentHighlightProvider  bool             `json:"documentHighlightProvider"`
+	TypeDefinitionProvider     bool             `json:"typeDefinitionProvider"`
+	ImplementationProvider     bool             `json:"implementationProvider"`
+	DocumentLinkProvider       bool             `json:"documentLinkProvider"`
 	WorkspaceSymbolProvider    bool             `json:"workspaceSymbolProvider"`
 	RenameProvider             bool             `json:"renameProvider"`
 	FoldingRangeProvider       bool             `json:"foldingRangeProvider"`

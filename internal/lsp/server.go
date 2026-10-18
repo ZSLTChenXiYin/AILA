@@ -167,6 +167,9 @@ func (s *Server) handle(msg *rpcMessage) error {
 			HoverProvider:              true,
 			ReferencesProvider:         true,
 			DocumentHighlightProvider:  true,
+			TypeDefinitionProvider:     true,
+			ImplementationProvider:     true,
+			DocumentLinkProvider:       true,
 			WorkspaceSymbolProvider:    true,
 			RenameProvider:             true,
 			FoldingRangeProvider:       true,
@@ -278,6 +281,30 @@ func (s *Server) handle(msg *rpcMessage) error {
 			return err
 		}
 		s.reply(msg.ID, s.ws.WorkspaceSymbols(p.Query))
+		return nil
+
+	case "textDocument/typeDefinition":
+		var p textDocumentPositionParams
+		if err := msg.decode(&p); err != nil {
+			return err
+		}
+		s.reply(msg.ID, s.ws.TypeDefinition(p.TextDocument.URI, p.Position))
+		return nil
+
+	case "textDocument/implementation":
+		var p textDocumentPositionParams
+		if err := msg.decode(&p); err != nil {
+			return err
+		}
+		s.reply(msg.ID, s.ws.Implementation(p.TextDocument.URI, p.Position))
+		return nil
+
+	case "textDocument/documentLink":
+		var p textDocumentPositionParams
+		if err := msg.decode(&p); err != nil {
+			return err
+		}
+		s.reply(msg.ID, s.ws.DocumentLinks(p.TextDocument.URI))
 		return nil
 
 	case "textDocument/completion":

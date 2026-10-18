@@ -200,6 +200,37 @@ try {
   const ws = await request("workspace/symbol", { query: "parse" });
   check((ws.result ?? []).length >= 1, "workspace/symbol：按前缀搜到符号");
 
+  // 跳转到类型定义：`ParseErr.Truncated` 里的 `ParseErr` → enum 声明
+  const enumAt = lineOf(srcText, "enum ParseErr {");
+  const enumUse = lineOf(srcText, "ParseErr.Truncated { got, need }");
+  if (!enumAt || !enumUse) throw new Error("样例里找不到 ParseErr 的用法");
+  const td = await request("textDocument/typeDefinition", {
+    textDocument: { uri: srcURI },
+    position: { line: enumUse.line, character: enumUse.character + 2 },
+  });
+  check((td.result ?? []).length === 1, "typeDefinition：`ParseErr` → 枚举声明");
+  if ((td.result ?? []).length === 1) {
+    check(td.result[0].range.start.line === enumAt.line, "typeDefinition：落在 enum 声明那一行",
+      JSON.stringify(td.result[0].range));
+  }
+
+  // 跳到实现：`read_or_default` 只有块内实现，也应能定位
+  const implAt = lineOf(srcText, "func read_or_default");
+  if (!implAt) throw new Error("样例里找不到 read_or_default 声明");
+  const impl = await request("textDocument/implementation", {
+    textDocument: { uri: srcURI },
+    position: { line: implAt.line, character: implAt.character + 10 },
+  });
+  check((impl.result ?? []).length >= 1, "implementation：函数能定位到实现体",
+    JSON.stringify(impl.result ?? {}).slice(0, 200));
+
+  // import 路径可点击
+  const links = await request("textDocument/documentLink", { textDocument: { uri: srcURI } });
+  const linkList = links.result ?? [];
+  check(linkList.length >= 1, "documentLink：`import std.io` 变成链接", JSON.stringify(linkList).slice(0, 200));
+  check(linkList.every((l) => typeof l.target === "string" && l.target.startsWith("file://")),
+    "documentLink：目标是文件 URI");
+
   // 补全：`io.` 之后应列出 std.io 的公开函数
   const ioAt = lineOf(srcText, "io.print_text(");
   if (!ioAt) throw new Error("样例里找不到 io.print_text 调用点");
