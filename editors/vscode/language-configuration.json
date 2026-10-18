@@ -12,7 +12,8 @@
     { "open": "{", "close": "}" },
     { "open": "[", "close": "]" },
     { "open": "(", "close": ")" },
-    { "open": "\"", "close": "\"", "notIn": ["string", "comment"] }
+    { "open": "\"", "close": "\"", "notIn": ["string", "comment"] },
+    { "open": "'", "close": "'", "notIn": ["string", "comment"] }
   ],
   "surroundingPairs": [
     ["{", "}"],
@@ -24,5 +25,25 @@
     "increaseIndentPattern": "^\\s*(module(\\s+hot)?\\s*\\{|func\\b.*\\{\\s*$|struct\\b.*\\{\\s*$|enum\\b.*\\{\\s*$|region\\b.*\\{\\s*$|unsafe\\s*\\{\\s*$|match\\b.*\\{\\s*$|if\\b.*\\{\\s*$|else\\s*\\{\\s*$|for\\b.*\\{\\s*$)",
     "decreaseIndentPattern": "^\\s*\\}"
   },
+  "onEnterRules": [
+    {
+      "beforeText": "^\\s*///.*$",
+      "action": { "indent": "none", "appendText": "/// " }
+    },
+    {
+      "beforeText": "^\\s*//.*$",
+      "action": { "indent": "none", "appendText": "// " }
+    },
+    {
+      "beforeText": "^\\s*/\\*\\*(?!\\*/).*$",
+      "afterText": "^\\s*\\*/$",
+      "action": { "indent": "none", "appendText": " * " }
+    },
+    {
+      "beforeText": "^\\s*\\{[\\s]*$",
+      "afterText": "^\\s*\\}[;,]?\\s*$",
+      "action": { "indent": "indentOutdent" }
+    }
+  ],
   "wordPattern": "[A-Za-z_][A-Za-z0-9_]*"
 }
