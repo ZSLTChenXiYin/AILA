@@ -11,6 +11,9 @@
 // 睡眠 n 毫秒：宿主真睡眠；嵌入式忙等
 #compile.c func aila_rt_sleep_ms(n: U64);
 
+// 忙等 n 微秒：三家族走 ccount（换算基准 = chip.json 的 cpu_hz），宿主先睡整毫秒再自旋
+#compile.c func aila_rt_delay_us(n: U32);
+
 // mono_ms 自启动以来的单调毫秒数（不随系统时间跳变；仅用于测量时长）
 public func mono_ms() -> U64 {
     return aila_rt_time_ms();
@@ -19,4 +22,15 @@ public func mono_ms() -> U64 {
 // sleep_ms 睡 n 毫秒
 public func sleep_ms(n: U64) {
     aila_rt_sleep_ms(n);
+}
+
+// sleep_us 忙等 n 微秒（I2C 位时序、DS18B20 / HC-SR04 这类单总线 / 单脉冲协议用）。
+//
+// 两条使用纪律（designs/0006 §4.1）：
+//   1. 忙等**不关中断**：SDK 构建里有 WiFi ISR 会把单次延时拉长，所以位时序敏感的
+//      整段事务应该放在**一次 C 调用**里，而不是在 AILA 里逐 bit 循环；
+//   2. 精度是"至少 n 微秒"：ccount 换算有 ±1 周期的量化误差（52MHz 下 ≈20ns），
+//      宿主侧整毫秒交给系统睡眠，余下的自旋。
+public func sleep_us(n: U32) {
+    aila_rt_delay_us(n);
 }

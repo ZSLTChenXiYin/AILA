@@ -315,6 +315,29 @@ void aila_rt_sleep_ms(uint64_t ms) {
     }
 }
 
+/* aila_rt_delay_us：微秒级忙等（I2C 位时序、DS18B20 / HC-SR04 这类单总线、单脉冲协议用）。
+ *
+ * 为什么用 ccount 而不是 ROM 的 ets_delay_us：ROM 那份的校准来源在**裸机**（不跑 SDK、
+ * 不调用 system_rtc_clock_cali_proc）下不确定，而 ccount 的换算基准 AILA_CPU_HZ 是
+ * chip.json 的单一事实源（esp8266 裸机 52MHz，SDK 构建由 -D 覆盖成 80MHz），可验证。
+ *
+ * 注意（designs/0006 §4.1）：忙等**不关中断**。裸机上没有抢占源，位时序是准的；
+ * SDK 构建里 WiFi ISR 会把单次延时拉长，所以那类构建请把整段位时序留在 C 的一次调用里。
+ */
+void aila_rt_delay_us(uint32_t us) {
+    uint32_t need = us * (AILA_CPU_HZ / 1000000u);
+    if (need == 0) {
+        return;
+    }
+    uint32_t last = rt_ccount();
+    uint32_t waited = 0;
+    while (waited < need) {
+        uint32_t now = rt_ccount();
+        waited += (uint32_t)(now - last); /* 单次调用远小于 ccount 半周期（约 41s） */
+        last = now;
+    }
+}
+
 uint64_t aila_rt_seed(void) {
     uint32_t a = rt_ccount();
     uint32_t b = rt_ccount();

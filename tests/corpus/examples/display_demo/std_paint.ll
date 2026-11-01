@@ -2,9 +2,10 @@
 ; target: x86_64-w64-windows-gnu
 target triple = "x86_64-w64-windows-gnu"
 
-@.str.0 = private unnamed_addr constant [20 x i8] c"index out of bounds\00", align 1
+@.str.0 = private unnamed_addr constant [17 x i8] c"division by zero\00", align 1
 @.str.1 = private unnamed_addr constant [15 x i8] c"std/paint.aila\00", align 1
 @.str.2 = private unnamed_addr constant [25 x i8] c"shift count out of range\00", align 1
+@.str.3 = private unnamed_addr constant [20 x i8] c"index out of bounds\00", align 1
 
 declare void @aila_rt_trap(ptr, i64, ptr, i64)
 declare void @aila_std_pixbuf__fill(ptr, i1)
@@ -12,6 +13,203 @@ declare { i16, i16, i16, i16 } @aila_std_damage__Rect__clamp({ i16, i16, i16, i1
 declare i1 @aila_std_damage__Rect__is_empty({ i16, i16, i16, i16 })
 declare void @aila_std_pixbuf__set_px(ptr, i16, i16, i1)
 declare i16 @aila_std_pixbuf__cols(ptr)
+
+define void @aila_std_paint__transpose_page(ptr %p_pb, i16 %p_page, i16 %p_c0, i16 %p_c1, { ptr, i64 } %p_dst) {
+  %slot_pb_1 = alloca { { ptr, i64 }, i16, i16, i16, { i8, i8, i8, i8 } }, align 8
+  %slot_page_2 = alloca i16, align 8
+  %slot_c0_3 = alloca i16, align 8
+  %slot_c1_4 = alloca i16, align 8
+  %slot_dst_5 = alloca { ptr, i64 }, align 8
+  %slot_rs_6 = alloca i64, align 8
+  %slot_cap_7 = alloca i64, align 8
+  %slot_fbcap_8 = alloca i64, align 8
+  %slot_y0_9 = alloca i16, align 8
+  %slot_i_10 = alloca i64, align 8
+  %slot_x_11 = alloca i16, align 8
+  %slot_byte_off_12 = alloca i64, align 8
+  %slot_mask_13 = alloca i8, align 8
+  %slot_acc_14 = alloca i8, align 8
+  %slot_k_15 = alloca i16, align 8
+  %slot_y_16 = alloca i16, align 8
+  %slot_at_17 = alloca i64, align 8
+  store i16 %p_page, ptr %slot_page_2
+  store i16 %p_c0, ptr %slot_c0_3
+  store i16 %p_c1, ptr %slot_c1_4
+  store { ptr, i64 } %p_dst, ptr %slot_dst_5
+  %t1 = getelementptr inbounds { { ptr, i64 }, i16, i16, i16, { i8, i8, i8, i8 } }, ptr %p_pb, i32 0, i32 3
+  %t2 = load i16, ptr %t1
+  %t3 = zext i16 %t2 to i64
+  store i64 %t3, ptr %slot_rs_6
+  %t4 = load { ptr, i64 }, ptr %slot_dst_5
+  %t5 = extractvalue { ptr, i64 } %t4, 1
+  store i64 %t5, ptr %slot_cap_7
+  %t7 = getelementptr inbounds { { ptr, i64 }, i16, i16, i16, { i8, i8, i8, i8 } }, ptr %p_pb, i32 0, i32 0
+  %t8 = load { ptr, i64 }, ptr %t7
+  %t9 = extractvalue { ptr, i64 } %t8, 1
+  store i64 %t9, ptr %slot_fbcap_8
+  %t11 = load i16, ptr %slot_page_2
+  %t12 = icmp eq i8 2, 0
+  br i1 %t12, label %chk.bad2, label %chk.ok1
+chk.bad2:
+  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 57)
+  unreachable
+chk.ok1:
+  %t13 = udiv i8 16, 2
+  %t14 = zext i8 %t13 to i16
+  %t15 = mul i16 %t11, %t14
+  store i16 %t15, ptr %slot_y0_9
+  store i64 0, ptr %slot_i_10
+  %t16 = load i16, ptr %slot_c0_3
+  store i16 %t16, ptr %slot_x_11
+  br label %for.cond4
+for.cond4:
+  %t17 = load i16, ptr %slot_x_11
+  %t18 = load i16, ptr %slot_c1_4
+  %t19 = icmp ult i16 %t17, %t18
+  br i1 %t19, label %for.body6, label %for.end3
+for.body6:
+  %t20 = load i64, ptr %slot_i_10
+  %t21 = load i64, ptr %slot_cap_7
+  %t22 = icmp uge i64 %t20, %t21
+  br i1 %t22, label %if.then8, label %if.next9
+if.then8:
+  br label %for.end3
+if.next9:
+  br label %if.end7
+if.end7:
+  %t23 = load i16, ptr %slot_x_11
+  %t24 = icmp eq i16 8, 0
+  br i1 %t24, label %chk.bad11, label %chk.ok10
+chk.bad11:
+  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 64)
+  unreachable
+chk.ok10:
+  %t25 = udiv i16 %t23, 8
+  %t26 = zext i16 %t25 to i64
+  store i64 %t26, ptr %slot_byte_off_12
+  %t27 = trunc i64 128 to i8
+  %t28 = load i16, ptr %slot_x_11
+  %t29 = icmp eq i16 8, 0
+  br i1 %t29, label %chk.bad13, label %chk.ok12
+chk.bad13:
+  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 65)
+  unreachable
+chk.ok12:
+  %t30 = urem i16 %t28, 8
+  %t31 = trunc i16 %t30 to i8
+  %t32 = icmp uge i8 %t31, 8
+  br i1 %t32, label %chk.bad15, label %chk.ok14
+chk.bad15:
+  call void @aila_rt_trap(ptr @.str.2, i64 24, ptr @.str.1, i64 65)
+  unreachable
+chk.ok14:
+  %t33 = lshr i8 %t27, %t31
+  store i8 %t33, ptr %slot_mask_13
+  store i8 0, ptr %slot_acc_14
+  store i16 0, ptr %slot_k_15
+  br label %for.cond17
+for.cond17:
+  %t34 = load i16, ptr %slot_k_15
+  %t35 = icmp ult i16 %t34, 8
+  br i1 %t35, label %for.body19, label %for.end16
+for.body19:
+  %t36 = load i16, ptr %slot_y0_9
+  %t37 = load i16, ptr %slot_k_15
+  %t38 = add i16 %t36, %t37
+  store i16 %t38, ptr %slot_y_16
+  %t39 = load i16, ptr %slot_y_16
+  %t40 = getelementptr inbounds { { ptr, i64 }, i16, i16, i16, { i8, i8, i8, i8 } }, ptr %p_pb, i32 0, i32 2
+  %t41 = load i16, ptr %t40
+  %t42 = icmp ult i16 %t39, %t41
+  br i1 %t42, label %if.then21, label %if.next22
+if.then21:
+  %t43 = load i16, ptr %slot_y_16
+  %t44 = zext i16 %t43 to i64
+  %t45 = load i64, ptr %slot_rs_6
+  %t46 = mul i64 %t44, %t45
+  %t47 = load i64, ptr %slot_byte_off_12
+  %t48 = add i64 %t46, %t47
+  store i64 %t48, ptr %slot_at_17
+  %t49 = load i64, ptr %slot_at_17
+  %t50 = load i64, ptr %slot_fbcap_8
+  %t51 = icmp ult i64 %t49, %t50
+  br i1 %t51, label %if.then24, label %if.next25
+if.then24:
+  %t52 = load i64, ptr %slot_at_17
+  %t53 = getelementptr inbounds { { ptr, i64 }, i16, i16, i16, { i8, i8, i8, i8 } }, ptr %p_pb, i32 0, i32 0
+  %t54 = load { ptr, i64 }, ptr %t53
+  %t55 = extractvalue { ptr, i64 } %t54, 0
+  %t56 = extractvalue { ptr, i64 } %t54, 1
+  %t57 = icmp uge i64 %t52, %t56
+  br i1 %t57, label %chk.bad30, label %chk.ok29
+chk.bad30:
+  call void @aila_rt_trap(ptr @.str.3, i64 19, ptr @.str.1, i64 73)
+  unreachable
+chk.ok29:
+  %t58 = getelementptr inbounds i8, ptr %t55, i64 %t52
+  %t59 = load i8, ptr %t58
+  %t60 = load i8, ptr %slot_mask_13
+  %t61 = and i8 %t59, %t60
+  %t62 = icmp ne i8 %t61, 0
+  br i1 %t62, label %if.then27, label %if.next28
+if.then27:
+  %t63 = load i8, ptr %slot_acc_14
+  %t64 = trunc i64 1 to i8
+  %t65 = load i16, ptr %slot_k_15
+  %t66 = trunc i16 %t65 to i8
+  %t67 = icmp uge i8 %t66, 8
+  br i1 %t67, label %chk.bad32, label %chk.ok31
+chk.bad32:
+  call void @aila_rt_trap(ptr @.str.2, i64 24, ptr @.str.1, i64 74)
+  unreachable
+chk.ok31:
+  %t68 = shl i8 %t64, %t66
+  %t69 = or i8 %t63, %t68
+  store i8 %t69, ptr %slot_acc_14
+  br label %if.end26
+if.next28:
+  br label %if.end26
+if.end26:
+  br label %if.end23
+if.next25:
+  br label %if.end23
+if.end23:
+  br label %if.end20
+if.next22:
+  br label %if.end20
+if.end20:
+  %t70 = load i16, ptr %slot_k_15
+  %t71 = add i16 %t70, 1
+  store i16 %t71, ptr %slot_k_15
+  br label %for.step18
+for.step18:
+  br label %for.cond17
+for.end16:
+  %t72 = load i64, ptr %slot_i_10
+  %t73 = load { ptr, i64 }, ptr %slot_dst_5
+  %t74 = extractvalue { ptr, i64 } %t73, 0
+  %t75 = extractvalue { ptr, i64 } %t73, 1
+  %t76 = icmp uge i64 %t72, %t75
+  br i1 %t76, label %chk.bad34, label %chk.ok33
+chk.bad34:
+  call void @aila_rt_trap(ptr @.str.3, i64 19, ptr @.str.1, i64 80)
+  unreachable
+chk.ok33:
+  %t77 = getelementptr inbounds i8, ptr %t74, i64 %t72
+  %t78 = load i8, ptr %slot_acc_14
+  store i8 %t78, ptr %t77
+  %t79 = load i64, ptr %slot_i_10
+  %t80 = add i64 %t79, 1
+  store i64 %t80, ptr %slot_i_10
+  %t81 = load i16, ptr %slot_x_11
+  %t82 = add i16 %t81, 1
+  store i16 %t82, ptr %slot_x_11
+  br label %for.step5
+for.step5:
+  br label %for.cond4
+for.end3:
+  ret void
+}
 
 define { i16, i16, i16, i16 } @aila_std_paint__cell_rect(i16 %p_col, i16 %p_row) {
   %slot_col_1 = alloca i16, align 8
@@ -106,7 +304,7 @@ for.body4:
   %t10 = icmp uge i64 %t5, %t9
   br i1 %t10, label %chk.bad9, label %chk.ok8
 chk.bad9:
-  call void @aila_rt_trap(ptr @.str.0, i64 19, ptr @.str.1, i64 65)
+  call void @aila_rt_trap(ptr @.str.3, i64 19, ptr @.str.1, i64 104)
   unreachable
 chk.ok8:
   %t11 = getelementptr inbounds i32, ptr %t8, i64 %t5
@@ -155,7 +353,7 @@ if.end1:
   %t11 = icmp uge i64 %t5, %t10
   br i1 %t11, label %chk.bad5, label %chk.ok4
 chk.bad5:
-  call void @aila_rt_trap(ptr @.str.0, i64 19, ptr @.str.1, i64 78)
+  call void @aila_rt_trap(ptr @.str.3, i64 19, ptr @.str.1, i64 117)
   unreachable
 chk.ok4:
   %t12 = getelementptr inbounds i8, ptr %t9, i64 %t5
@@ -335,7 +533,7 @@ if.then2:
   %t11 = icmp uge i64 %t5, %t10
   br i1 %t11, label %chk.bad5, label %chk.ok4
 chk.bad5:
-  call void @aila_rt_trap(ptr @.str.0, i64 19, ptr @.str.1, i64 113)
+  call void @aila_rt_trap(ptr @.str.3, i64 19, ptr @.str.1, i64 152)
   unreachable
 chk.ok4:
   %t12 = getelementptr inbounds i8, ptr %t9, i64 %t5
@@ -391,7 +589,7 @@ if.then14:
   %t39 = icmp uge i64 %t34, %t38
   br i1 %t39, label %chk.bad17, label %chk.ok16
 chk.bad17:
-  call void @aila_rt_trap(ptr @.str.0, i64 19, ptr @.str.1, i64 126)
+  call void @aila_rt_trap(ptr @.str.3, i64 19, ptr @.str.1, i64 165)
   unreachable
 chk.ok16:
   %t40 = getelementptr inbounds i8, ptr %t37, i64 %t34
@@ -406,7 +604,7 @@ chk.ok16:
   %t48 = icmp uge i64 %t43, %t47
   br i1 %t48, label %chk.bad19, label %chk.ok18
 chk.bad19:
-  call void @aila_rt_trap(ptr @.str.0, i64 19, ptr @.str.1, i64 127)
+  call void @aila_rt_trap(ptr @.str.3, i64 19, ptr @.str.1, i64 166)
   unreachable
 chk.ok18:
   %t49 = getelementptr inbounds i8, ptr %t46, i64 %t43
@@ -429,7 +627,7 @@ for.body23:
   %t56 = icmp uge i8 %t55, 8
   br i1 %t56, label %chk.bad25, label %chk.ok24
 chk.bad25:
-  call void @aila_rt_trap(ptr @.str.2, i64 24, ptr @.str.1, i64 131)
+  call void @aila_rt_trap(ptr @.str.2, i64 24, ptr @.str.1, i64 170)
   unreachable
 chk.ok24:
   %t57 = lshr i8 %t53, %t55
@@ -620,7 +818,7 @@ if.end1:
   %t11 = icmp uge i64 %t7, %t10
   br i1 %t11, label %chk.bad5, label %chk.ok4
 chk.bad5:
-  call void @aila_rt_trap(ptr @.str.0, i64 19, ptr @.str.1, i64 175)
+  call void @aila_rt_trap(ptr @.str.3, i64 19, ptr @.str.1, i64 214)
   unreachable
 chk.ok4:
   %t12 = getelementptr inbounds i8, ptr %t9, i64 %t7
@@ -722,7 +920,7 @@ for.body28:
   %t56 = icmp uge i64 %t52, %t55
   br i1 %t56, label %chk.bad30, label %chk.ok29
 chk.bad30:
-  call void @aila_rt_trap(ptr @.str.0, i64 19, ptr @.str.1, i64 201)
+  call void @aila_rt_trap(ptr @.str.3, i64 19, ptr @.str.1, i64 240)
   unreachable
 chk.ok29:
   %t57 = getelementptr inbounds i8, ptr %t54, i64 %t52
@@ -745,7 +943,7 @@ if.end31:
   %t67 = icmp uge i32 6, 32
   br i1 %t67, label %chk.bad35, label %chk.ok34
 chk.bad35:
-  call void @aila_rt_trap(ptr @.str.2, i64 24, ptr @.str.1, i64 205)
+  call void @aila_rt_trap(ptr @.str.2, i64 24, ptr @.str.1, i64 244)
   unreachable
 chk.ok34:
   %t68 = shl i32 %t66, 6

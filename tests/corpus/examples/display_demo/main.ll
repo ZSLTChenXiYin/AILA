@@ -27,6 +27,8 @@ target triple = "x86_64-w64-windows-gnu"
 @.str.22 = private unnamed_addr constant [79 x i8] c"[3g] scroll rep : cells=%u pages=%u\EF\BC\88\E5\86\85\E5\AE\B9\E6\A8\A1\E5\9E\8B\EF\BC\9A\E5\8F\AA\E8\84\8F\E7\9C\9F\E5\8F\98\E4\BA\86\E7\9A\84\E8\A1\8C\EF\BC\89\0A\00", align 1
 @.str.23 = private unnamed_addr constant [104 x i8] c"[4] commit: page_mask=%u pages=%u bytes_on_wire=%u\EF\BC\88\E6\95\B4\E5\B1\8F 1024 \E5\AD\97\E8\8A\82 I2C \E2\89\8837ms\EF\BC\8C\E5\8D\95\E9\A1\B5 \E2\89\885ms\EF\BC\89\0A\00", align 1
 @.str.24 = private unnamed_addr constant [48 x i8] c"[5] final: cells=%u clips=%u pages=%u fnv64=%u\0A\00", align 1
+@.str.25 = private unnamed_addr constant [51 x i8] c"[6] transpose p0 cols[0,32): nz=%u fnv64=%u bytes=\00", align 1
+@.str.26 = private unnamed_addr constant [4 x i8] c"%u,\00", align 1
 
 
 declare i16 @aila_std_textgrid__rows_of({ { ptr, i64 } })
@@ -58,25 +60,26 @@ declare void @aila_std_io__printf({ ptr, i64 }, { ptr, i64 })
 declare i16 @aila_std_paint__glyph_width(ptr, i32)
 declare void @aila_std_paint__fill(ptr, i1)
 declare i16 @aila_std_paint__text_cells(ptr, ptr, { ptr, i64 }, i64, i16, i16)
-declare void @aila_std_textgrid__clear({ { ptr, i64 } })
-declare void @aila_std_textgrid__put_text({ { ptr, i64 } }, ptr, { ptr, i64 }, i64)
+declare void @aila_std_textgrid__clear(ptr)
+declare void @aila_std_textgrid__put_text(ptr, ptr, { ptr, i64 }, i64)
 declare { i16, i16 } @aila_std_textgrid__cursor({ { ptr, i64 } })
-declare void @aila_std_textgrid__newline({ { ptr, i64 } })
-declare void @aila_std_damage__clear({ { ptr, i64 } })
-declare void @aila_std_textgrid__render_all({ { ptr, i64 } }, ptr, ptr, { { ptr, i64 } })
+declare void @aila_std_textgrid__newline(ptr)
+declare void @aila_std_damage__clear(ptr)
+declare void @aila_std_textgrid__render_all(ptr, ptr, ptr, ptr)
 declare i64 @aila_std_damage__cell_count({ { ptr, i64 } })
-declare void @aila_std_textgrid__render({ { ptr, i64 } }, ptr, ptr, { { ptr, i64 } })
+declare void @aila_std_textgrid__render(ptr, ptr, ptr, ptr)
 declare i32 @aila_std_textgrid__encode(i32, i32)
-declare void @aila_std_textgrid__set({ { ptr, i64 } }, i16, i16, i32)
-declare void @aila_std_textgrid__scroll_by({ { ptr, i64 } }, i16)
+declare void @aila_std_textgrid__set(ptr, i16, i16, i32)
+declare void @aila_std_textgrid__scroll_by(ptr, i16)
 declare void @aila_std_display__Commit__set_damage(ptr, { { ptr, i64 } })
 declare { { ptr, i64 } } @aila_std_display__Commit__damage_of(ptr)
 declare void @aila_std_paint__hline(ptr, i16, i16, i16, i1)
 declare { i16, i16, i16, i16 } @aila_std_damage__rect(i16, i16, i16, i16)
-declare void @aila_std_damage__add_rect({ { ptr, i64 } }, { i16, i16, i16, i16 })
+declare void @aila_std_damage__add_rect(ptr, { i16, i16, i16, i16 })
 declare i64 @aila_std_damage__clip_count({ { ptr, i64 } })
-declare void @aila_std_display_host__sink_host_ascii(ptr)
+declare void @aila_std_paint__transpose_page(ptr, i16, i16, i16, { ptr, i64 })
 declare void @aila_rt_region_leave(ptr)
+declare void @aila_std_display_host__sink_host_ascii(ptr)
 
 define { i8, { { ptr, i64 } } } @aila_main__u(i64 %p_v) {
   %slot_v_1 = alloca i64, align 8
@@ -437,22 +440,31 @@ define void @aila_main__main() {
   %slot_cu3_27 = alloca i16, align 8
   %slot_cu4_28 = alloca i16, align 8
   %slot_pm_29 = alloca i8, align 8
-  %slot_vargs_30 = alloca [7 x { i8, { { ptr, i64 } } }], align 8
-  %slot_vargs_31 = alloca [4 x { i8, { { ptr, i64 } } }], align 8
-  %slot___destr_32 = alloca { i16, i16 }, align 8
-  %slot_vargs_33 = alloca [2 x { i8, { { ptr, i64 } } }], align 8
-  %slot___destr_34 = alloca { i16, i16 }, align 8
-  %slot_vargs_35 = alloca [2 x { i8, { { ptr, i64 } } }], align 8
-  %slot_vargs_36 = alloca [2 x { i8, { { ptr, i64 } } }], align 8
+  %slot_line_30 = alloca { ptr, i64 }, align 8
+  %slot_nz_31 = alloca i64, align 8
+  %slot_i_32 = alloca i64, align 8
+  %slot_j_33 = alloca i64, align 8
+  %slot_vargs_34 = alloca [7 x { i8, { { ptr, i64 } } }], align 8
+  %slot_vargs_35 = alloca [4 x { i8, { { ptr, i64 } } }], align 8
+  %slot___destr_36 = alloca { i16, i16 }, align 8
   %slot_vargs_37 = alloca [2 x { i8, { { ptr, i64 } } }], align 8
-  %slot_vargs_38 = alloca [2 x { i8, { { ptr, i64 } } }], align 8
+  %slot___destr_38 = alloca { i16, i16 }, align 8
   %slot_vargs_39 = alloca [2 x { i8, { { ptr, i64 } } }], align 8
   %slot_vargs_40 = alloca [2 x { i8, { { ptr, i64 } } }], align 8
   %slot_vargs_41 = alloca [2 x { i8, { { ptr, i64 } } }], align 8
   %slot_vargs_42 = alloca [2 x { i8, { { ptr, i64 } } }], align 8
-  %slot_vargs_43 = alloca [3 x { i8, { { ptr, i64 } } }], align 8
-  %slot___lit_44 = alloca { i8, { { ptr, i64 } } }, align 8
-  %slot_vargs_45 = alloca [4 x { i8, { { ptr, i64 } } }], align 8
+  %slot_vargs_43 = alloca [2 x { i8, { { ptr, i64 } } }], align 8
+  %slot_vargs_44 = alloca [2 x { i8, { { ptr, i64 } } }], align 8
+  %slot_vargs_45 = alloca [2 x { i8, { { ptr, i64 } } }], align 8
+  %slot_vargs_46 = alloca [2 x { i8, { { ptr, i64 } } }], align 8
+  %slot_vargs_47 = alloca [3 x { i8, { { ptr, i64 } } }], align 8
+  %slot___lit_48 = alloca { i8, { { ptr, i64 } } }, align 8
+  %slot_vargs_49 = alloca [4 x { i8, { { ptr, i64 } } }], align 8
+  %slot___lit_50 = alloca { i8, { { ptr, i64 } } }, align 8
+  %slot_vargs_51 = alloca [2 x { i8, { { ptr, i64 } } }], align 8
+  %slot_vargs_52 = alloca [1 x { i8, { { ptr, i64 } } }], align 8
+  %slot___lit_53 = alloca { i8, { { ptr, i64 } } }, align 8
+  %slot_vargs_54 = alloca [1 x { i8, { { ptr, i64 } } }], align 8
   %t1 = insertvalue { ptr, i64 } undef, ptr @.str.6, 0
   %t2 = insertvalue { ptr, i64 } %t1, i64 11, 1
   store { ptr, i64 } %t2, ptr %slot_s_mix_1
@@ -543,21 +555,21 @@ define void @aila_main__main() {
   %t68 = getelementptr inbounds { { ptr, i64 }, { ptr, i64 }, { ptr, i64 }, i64, i16 }, ptr %slot_gs_17, i32 0, i32 3
   %t69 = load i64, ptr %t68
   %t70 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t69)
-  %t71 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_30, i64 0
+  %t71 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_34, i64 0
   store { i8, { { ptr, i64 } } } %t52, ptr %t71
-  %t72 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_30, i64 1
+  %t72 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_34, i64 1
   store { i8, { { ptr, i64 } } } %t56, ptr %t72
-  %t73 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_30, i64 2
+  %t73 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_34, i64 2
   store { i8, { { ptr, i64 } } } %t58, ptr %t73
-  %t74 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_30, i64 3
+  %t74 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_34, i64 3
   store { i8, { { ptr, i64 } } } %t59, ptr %t74
-  %t75 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_30, i64 4
+  %t75 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_34, i64 4
   store { i8, { { ptr, i64 } } } %t63, ptr %t75
-  %t76 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_30, i64 5
+  %t76 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_34, i64 5
   store { i8, { { ptr, i64 } } } %t67, ptr %t76
-  %t77 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_30, i64 6
+  %t77 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_34, i64 6
   store { i8, { { ptr, i64 } } } %t70, ptr %t77
-  %t78 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_30, 0
+  %t78 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_34, 0
   %t79 = insertvalue { ptr, i64 } %t78, i64 7, 1
   call void @aila_std_io__printf({ ptr, i64 } %t48, { ptr, i64 } %t79)
   %t80 = call i16 @aila_std_paint__glyph_width(ptr %slot_gs_17, i32 65)
@@ -586,390 +598,441 @@ define void @aila_main__main() {
   %t98 = load i16, ptr %slot_endcol_24
   %t99 = zext i16 %t98 to i64
   %t100 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t99)
-  %t101 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_31, i64 0
+  %t101 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_35, i64 0
   store { i8, { { ptr, i64 } } } %t91, ptr %t101
-  %t102 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_31, i64 1
+  %t102 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_35, i64 1
   store { i8, { { ptr, i64 } } } %t94, ptr %t102
-  %t103 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_31, i64 2
+  %t103 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_35, i64 2
   store { i8, { { ptr, i64 } } } %t97, ptr %t103
-  %t104 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_31, i64 3
+  %t104 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_35, i64 3
   store { i8, { { ptr, i64 } } } %t100, ptr %t104
-  %t105 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_31, 0
+  %t105 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_35, 0
   %t106 = insertvalue { ptr, i64 } %t105, i64 4, 1
   call void @aila_std_io__printf({ ptr, i64 } %t88, { ptr, i64 } %t106)
-  %t107 = load { { ptr, i64 } }, ptr %slot_g_18
-  call void @aila_std_textgrid__clear({ { ptr, i64 } } %t107)
-  %t108 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t109 = load { ptr, i64 }, ptr %slot_b_cjk_11
-  %t110 = load { ptr, i64 }, ptr %slot_b_cjk_11
-  %t111 = extractvalue { ptr, i64 } %t110, 1
-  call void @aila_std_textgrid__put_text({ { ptr, i64 } } %t108, ptr %slot_gs_17, { ptr, i64 } %t109, i64 %t111)
-  %t112 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t113 = load { ptr, i64 }, ptr %slot_b_long_12
-  %t114 = load { ptr, i64 }, ptr %slot_b_long_12
-  %t115 = extractvalue { ptr, i64 } %t114, 1
-  call void @aila_std_textgrid__put_text({ { ptr, i64 } } %t112, ptr %slot_gs_17, { ptr, i64 } %t113, i64 %t115)
-  %t116 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t117 = call { i16, i16 } @aila_std_textgrid__cursor({ { ptr, i64 } } %t116)
-  store { i16, i16 } %t117, ptr %slot___destr_32
-  %t118 = getelementptr inbounds { i16, i16 }, ptr %slot___destr_32, i32 0, i32 0
-  %t119 = load i16, ptr %t118
-  store i16 %t119, ptr %slot_cu1_25
-  %t120 = getelementptr inbounds { i16, i16 }, ptr %slot___destr_32, i32 0, i32 1
-  %t121 = load i16, ptr %t120
-  store i16 %t121, ptr %slot_cu2_26
-  %t122 = insertvalue { ptr, i64 } undef, ptr @.str.14, 0
-  %t123 = insertvalue { ptr, i64 } %t122, i64 26, 1
-  %t124 = load i16, ptr %slot_cu1_25
+  call void @aila_std_textgrid__clear(ptr %slot_g_18)
+  %t107 = load { ptr, i64 }, ptr %slot_b_cjk_11
+  %t108 = load { ptr, i64 }, ptr %slot_b_cjk_11
+  %t109 = extractvalue { ptr, i64 } %t108, 1
+  call void @aila_std_textgrid__put_text(ptr %slot_g_18, ptr %slot_gs_17, { ptr, i64 } %t107, i64 %t109)
+  %t110 = load { ptr, i64 }, ptr %slot_b_long_12
+  %t111 = load { ptr, i64 }, ptr %slot_b_long_12
+  %t112 = extractvalue { ptr, i64 } %t111, 1
+  call void @aila_std_textgrid__put_text(ptr %slot_g_18, ptr %slot_gs_17, { ptr, i64 } %t110, i64 %t112)
+  %t113 = load { { ptr, i64 } }, ptr %slot_g_18
+  %t114 = call { i16, i16 } @aila_std_textgrid__cursor({ { ptr, i64 } } %t113)
+  store { i16, i16 } %t114, ptr %slot___destr_36
+  %t115 = getelementptr inbounds { i16, i16 }, ptr %slot___destr_36, i32 0, i32 0
+  %t116 = load i16, ptr %t115
+  store i16 %t116, ptr %slot_cu1_25
+  %t117 = getelementptr inbounds { i16, i16 }, ptr %slot___destr_36, i32 0, i32 1
+  %t118 = load i16, ptr %t117
+  store i16 %t118, ptr %slot_cu2_26
+  %t119 = insertvalue { ptr, i64 } undef, ptr @.str.14, 0
+  %t120 = insertvalue { ptr, i64 } %t119, i64 26, 1
+  %t121 = load i16, ptr %slot_cu1_25
+  %t122 = zext i16 %t121 to i64
+  %t123 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t122)
+  %t124 = load i16, ptr %slot_cu2_26
   %t125 = zext i16 %t124 to i64
   %t126 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t125)
-  %t127 = load i16, ptr %slot_cu2_26
-  %t128 = zext i16 %t127 to i64
-  %t129 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t128)
-  %t130 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_33, i64 0
-  store { i8, { { ptr, i64 } } } %t126, ptr %t130
-  %t131 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_33, i64 1
-  store { i8, { { ptr, i64 } } } %t129, ptr %t131
-  %t132 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_33, 0
-  %t133 = insertvalue { ptr, i64 } %t132, i64 2, 1
-  call void @aila_std_io__printf({ ptr, i64 } %t123, { ptr, i64 } %t133)
-  %t134 = load { { ptr, i64 } }, ptr %slot_g_18
-  call void @aila_main__dump_grid({ { ptr, i64 } } %t134)
+  %t127 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_37, i64 0
+  store { i8, { { ptr, i64 } } } %t123, ptr %t127
+  %t128 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_37, i64 1
+  store { i8, { { ptr, i64 } } } %t126, ptr %t128
+  %t129 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_37, 0
+  %t130 = insertvalue { ptr, i64 } %t129, i64 2, 1
+  call void @aila_std_io__printf({ ptr, i64 } %t120, { ptr, i64 } %t130)
+  %t131 = load { { ptr, i64 } }, ptr %slot_g_18
+  call void @aila_main__dump_grid({ { ptr, i64 } } %t131)
+  call void @aila_std_textgrid__clear(ptr %slot_g_18)
+  %t132 = load { ptr, i64 }, ptr %slot_b_long_12
+  %t133 = load { ptr, i64 }, ptr %slot_b_long_12
+  %t134 = extractvalue { ptr, i64 } %t133, 1
+  call void @aila_std_textgrid__put_text(ptr %slot_g_18, ptr %slot_gs_17, { ptr, i64 } %t132, i64 %t134)
   %t135 = load { { ptr, i64 } }, ptr %slot_g_18
-  call void @aila_std_textgrid__clear({ { ptr, i64 } } %t135)
-  %t136 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t137 = load { ptr, i64 }, ptr %slot_b_long_12
-  %t138 = load { ptr, i64 }, ptr %slot_b_long_12
-  %t139 = extractvalue { ptr, i64 } %t138, 1
-  call void @aila_std_textgrid__put_text({ { ptr, i64 } } %t136, ptr %slot_gs_17, { ptr, i64 } %t137, i64 %t139)
-  %t140 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t141 = call { i16, i16 } @aila_std_textgrid__cursor({ { ptr, i64 } } %t140)
-  store { i16, i16 } %t141, ptr %slot___destr_34
-  %t142 = getelementptr inbounds { i16, i16 }, ptr %slot___destr_34, i32 0, i32 0
-  %t143 = load i16, ptr %t142
-  store i16 %t143, ptr %slot_cu3_27
-  %t144 = getelementptr inbounds { i16, i16 }, ptr %slot___destr_34, i32 0, i32 1
-  %t145 = load i16, ptr %t144
-  store i16 %t145, ptr %slot_cu4_28
-  %t146 = insertvalue { ptr, i64 } undef, ptr @.str.15, 0
-  %t147 = insertvalue { ptr, i64 } %t146, i64 30, 1
-  %t148 = load i16, ptr %slot_cu3_27
-  %t149 = zext i16 %t148 to i64
-  %t150 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t149)
-  %t151 = load i16, ptr %slot_cu4_28
-  %t152 = zext i16 %t151 to i64
-  %t153 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t152)
-  %t154 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_35, i64 0
-  store { i8, { { ptr, i64 } } } %t150, ptr %t154
-  %t155 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_35, i64 1
-  store { i8, { { ptr, i64 } } } %t153, ptr %t155
-  %t156 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_35, 0
-  %t157 = insertvalue { ptr, i64 } %t156, i64 2, 1
-  call void @aila_std_io__printf({ ptr, i64 } %t147, { ptr, i64 } %t157)
-  %t158 = load { { ptr, i64 } }, ptr %slot_g_18
-  call void @aila_main__dump_grid({ { ptr, i64 } } %t158)
-  %t159 = load { { ptr, i64 } }, ptr %slot_g_18
-  call void @aila_std_textgrid__clear({ { ptr, i64 } } %t159)
-  %t160 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t161 = load { ptr, i64 }, ptr %slot_b_l1_8
-  %t162 = load { ptr, i64 }, ptr %slot_b_l1_8
-  %t163 = extractvalue { ptr, i64 } %t162, 1
-  call void @aila_std_textgrid__put_text({ { ptr, i64 } } %t160, ptr %slot_gs_17, { ptr, i64 } %t161, i64 %t163)
-  %t164 = load { { ptr, i64 } }, ptr %slot_g_18
-  call void @aila_std_textgrid__newline({ { ptr, i64 } } %t164)
-  %t165 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t166 = load { ptr, i64 }, ptr %slot_b_l2_9
-  %t167 = load { ptr, i64 }, ptr %slot_b_l2_9
-  %t168 = extractvalue { ptr, i64 } %t167, 1
-  call void @aila_std_textgrid__put_text({ { ptr, i64 } } %t165, ptr %slot_gs_17, { ptr, i64 } %t166, i64 %t168)
-  %t169 = load { { ptr, i64 } }, ptr %slot_g_18
-  call void @aila_std_textgrid__newline({ { ptr, i64 } } %t169)
-  %t170 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t171 = load { ptr, i64 }, ptr %slot_b_l3_10
-  %t172 = load { ptr, i64 }, ptr %slot_b_l3_10
-  %t173 = extractvalue { ptr, i64 } %t172, 1
-  call void @aila_std_textgrid__put_text({ { ptr, i64 } } %t170, ptr %slot_gs_17, { ptr, i64 } %t171, i64 %t173)
-  %t174 = load { { ptr, i64 } }, ptr %slot_d_19
-  call void @aila_std_damage__clear({ { ptr, i64 } } %t174)
-  %t175 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t176 = load { { ptr, i64 } }, ptr %slot_d_19
-  call void @aila_std_textgrid__render_all({ { ptr, i64 } } %t175, ptr %slot_gs_17, ptr %slot_pb_16, { { ptr, i64 } } %t176)
-  %t177 = insertvalue { ptr, i64 } undef, ptr @.str.16, 0
-  %t178 = insertvalue { ptr, i64 } %t177, i64 37, 1
-  %t179 = load { { ptr, i64 } }, ptr %slot_d_19
-  %t180 = call i64 @aila_std_damage__cell_count({ { ptr, i64 } } %t179)
-  %t181 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t180)
-  %t182 = load { { ptr, i64 } }, ptr %slot_d_19
-  %t183 = call i64 @aila_main__pages_of({ { ptr, i64 } } %t182)
-  %t184 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t183)
-  %t185 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_36, i64 0
-  store { i8, { { ptr, i64 } } } %t181, ptr %t185
-  %t186 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_36, i64 1
-  store { i8, { { ptr, i64 } } } %t184, ptr %t186
-  %t187 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_36, 0
-  %t188 = insertvalue { ptr, i64 } %t187, i64 2, 1
-  call void @aila_std_io__printf({ ptr, i64 } %t178, { ptr, i64 } %t188)
-  %t189 = load { { ptr, i64 } }, ptr %slot_d_19
-  call void @aila_std_damage__clear({ { ptr, i64 } } %t189)
-  %t190 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t191 = load { { ptr, i64 } }, ptr %slot_d_19
-  call void @aila_std_textgrid__render({ { ptr, i64 } } %t190, ptr %slot_gs_17, ptr %slot_pb_16, { { ptr, i64 } } %t191)
-  %t192 = insertvalue { ptr, i64 } undef, ptr @.str.17, 0
-  %t193 = insertvalue { ptr, i64 } %t192, i64 37, 1
-  %t194 = load { { ptr, i64 } }, ptr %slot_d_19
-  %t195 = call i64 @aila_std_damage__cell_count({ { ptr, i64 } } %t194)
-  %t196 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t195)
-  %t197 = load { { ptr, i64 } }, ptr %slot_d_19
-  %t198 = call i64 @aila_main__pages_of({ { ptr, i64 } } %t197)
-  %t199 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t198)
-  %t200 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_37, i64 0
-  store { i8, { { ptr, i64 } } } %t196, ptr %t200
-  %t201 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_37, i64 1
-  store { i8, { { ptr, i64 } } } %t199, ptr %t201
-  %t202 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_37, 0
-  %t203 = insertvalue { ptr, i64 } %t202, i64 2, 1
-  call void @aila_std_io__printf({ ptr, i64 } %t193, { ptr, i64 } %t203)
-  %t204 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t205 = call i32 @aila_std_textgrid__encode(i32 33, i32 1)
-  call void @aila_std_textgrid__set({ { ptr, i64 } } %t204, i16 15, i16 1, i32 %t205)
-  %t206 = load { { ptr, i64 } }, ptr %slot_d_19
-  call void @aila_std_damage__clear({ { ptr, i64 } } %t206)
-  %t207 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t208 = load { { ptr, i64 } }, ptr %slot_d_19
-  call void @aila_std_textgrid__render({ { ptr, i64 } } %t207, ptr %slot_gs_17, ptr %slot_pb_16, { { ptr, i64 } } %t208)
-  %t209 = insertvalue { ptr, i64 } undef, ptr @.str.18, 0
-  %t210 = insertvalue { ptr, i64 } %t209, i64 37, 1
+  %t136 = call { i16, i16 } @aila_std_textgrid__cursor({ { ptr, i64 } } %t135)
+  store { i16, i16 } %t136, ptr %slot___destr_38
+  %t137 = getelementptr inbounds { i16, i16 }, ptr %slot___destr_38, i32 0, i32 0
+  %t138 = load i16, ptr %t137
+  store i16 %t138, ptr %slot_cu3_27
+  %t139 = getelementptr inbounds { i16, i16 }, ptr %slot___destr_38, i32 0, i32 1
+  %t140 = load i16, ptr %t139
+  store i16 %t140, ptr %slot_cu4_28
+  %t141 = insertvalue { ptr, i64 } undef, ptr @.str.15, 0
+  %t142 = insertvalue { ptr, i64 } %t141, i64 30, 1
+  %t143 = load i16, ptr %slot_cu3_27
+  %t144 = zext i16 %t143 to i64
+  %t145 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t144)
+  %t146 = load i16, ptr %slot_cu4_28
+  %t147 = zext i16 %t146 to i64
+  %t148 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t147)
+  %t149 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_39, i64 0
+  store { i8, { { ptr, i64 } } } %t145, ptr %t149
+  %t150 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_39, i64 1
+  store { i8, { { ptr, i64 } } } %t148, ptr %t150
+  %t151 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_39, 0
+  %t152 = insertvalue { ptr, i64 } %t151, i64 2, 1
+  call void @aila_std_io__printf({ ptr, i64 } %t142, { ptr, i64 } %t152)
+  %t153 = load { { ptr, i64 } }, ptr %slot_g_18
+  call void @aila_main__dump_grid({ { ptr, i64 } } %t153)
+  call void @aila_std_textgrid__clear(ptr %slot_g_18)
+  %t154 = load { ptr, i64 }, ptr %slot_b_l1_8
+  %t155 = load { ptr, i64 }, ptr %slot_b_l1_8
+  %t156 = extractvalue { ptr, i64 } %t155, 1
+  call void @aila_std_textgrid__put_text(ptr %slot_g_18, ptr %slot_gs_17, { ptr, i64 } %t154, i64 %t156)
+  call void @aila_std_textgrid__newline(ptr %slot_g_18)
+  %t157 = load { ptr, i64 }, ptr %slot_b_l2_9
+  %t158 = load { ptr, i64 }, ptr %slot_b_l2_9
+  %t159 = extractvalue { ptr, i64 } %t158, 1
+  call void @aila_std_textgrid__put_text(ptr %slot_g_18, ptr %slot_gs_17, { ptr, i64 } %t157, i64 %t159)
+  call void @aila_std_textgrid__newline(ptr %slot_g_18)
+  %t160 = load { ptr, i64 }, ptr %slot_b_l3_10
+  %t161 = load { ptr, i64 }, ptr %slot_b_l3_10
+  %t162 = extractvalue { ptr, i64 } %t161, 1
+  call void @aila_std_textgrid__put_text(ptr %slot_g_18, ptr %slot_gs_17, { ptr, i64 } %t160, i64 %t162)
+  call void @aila_std_damage__clear(ptr %slot_d_19)
+  call void @aila_std_textgrid__render_all(ptr %slot_g_18, ptr %slot_gs_17, ptr %slot_pb_16, ptr %slot_d_19)
+  %t163 = insertvalue { ptr, i64 } undef, ptr @.str.16, 0
+  %t164 = insertvalue { ptr, i64 } %t163, i64 37, 1
+  %t165 = load { { ptr, i64 } }, ptr %slot_d_19
+  %t166 = call i64 @aila_std_damage__cell_count({ { ptr, i64 } } %t165)
+  %t167 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t166)
+  %t168 = load { { ptr, i64 } }, ptr %slot_d_19
+  %t169 = call i64 @aila_main__pages_of({ { ptr, i64 } } %t168)
+  %t170 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t169)
+  %t171 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_40, i64 0
+  store { i8, { { ptr, i64 } } } %t167, ptr %t171
+  %t172 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_40, i64 1
+  store { i8, { { ptr, i64 } } } %t170, ptr %t172
+  %t173 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_40, 0
+  %t174 = insertvalue { ptr, i64 } %t173, i64 2, 1
+  call void @aila_std_io__printf({ ptr, i64 } %t164, { ptr, i64 } %t174)
+  call void @aila_std_damage__clear(ptr %slot_d_19)
+  call void @aila_std_textgrid__render(ptr %slot_g_18, ptr %slot_gs_17, ptr %slot_pb_16, ptr %slot_d_19)
+  %t175 = insertvalue { ptr, i64 } undef, ptr @.str.17, 0
+  %t176 = insertvalue { ptr, i64 } %t175, i64 37, 1
+  %t177 = load { { ptr, i64 } }, ptr %slot_d_19
+  %t178 = call i64 @aila_std_damage__cell_count({ { ptr, i64 } } %t177)
+  %t179 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t178)
+  %t180 = load { { ptr, i64 } }, ptr %slot_d_19
+  %t181 = call i64 @aila_main__pages_of({ { ptr, i64 } } %t180)
+  %t182 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t181)
+  %t183 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_41, i64 0
+  store { i8, { { ptr, i64 } } } %t179, ptr %t183
+  %t184 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_41, i64 1
+  store { i8, { { ptr, i64 } } } %t182, ptr %t184
+  %t185 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_41, 0
+  %t186 = insertvalue { ptr, i64 } %t185, i64 2, 1
+  call void @aila_std_io__printf({ ptr, i64 } %t176, { ptr, i64 } %t186)
+  %t187 = call i32 @aila_std_textgrid__encode(i32 33, i32 1)
+  call void @aila_std_textgrid__set(ptr %slot_g_18, i16 15, i16 1, i32 %t187)
+  call void @aila_std_damage__clear(ptr %slot_d_19)
+  call void @aila_std_textgrid__render(ptr %slot_g_18, ptr %slot_gs_17, ptr %slot_pb_16, ptr %slot_d_19)
+  %t188 = insertvalue { ptr, i64 } undef, ptr @.str.18, 0
+  %t189 = insertvalue { ptr, i64 } %t188, i64 37, 1
+  %t190 = load { { ptr, i64 } }, ptr %slot_d_19
+  %t191 = call i64 @aila_std_damage__cell_count({ { ptr, i64 } } %t190)
+  %t192 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t191)
+  %t193 = load { { ptr, i64 } }, ptr %slot_d_19
+  %t194 = call i64 @aila_main__pages_of({ { ptr, i64 } } %t193)
+  %t195 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t194)
+  %t196 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_42, i64 0
+  store { i8, { { ptr, i64 } } } %t192, ptr %t196
+  %t197 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_42, i64 1
+  store { i8, { { ptr, i64 } } } %t195, ptr %t197
+  %t198 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_42, 0
+  %t199 = insertvalue { ptr, i64 } %t198, i64 2, 1
+  call void @aila_std_io__printf({ ptr, i64 } %t189, { ptr, i64 } %t199)
+  call void @aila_std_textgrid__set(ptr %slot_g_18, i16 15, i16 1, i32 0)
+  call void @aila_std_textgrid__clear(ptr %slot_g_18)
+  %t200 = load { ptr, i64 }, ptr %slot_b_l1_8
+  %t201 = load { ptr, i64 }, ptr %slot_b_l1_8
+  %t202 = extractvalue { ptr, i64 } %t201, 1
+  call void @aila_std_textgrid__put_text(ptr %slot_g_18, ptr %slot_gs_17, { ptr, i64 } %t200, i64 %t202)
+  call void @aila_std_textgrid__newline(ptr %slot_g_18)
+  %t203 = load { ptr, i64 }, ptr %slot_b_l2_9
+  %t204 = load { ptr, i64 }, ptr %slot_b_l2_9
+  %t205 = extractvalue { ptr, i64 } %t204, 1
+  call void @aila_std_textgrid__put_text(ptr %slot_g_18, ptr %slot_gs_17, { ptr, i64 } %t203, i64 %t205)
+  call void @aila_std_textgrid__newline(ptr %slot_g_18)
+  %t206 = load { ptr, i64 }, ptr %slot_b_l3_10
+  %t207 = load { ptr, i64 }, ptr %slot_b_l3_10
+  %t208 = extractvalue { ptr, i64 } %t207, 1
+  call void @aila_std_textgrid__put_text(ptr %slot_g_18, ptr %slot_gs_17, { ptr, i64 } %t206, i64 %t208)
+  call void @aila_std_damage__clear(ptr %slot_d_19)
+  call void @aila_std_textgrid__render_all(ptr %slot_g_18, ptr %slot_gs_17, ptr %slot_pb_16, ptr %slot_d_19)
+  %t209 = insertvalue { ptr, i64 } undef, ptr @.str.19, 0
+  %t210 = insertvalue { ptr, i64 } %t209, i64 36, 1
   %t211 = load { { ptr, i64 } }, ptr %slot_d_19
   %t212 = call i64 @aila_std_damage__cell_count({ { ptr, i64 } } %t211)
   %t213 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t212)
   %t214 = load { { ptr, i64 } }, ptr %slot_d_19
   %t215 = call i64 @aila_main__pages_of({ { ptr, i64 } } %t214)
   %t216 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t215)
-  %t217 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_38, i64 0
+  %t217 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_43, i64 0
   store { i8, { { ptr, i64 } } } %t213, ptr %t217
-  %t218 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_38, i64 1
+  %t218 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_43, i64 1
   store { i8, { { ptr, i64 } } } %t216, ptr %t218
-  %t219 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_38, 0
+  %t219 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_43, 0
   %t220 = insertvalue { ptr, i64 } %t219, i64 2, 1
   call void @aila_std_io__printf({ ptr, i64 } %t210, { ptr, i64 } %t220)
-  %t221 = load { { ptr, i64 } }, ptr %slot_g_18
-  call void @aila_std_textgrid__set({ { ptr, i64 } } %t221, i16 15, i16 1, i32 0)
-  %t222 = load { { ptr, i64 } }, ptr %slot_g_18
-  call void @aila_std_textgrid__clear({ { ptr, i64 } } %t222)
-  %t223 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t224 = load { ptr, i64 }, ptr %slot_b_l1_8
-  %t225 = load { ptr, i64 }, ptr %slot_b_l1_8
-  %t226 = extractvalue { ptr, i64 } %t225, 1
-  call void @aila_std_textgrid__put_text({ { ptr, i64 } } %t223, ptr %slot_gs_17, { ptr, i64 } %t224, i64 %t226)
-  %t227 = load { { ptr, i64 } }, ptr %slot_g_18
-  call void @aila_std_textgrid__newline({ { ptr, i64 } } %t227)
-  %t228 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t229 = load { ptr, i64 }, ptr %slot_b_l2_9
-  %t230 = load { ptr, i64 }, ptr %slot_b_l2_9
-  %t231 = extractvalue { ptr, i64 } %t230, 1
-  call void @aila_std_textgrid__put_text({ { ptr, i64 } } %t228, ptr %slot_gs_17, { ptr, i64 } %t229, i64 %t231)
-  %t232 = load { { ptr, i64 } }, ptr %slot_g_18
-  call void @aila_std_textgrid__newline({ { ptr, i64 } } %t232)
-  %t233 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t234 = load { ptr, i64 }, ptr %slot_b_l3_10
-  %t235 = load { ptr, i64 }, ptr %slot_b_l3_10
-  %t236 = extractvalue { ptr, i64 } %t235, 1
-  call void @aila_std_textgrid__put_text({ { ptr, i64 } } %t233, ptr %slot_gs_17, { ptr, i64 } %t234, i64 %t236)
-  %t237 = load { { ptr, i64 } }, ptr %slot_d_19
-  call void @aila_std_damage__clear({ { ptr, i64 } } %t237)
-  %t238 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t239 = load { { ptr, i64 } }, ptr %slot_d_19
-  call void @aila_std_textgrid__render_all({ { ptr, i64 } } %t238, ptr %slot_gs_17, ptr %slot_pb_16, { { ptr, i64 } } %t239)
-  %t240 = insertvalue { ptr, i64 } undef, ptr @.str.19, 0
-  %t241 = insertvalue { ptr, i64 } %t240, i64 36, 1
-  %t242 = load { { ptr, i64 } }, ptr %slot_d_19
-  %t243 = call i64 @aila_std_damage__cell_count({ { ptr, i64 } } %t242)
-  %t244 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t243)
-  %t245 = load { { ptr, i64 } }, ptr %slot_d_19
-  %t246 = call i64 @aila_main__pages_of({ { ptr, i64 } } %t245)
-  %t247 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t246)
-  %t248 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_39, i64 0
-  store { i8, { { ptr, i64 } } } %t244, ptr %t248
-  %t249 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_39, i64 1
-  store { i8, { { ptr, i64 } } } %t247, ptr %t249
-  %t250 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_39, 0
-  %t251 = insertvalue { ptr, i64 } %t250, i64 2, 1
-  call void @aila_std_io__printf({ ptr, i64 } %t241, { ptr, i64 } %t251)
-  %t252 = load { { ptr, i64 } }, ptr %slot_g_18
-  call void @aila_std_textgrid__scroll_by({ { ptr, i64 } } %t252, i16 1)
-  %t253 = load { { ptr, i64 } }, ptr %slot_d_19
-  call void @aila_std_damage__clear({ { ptr, i64 } } %t253)
-  %t254 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t255 = load { { ptr, i64 } }, ptr %slot_d_19
-  call void @aila_std_textgrid__render({ { ptr, i64 } } %t254, ptr %slot_gs_17, ptr %slot_pb_16, { { ptr, i64 } } %t255)
-  %t256 = insertvalue { ptr, i64 } undef, ptr @.str.20, 0
-  %t257 = insertvalue { ptr, i64 } %t256, i64 95, 1
-  %t258 = load { { ptr, i64 } }, ptr %slot_d_19
-  %t259 = call i64 @aila_std_damage__cell_count({ { ptr, i64 } } %t258)
-  %t260 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t259)
-  %t261 = load { { ptr, i64 } }, ptr %slot_d_19
-  %t262 = call i64 @aila_main__pages_of({ { ptr, i64 } } %t261)
-  %t263 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t262)
-  %t264 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_40, i64 0
-  store { i8, { { ptr, i64 } } } %t260, ptr %t264
-  %t265 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_40, i64 1
-  store { i8, { { ptr, i64 } } } %t263, ptr %t265
-  %t266 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_40, 0
-  %t267 = insertvalue { ptr, i64 } %t266, i64 2, 1
-  call void @aila_std_io__printf({ ptr, i64 } %t257, { ptr, i64 } %t267)
-  %t268 = load { { ptr, i64 } }, ptr %slot_g_18
-  call void @aila_std_textgrid__clear({ { ptr, i64 } } %t268)
-  %t269 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t270 = load { ptr, i64 }, ptr %slot_b_l1_8
-  %t271 = load { ptr, i64 }, ptr %slot_b_l1_8
-  %t272 = extractvalue { ptr, i64 } %t271, 1
-  call void @aila_std_textgrid__put_text({ { ptr, i64 } } %t269, ptr %slot_gs_17, { ptr, i64 } %t270, i64 %t272)
-  %t273 = load { { ptr, i64 } }, ptr %slot_g_18
-  call void @aila_std_textgrid__newline({ { ptr, i64 } } %t273)
-  %t274 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t275 = load { ptr, i64 }, ptr %slot_b_l2_9
-  %t276 = load { ptr, i64 }, ptr %slot_b_l2_9
-  %t277 = extractvalue { ptr, i64 } %t276, 1
-  call void @aila_std_textgrid__put_text({ { ptr, i64 } } %t274, ptr %slot_gs_17, { ptr, i64 } %t275, i64 %t277)
-  %t278 = load { { ptr, i64 } }, ptr %slot_g_18
-  call void @aila_std_textgrid__newline({ { ptr, i64 } } %t278)
-  %t279 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t280 = load { ptr, i64 }, ptr %slot_b_l3_10
-  %t281 = load { ptr, i64 }, ptr %slot_b_l3_10
-  %t282 = extractvalue { ptr, i64 } %t281, 1
-  call void @aila_std_textgrid__put_text({ { ptr, i64 } } %t279, ptr %slot_gs_17, { ptr, i64 } %t280, i64 %t282)
-  %t283 = load { { ptr, i64 } }, ptr %slot_g_18
-  call void @aila_std_textgrid__newline({ { ptr, i64 } } %t283)
-  %t284 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t285 = load { ptr, i64 }, ptr %slot_b_l3_10
-  %t286 = load { ptr, i64 }, ptr %slot_b_l3_10
-  %t287 = extractvalue { ptr, i64 } %t286, 1
-  call void @aila_std_textgrid__put_text({ { ptr, i64 } } %t284, ptr %slot_gs_17, { ptr, i64 } %t285, i64 %t287)
-  %t288 = load { { ptr, i64 } }, ptr %slot_d_19
-  call void @aila_std_damage__clear({ { ptr, i64 } } %t288)
-  %t289 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t290 = load { { ptr, i64 } }, ptr %slot_d_19
-  call void @aila_std_textgrid__render_all({ { ptr, i64 } } %t289, ptr %slot_gs_17, ptr %slot_pb_16, { { ptr, i64 } } %t290)
-  %t291 = insertvalue { ptr, i64 } undef, ptr @.str.21, 0
-  %t292 = insertvalue { ptr, i64 } %t291, i64 36, 1
-  %t293 = load { { ptr, i64 } }, ptr %slot_d_19
-  %t294 = call i64 @aila_std_damage__cell_count({ { ptr, i64 } } %t293)
-  %t295 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t294)
-  %t296 = load { { ptr, i64 } }, ptr %slot_d_19
-  %t297 = call i64 @aila_main__pages_of({ { ptr, i64 } } %t296)
-  %t298 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t297)
-  %t299 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_41, i64 0
-  store { i8, { { ptr, i64 } } } %t295, ptr %t299
-  %t300 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_41, i64 1
-  store { i8, { { ptr, i64 } } } %t298, ptr %t300
-  %t301 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_41, 0
-  %t302 = insertvalue { ptr, i64 } %t301, i64 2, 1
-  call void @aila_std_io__printf({ ptr, i64 } %t292, { ptr, i64 } %t302)
-  %t303 = load { { ptr, i64 } }, ptr %slot_g_18
-  call void @aila_std_textgrid__scroll_by({ { ptr, i64 } } %t303, i16 1)
-  %t304 = load { { ptr, i64 } }, ptr %slot_d_19
-  call void @aila_std_damage__clear({ { ptr, i64 } } %t304)
-  %t305 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t306 = load { { ptr, i64 } }, ptr %slot_d_19
-  call void @aila_std_textgrid__render({ { ptr, i64 } } %t305, ptr %slot_gs_17, ptr %slot_pb_16, { { ptr, i64 } } %t306)
-  %t307 = insertvalue { ptr, i64 } undef, ptr @.str.22, 0
-  %t308 = insertvalue { ptr, i64 } %t307, i64 78, 1
-  %t309 = load { { ptr, i64 } }, ptr %slot_d_19
-  %t310 = call i64 @aila_std_damage__cell_count({ { ptr, i64 } } %t309)
-  %t311 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t310)
-  %t312 = load { { ptr, i64 } }, ptr %slot_d_19
-  %t313 = call i64 @aila_main__pages_of({ { ptr, i64 } } %t312)
-  %t314 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t313)
-  %t315 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_42, i64 0
-  store { i8, { { ptr, i64 } } } %t311, ptr %t315
-  %t316 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_42, i64 1
-  store { i8, { { ptr, i64 } } } %t314, ptr %t316
-  %t317 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_42, 0
-  %t318 = insertvalue { ptr, i64 } %t317, i64 2, 1
-  call void @aila_std_io__printf({ ptr, i64 } %t308, { ptr, i64 } %t318)
-  %t319 = load { { ptr, i64 } }, ptr %slot_d_19
-  call void @aila_std_display__Commit__set_damage(ptr %slot_c_20, { { ptr, i64 } } %t319)
-  %t320 = call { { ptr, i64 } } @aila_std_display__Commit__damage_of(ptr %slot_c_20)
-  %t321 = call i8 @aila_main__page_mask({ { ptr, i64 } } %t320)
-  store i8 %t321, ptr %slot_pm_29
-  %t322 = insertvalue { ptr, i64 } undef, ptr @.str.23, 0
-  %t323 = insertvalue { ptr, i64 } %t322, i64 103, 1
-  %t324 = load i8, ptr %slot_pm_29
-  %t325 = zext i8 %t324 to i64
-  %t326 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t325)
-  %t327 = call { { ptr, i64 } } @aila_std_display__Commit__damage_of(ptr %slot_c_20)
-  %t328 = call i64 @aila_main__pages_of({ { ptr, i64 } } %t327)
-  %t329 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t328)
-  %t330 = call { { ptr, i64 } } @aila_std_display__Commit__damage_of(ptr %slot_c_20)
-  %t331 = call i64 @aila_main__pages_of({ { ptr, i64 } } %t330)
-  %t332 = mul i64 %t331, 128
-  %t333 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t332)
-  %t334 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_43, i64 0
-  store { i8, { { ptr, i64 } } } %t326, ptr %t334
-  %t335 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_43, i64 1
-  store { i8, { { ptr, i64 } } } %t329, ptr %t335
-  %t336 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_43, i64 2
-  store { i8, { { ptr, i64 } } } %t333, ptr %t336
-  %t337 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_43, 0
-  %t338 = insertvalue { ptr, i64 } %t337, i64 3, 1
-  call void @aila_std_io__printf({ ptr, i64 } %t323, { ptr, i64 } %t338)
-  %t339 = load { { ptr, i64 } }, ptr %slot_g_18
-  call void @aila_std_textgrid__clear({ { ptr, i64 } } %t339)
+  call void @aila_std_textgrid__scroll_by(ptr %slot_g_18, i16 1)
+  call void @aila_std_damage__clear(ptr %slot_d_19)
+  call void @aila_std_textgrid__render(ptr %slot_g_18, ptr %slot_gs_17, ptr %slot_pb_16, ptr %slot_d_19)
+  %t221 = insertvalue { ptr, i64 } undef, ptr @.str.20, 0
+  %t222 = insertvalue { ptr, i64 } %t221, i64 95, 1
+  %t223 = load { { ptr, i64 } }, ptr %slot_d_19
+  %t224 = call i64 @aila_std_damage__cell_count({ { ptr, i64 } } %t223)
+  %t225 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t224)
+  %t226 = load { { ptr, i64 } }, ptr %slot_d_19
+  %t227 = call i64 @aila_main__pages_of({ { ptr, i64 } } %t226)
+  %t228 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t227)
+  %t229 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_44, i64 0
+  store { i8, { { ptr, i64 } } } %t225, ptr %t229
+  %t230 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_44, i64 1
+  store { i8, { { ptr, i64 } } } %t228, ptr %t230
+  %t231 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_44, 0
+  %t232 = insertvalue { ptr, i64 } %t231, i64 2, 1
+  call void @aila_std_io__printf({ ptr, i64 } %t222, { ptr, i64 } %t232)
+  call void @aila_std_textgrid__clear(ptr %slot_g_18)
+  %t233 = load { ptr, i64 }, ptr %slot_b_l1_8
+  %t234 = load { ptr, i64 }, ptr %slot_b_l1_8
+  %t235 = extractvalue { ptr, i64 } %t234, 1
+  call void @aila_std_textgrid__put_text(ptr %slot_g_18, ptr %slot_gs_17, { ptr, i64 } %t233, i64 %t235)
+  call void @aila_std_textgrid__newline(ptr %slot_g_18)
+  %t236 = load { ptr, i64 }, ptr %slot_b_l2_9
+  %t237 = load { ptr, i64 }, ptr %slot_b_l2_9
+  %t238 = extractvalue { ptr, i64 } %t237, 1
+  call void @aila_std_textgrid__put_text(ptr %slot_g_18, ptr %slot_gs_17, { ptr, i64 } %t236, i64 %t238)
+  call void @aila_std_textgrid__newline(ptr %slot_g_18)
+  %t239 = load { ptr, i64 }, ptr %slot_b_l3_10
+  %t240 = load { ptr, i64 }, ptr %slot_b_l3_10
+  %t241 = extractvalue { ptr, i64 } %t240, 1
+  call void @aila_std_textgrid__put_text(ptr %slot_g_18, ptr %slot_gs_17, { ptr, i64 } %t239, i64 %t241)
+  call void @aila_std_textgrid__newline(ptr %slot_g_18)
+  %t242 = load { ptr, i64 }, ptr %slot_b_l3_10
+  %t243 = load { ptr, i64 }, ptr %slot_b_l3_10
+  %t244 = extractvalue { ptr, i64 } %t243, 1
+  call void @aila_std_textgrid__put_text(ptr %slot_g_18, ptr %slot_gs_17, { ptr, i64 } %t242, i64 %t244)
+  call void @aila_std_damage__clear(ptr %slot_d_19)
+  call void @aila_std_textgrid__render_all(ptr %slot_g_18, ptr %slot_gs_17, ptr %slot_pb_16, ptr %slot_d_19)
+  %t245 = insertvalue { ptr, i64 } undef, ptr @.str.21, 0
+  %t246 = insertvalue { ptr, i64 } %t245, i64 36, 1
+  %t247 = load { { ptr, i64 } }, ptr %slot_d_19
+  %t248 = call i64 @aila_std_damage__cell_count({ { ptr, i64 } } %t247)
+  %t249 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t248)
+  %t250 = load { { ptr, i64 } }, ptr %slot_d_19
+  %t251 = call i64 @aila_main__pages_of({ { ptr, i64 } } %t250)
+  %t252 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t251)
+  %t253 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_45, i64 0
+  store { i8, { { ptr, i64 } } } %t249, ptr %t253
+  %t254 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_45, i64 1
+  store { i8, { { ptr, i64 } } } %t252, ptr %t254
+  %t255 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_45, 0
+  %t256 = insertvalue { ptr, i64 } %t255, i64 2, 1
+  call void @aila_std_io__printf({ ptr, i64 } %t246, { ptr, i64 } %t256)
+  call void @aila_std_textgrid__scroll_by(ptr %slot_g_18, i16 1)
+  call void @aila_std_damage__clear(ptr %slot_d_19)
+  call void @aila_std_textgrid__render(ptr %slot_g_18, ptr %slot_gs_17, ptr %slot_pb_16, ptr %slot_d_19)
+  %t257 = insertvalue { ptr, i64 } undef, ptr @.str.22, 0
+  %t258 = insertvalue { ptr, i64 } %t257, i64 78, 1
+  %t259 = load { { ptr, i64 } }, ptr %slot_d_19
+  %t260 = call i64 @aila_std_damage__cell_count({ { ptr, i64 } } %t259)
+  %t261 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t260)
+  %t262 = load { { ptr, i64 } }, ptr %slot_d_19
+  %t263 = call i64 @aila_main__pages_of({ { ptr, i64 } } %t262)
+  %t264 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t263)
+  %t265 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_46, i64 0
+  store { i8, { { ptr, i64 } } } %t261, ptr %t265
+  %t266 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_46, i64 1
+  store { i8, { { ptr, i64 } } } %t264, ptr %t266
+  %t267 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_46, 0
+  %t268 = insertvalue { ptr, i64 } %t267, i64 2, 1
+  call void @aila_std_io__printf({ ptr, i64 } %t258, { ptr, i64 } %t268)
+  %t269 = load { { ptr, i64 } }, ptr %slot_d_19
+  call void @aila_std_display__Commit__set_damage(ptr %slot_c_20, { { ptr, i64 } } %t269)
+  %t270 = call { { ptr, i64 } } @aila_std_display__Commit__damage_of(ptr %slot_c_20)
+  %t271 = call i8 @aila_main__page_mask({ { ptr, i64 } } %t270)
+  store i8 %t271, ptr %slot_pm_29
+  %t272 = insertvalue { ptr, i64 } undef, ptr @.str.23, 0
+  %t273 = insertvalue { ptr, i64 } %t272, i64 103, 1
+  %t274 = load i8, ptr %slot_pm_29
+  %t275 = zext i8 %t274 to i64
+  %t276 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t275)
+  %t277 = call { { ptr, i64 } } @aila_std_display__Commit__damage_of(ptr %slot_c_20)
+  %t278 = call i64 @aila_main__pages_of({ { ptr, i64 } } %t277)
+  %t279 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t278)
+  %t280 = call { { ptr, i64 } } @aila_std_display__Commit__damage_of(ptr %slot_c_20)
+  %t281 = call i64 @aila_main__pages_of({ { ptr, i64 } } %t280)
+  %t282 = mul i64 %t281, 128
+  %t283 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t282)
+  %t284 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_47, i64 0
+  store { i8, { { ptr, i64 } } } %t276, ptr %t284
+  %t285 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_47, i64 1
+  store { i8, { { ptr, i64 } } } %t279, ptr %t285
+  %t286 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_47, i64 2
+  store { i8, { { ptr, i64 } } } %t283, ptr %t286
+  %t287 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_47, 0
+  %t288 = insertvalue { ptr, i64 } %t287, i64 3, 1
+  call void @aila_std_io__printf({ ptr, i64 } %t273, { ptr, i64 } %t288)
+  call void @aila_std_textgrid__clear(ptr %slot_g_18)
   call void @aila_std_paint__fill(ptr %slot_pb_16, i1 0)
-  %t340 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t341 = load { ptr, i64 }, ptr %slot_b_mix_7
-  %t342 = load { ptr, i64 }, ptr %slot_b_mix_7
-  %t343 = extractvalue { ptr, i64 } %t342, 1
-  call void @aila_std_textgrid__put_text({ { ptr, i64 } } %t340, ptr %slot_gs_17, { ptr, i64 } %t341, i64 %t343)
-  %t344 = load { { ptr, i64 } }, ptr %slot_g_18
-  call void @aila_std_textgrid__newline({ { ptr, i64 } } %t344)
-  %t345 = load { { ptr, i64 } }, ptr %slot_g_18
-  call void @aila_std_textgrid__newline({ { ptr, i64 } } %t345)
-  %t346 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t347 = load { ptr, i64 }, ptr %slot_b_cjk_11
-  %t348 = load { ptr, i64 }, ptr %slot_b_cjk_11
-  %t349 = extractvalue { ptr, i64 } %t348, 1
-  call void @aila_std_textgrid__put_text({ { ptr, i64 } } %t346, ptr %slot_gs_17, { ptr, i64 } %t347, i64 %t349)
-  %t350 = load { { ptr, i64 } }, ptr %slot_d_19
-  call void @aila_std_damage__clear({ { ptr, i64 } } %t350)
-  %t351 = load { { ptr, i64 } }, ptr %slot_g_18
-  %t352 = load { { ptr, i64 } }, ptr %slot_d_19
-  call void @aila_std_textgrid__render({ { ptr, i64 } } %t351, ptr %slot_gs_17, ptr %slot_pb_16, { { ptr, i64 } } %t352)
+  %t289 = load { ptr, i64 }, ptr %slot_b_mix_7
+  %t290 = load { ptr, i64 }, ptr %slot_b_mix_7
+  %t291 = extractvalue { ptr, i64 } %t290, 1
+  call void @aila_std_textgrid__put_text(ptr %slot_g_18, ptr %slot_gs_17, { ptr, i64 } %t289, i64 %t291)
+  call void @aila_std_textgrid__newline(ptr %slot_g_18)
+  call void @aila_std_textgrid__newline(ptr %slot_g_18)
+  %t292 = load { ptr, i64 }, ptr %slot_b_cjk_11
+  %t293 = load { ptr, i64 }, ptr %slot_b_cjk_11
+  %t294 = extractvalue { ptr, i64 } %t293, 1
+  call void @aila_std_textgrid__put_text(ptr %slot_g_18, ptr %slot_gs_17, { ptr, i64 } %t292, i64 %t294)
+  call void @aila_std_damage__clear(ptr %slot_d_19)
+  call void @aila_std_textgrid__render(ptr %slot_g_18, ptr %slot_gs_17, ptr %slot_pb_16, ptr %slot_d_19)
   call void @aila_std_paint__hline(ptr %slot_pb_16, i16 0, i16 127, i16 62, i1 1)
-  %t353 = load { { ptr, i64 } }, ptr %slot_d_19
-  %t354 = call { i16, i16, i16, i16 } @aila_std_damage__rect(i16 0, i16 62, i16 128, i16 63)
-  call void @aila_std_damage__add_rect({ { ptr, i64 } } %t353, { i16, i16, i16, i16 } %t354)
-  %t355 = insertvalue { ptr, i64 } undef, ptr @.str.24, 0
-  %t356 = insertvalue { ptr, i64 } %t355, i64 47, 1
-  %t357 = load { { ptr, i64 } }, ptr %slot_d_19
-  %t358 = call i64 @aila_std_damage__cell_count({ { ptr, i64 } } %t357)
-  %t359 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t358)
-  %t360 = load { { ptr, i64 } }, ptr %slot_d_19
-  %t361 = call i64 @aila_std_damage__clip_count({ { ptr, i64 } } %t360)
-  %t362 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t361)
-  %t363 = load { { ptr, i64 } }, ptr %slot_d_19
-  %t364 = call i64 @aila_main__pages_of({ { ptr, i64 } } %t363)
-  %t365 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t364)
-  %t366 = insertvalue { i8, { { ptr, i64 } } } undef, i8 1, 0
-  store { i8, { { ptr, i64 } } } %t366, ptr %slot___lit_44
-  %t367 = load { ptr, i64 }, ptr %slot_fbdata_13
-  %t368 = call i64 @aila_main__hash_fnv64({ ptr, i64 } %t367, i64 1024)
-  %t369 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot___lit_44, i32 0, i32 1, i32 0
-  store i64 %t368, ptr %t369
-  %t370 = load { i8, { { ptr, i64 } } }, ptr %slot___lit_44
-  %t371 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_45, i64 0
-  store { i8, { { ptr, i64 } } } %t359, ptr %t371
-  %t372 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_45, i64 1
-  store { i8, { { ptr, i64 } } } %t362, ptr %t372
-  %t373 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_45, i64 2
-  store { i8, { { ptr, i64 } } } %t365, ptr %t373
-  %t374 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_45, i64 3
-  store { i8, { { ptr, i64 } } } %t370, ptr %t374
-  %t375 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_45, 0
-  %t376 = insertvalue { ptr, i64 } %t375, i64 4, 1
-  call void @aila_std_io__printf({ ptr, i64 } %t356, { ptr, i64 } %t376)
-  %t377 = load { { ptr, i64 } }, ptr %slot_g_18
-  call void @aila_main__dump_grid({ { ptr, i64 } } %t377)
+  %t295 = call { i16, i16, i16, i16 } @aila_std_damage__rect(i16 0, i16 62, i16 128, i16 63)
+  call void @aila_std_damage__add_rect(ptr %slot_d_19, { i16, i16, i16, i16 } %t295)
+  %t296 = insertvalue { ptr, i64 } undef, ptr @.str.24, 0
+  %t297 = insertvalue { ptr, i64 } %t296, i64 47, 1
+  %t298 = load { { ptr, i64 } }, ptr %slot_d_19
+  %t299 = call i64 @aila_std_damage__cell_count({ { ptr, i64 } } %t298)
+  %t300 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t299)
+  %t301 = load { { ptr, i64 } }, ptr %slot_d_19
+  %t302 = call i64 @aila_std_damage__clip_count({ { ptr, i64 } } %t301)
+  %t303 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t302)
+  %t304 = load { { ptr, i64 } }, ptr %slot_d_19
+  %t305 = call i64 @aila_main__pages_of({ { ptr, i64 } } %t304)
+  %t306 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t305)
+  %t307 = insertvalue { i8, { { ptr, i64 } } } undef, i8 1, 0
+  store { i8, { { ptr, i64 } } } %t307, ptr %slot___lit_48
+  %t308 = load { ptr, i64 }, ptr %slot_fbdata_13
+  %t309 = call i64 @aila_main__hash_fnv64({ ptr, i64 } %t308, i64 1024)
+  %t310 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot___lit_48, i32 0, i32 1, i32 0
+  store i64 %t309, ptr %t310
+  %t311 = load { i8, { { ptr, i64 } } }, ptr %slot___lit_48
+  %t312 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_49, i64 0
+  store { i8, { { ptr, i64 } } } %t300, ptr %t312
+  %t313 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_49, i64 1
+  store { i8, { { ptr, i64 } } } %t303, ptr %t313
+  %t314 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_49, i64 2
+  store { i8, { { ptr, i64 } } } %t306, ptr %t314
+  %t315 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_49, i64 3
+  store { i8, { { ptr, i64 } } } %t311, ptr %t315
+  %t316 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_49, 0
+  %t317 = insertvalue { ptr, i64 } %t316, i64 4, 1
+  call void @aila_std_io__printf({ ptr, i64 } %t297, { ptr, i64 } %t317)
+  %t318 = load { { ptr, i64 } }, ptr %slot_g_18
+  call void @aila_main__dump_grid({ { ptr, i64 } } %t318)
+  %t319 = call ptr @aila_rt_region_enter(i64 0)
+  %t320 = call ptr @aila_rt_region_alloc(ptr %t319, i64 32, i64 1)
+  %t321 = insertvalue { ptr, i64 } undef, ptr %t320, 0
+  %t322 = insertvalue { ptr, i64 } %t321, i64 32, 1
+  store { ptr, i64 } %t322, ptr %slot_line_30
+  %t323 = load { ptr, i64 }, ptr %slot_line_30
+  call void @aila_std_paint__transpose_page(ptr %slot_pb_16, i16 0, i16 0, i16 32, { ptr, i64 } %t323)
+  store i64 0, ptr %slot_nz_31
+  store i64 0, ptr %slot_i_32
+  br label %for.cond2
+for.cond2:
+  %t324 = load i64, ptr %slot_i_32
+  %t325 = icmp ult i64 %t324, 32
+  br i1 %t325, label %for.body4, label %for.end1
+for.body4:
+  %t326 = load i64, ptr %slot_i_32
+  %t327 = load { ptr, i64 }, ptr %slot_line_30
+  %t328 = extractvalue { ptr, i64 } %t327, 0
+  %t329 = extractvalue { ptr, i64 } %t327, 1
+  %t330 = icmp uge i64 %t326, %t329
+  br i1 %t330, label %chk.bad9, label %chk.ok8
+chk.bad9:
+  call void @aila_rt_trap(ptr @.str.5, i64 19, ptr @.str.3, i64 258)
+  unreachable
+chk.ok8:
+  %t331 = getelementptr inbounds i8, ptr %t328, i64 %t326
+  %t332 = load i8, ptr %t331
+  %t333 = icmp ne i8 %t332, 0
+  br i1 %t333, label %if.then6, label %if.next7
+if.then6:
+  %t334 = load i64, ptr %slot_nz_31
+  %t335 = add i64 %t334, 1
+  store i64 %t335, ptr %slot_nz_31
+  br label %if.end5
+if.next7:
+  br label %if.end5
+if.end5:
+  %t336 = load i64, ptr %slot_i_32
+  %t337 = add i64 %t336, 1
+  store i64 %t337, ptr %slot_i_32
+  br label %for.step3
+for.step3:
+  br label %for.cond2
+for.end1:
+  %t338 = insertvalue { ptr, i64 } undef, ptr @.str.25, 0
+  %t339 = insertvalue { ptr, i64 } %t338, i64 50, 1
+  %t340 = load i64, ptr %slot_nz_31
+  %t341 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t340)
+  %t342 = insertvalue { i8, { { ptr, i64 } } } undef, i8 1, 0
+  store { i8, { { ptr, i64 } } } %t342, ptr %slot___lit_50
+  %t343 = load { ptr, i64 }, ptr %slot_line_30
+  %t344 = call i64 @aila_main__hash_fnv64({ ptr, i64 } %t343, i64 32)
+  %t345 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot___lit_50, i32 0, i32 1, i32 0
+  store i64 %t344, ptr %t345
+  %t346 = load { i8, { { ptr, i64 } } }, ptr %slot___lit_50
+  %t347 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_51, i64 0
+  store { i8, { { ptr, i64 } } } %t341, ptr %t347
+  %t348 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_51, i64 1
+  store { i8, { { ptr, i64 } } } %t346, ptr %t348
+  %t349 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_51, 0
+  %t350 = insertvalue { ptr, i64 } %t349, i64 2, 1
+  call void @aila_std_io__printf({ ptr, i64 } %t339, { ptr, i64 } %t350)
+  store i64 0, ptr %slot_j_33
+  br label %for.cond11
+for.cond11:
+  %t351 = load i64, ptr %slot_j_33
+  %t352 = icmp ult i64 %t351, 32
+  br i1 %t352, label %for.body13, label %for.end10
+for.body13:
+  %t353 = insertvalue { ptr, i64 } undef, ptr @.str.26, 0
+  %t354 = insertvalue { ptr, i64 } %t353, i64 3, 1
+  %t355 = load i64, ptr %slot_j_33
+  %t356 = load { ptr, i64 }, ptr %slot_line_30
+  %t357 = extractvalue { ptr, i64 } %t356, 0
+  %t358 = extractvalue { ptr, i64 } %t356, 1
+  %t359 = icmp uge i64 %t355, %t358
+  br i1 %t359, label %chk.bad15, label %chk.ok14
+chk.bad15:
+  call void @aila_rt_trap(ptr @.str.5, i64 19, ptr @.str.3, i64 267)
+  unreachable
+chk.ok14:
+  %t360 = getelementptr inbounds i8, ptr %t357, i64 %t355
+  %t361 = load i8, ptr %t360
+  %t362 = zext i8 %t361 to i64
+  %t363 = call { i8, { { ptr, i64 } } } @aila_main__u(i64 %t362)
+  %t364 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_52, i64 0
+  store { i8, { { ptr, i64 } } } %t363, ptr %t364
+  %t365 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_52, 0
+  %t366 = insertvalue { ptr, i64 } %t365, i64 1, 1
+  call void @aila_std_io__printf({ ptr, i64 } %t354, { ptr, i64 } %t366)
+  %t367 = load i64, ptr %slot_j_33
+  %t368 = add i64 %t367, 1
+  store i64 %t368, ptr %slot_j_33
+  br label %for.step12
+for.step12:
+  br label %for.cond11
+for.end10:
+  %t369 = insertvalue { i8, { { ptr, i64 } } } undef, i8 5, 0
+  store { i8, { { ptr, i64 } } } %t369, ptr %slot___lit_53
+  %t370 = insertvalue { ptr, i64 } undef, ptr @.str.1, 0
+  %t371 = insertvalue { ptr, i64 } %t370, i64 0, 1
+  %t372 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot___lit_53, i32 0, i32 1, i32 0
+  store { ptr, i64 } %t371, ptr %t372
+  %t373 = load { i8, { { ptr, i64 } } }, ptr %slot___lit_53
+  %t374 = getelementptr inbounds { i8, { { ptr, i64 } } }, ptr %slot_vargs_54, i64 0
+  store { i8, { { ptr, i64 } } } %t373, ptr %t374
+  %t375 = insertvalue { ptr, i64 } undef, ptr %slot_vargs_54, 0
+  %t376 = insertvalue { ptr, i64 } %t375, i64 1, 1
+  call void @aila_std_io__println({ ptr, i64 } %t376)
+  call void @aila_rt_region_leave(ptr %t319)
   call void @aila_std_display_host__sink_host_ascii(ptr %slot_c_20)
   call void @aila_rt_region_leave(ptr %t19)
   ret void

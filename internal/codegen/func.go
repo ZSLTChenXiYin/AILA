@@ -177,11 +177,21 @@ func (l *Lowerer) genFunction(fn *ast.FuncDecl) string {
 	// 而 M1 尚未产出分派表，先用外部链接保证跨模块调用可解析（M3 换分派表）。
 	define := "define " + ret + " @" + symbolFor(l.modName, sig.Name, sig.Owner) +
 		"(" + strings.Join(names, ", ") + ")"
+	// module hot：**只给热替换模块**打 noinline + optnone（designs/0001 §12.1、0006 §2.6）。
+	// 两个属性一起上：noinline 挡住「hot 函数被内联进非 hot 调用方」（替换点必须可寻址），
+	// optnone 挡住「非 hot 代码被内联进 hot 模块」以及任何 IPA 改形（调用点形状不能变）。
+	// 非 hot 模块不加任何属性：允许优化器在整程序视图下自由内联（--lto）。
+	hotAttr := ""
+	if l.mod != nil && l.mod.IsHot {
+		hotAttr = " noinline optnone"
+	}
 	if g.isCoro {
 		// 协程函数：IR 返回类型恒为句柄（ptr），多两个隐藏尾参
 		// %cb（句柄控制块，调用方分配）与 %frameReg（协程帧的区域）。
 		define = "define ptr @" + symbolFor(l.modName, sig.Name, sig.Owner) +
-			"(" + strings.Join(names, ", ") + ") #0"
+			"(" + strings.Join(names, ", ") + ")" + hotAttr + " #0"
+	} else {
+		define = define + hotAttr
 	}
 	return define + " {\n" + body + "}\n"
 }

@@ -379,6 +379,13 @@ func (l *Lowerer) constLiteral(lt string, expr ast.Node) string {
 	if e, ok := expr.(*ast.ArrayLit); ok {
 		return l.arrayConstLiteral(lt, e)
 	}
+	// 字符串字面量的全局初值：Text 是 (ptr, len) 胖视图，字面量进常量池，初值填 { ptr @.str, len }。
+	// 之前这里没有分支 → 掉到兜底的 zeroinitializer，模块级 `let S: Text = "…"` 会变成空串
+	//（打印为空、view 出来 len=0、下标必 trap；designs/0006 §4.1 第 6 条）。
+	if e, ok := expr.(*ast.StrLit); ok && lt == l.viewLT() {
+		sym := l.stringConst(e.Value)
+		return "{ ptr " + sym + ", " + l.lenLT() + " " + strconv.Itoa(len(e.Value)) + " }"
+	}
 	if v, ok := l.scalarConstLiteral(lt, expr); ok {
 		return v
 	}
@@ -663,11 +670,24 @@ func (l *Lowerer) paramByRef(sig *sema.FuncSig, i int, t types.Type) bool {
 	if i == 0 && mutsSelf(sig) {
 		return false // @mut[self] 已按 ptr 传，走自己那条路
 	}
+	if types.IsViewFamily(t) {
+		return false // 视图按值传 { ptr, len }：写已经经 ptr 落地，不必再套一层
+	}
 	lt := l.llty(t)
 	if !strings.HasPrefix(lt, "{") && !strings.HasPrefix(lt, "[") {
-		return false // 标量 / 视图 / 函数指针照旧按值
+		return false // 标量 / 函数指针照旧按值
 	}
-	return l.layout.Size(t) > 16
+	if l.layout.Size(t) > 16 {
+		return true // 大聚合体：16 寄存器目标上按值传会把后端顶崩
+	}
+	// 小聚合体的 @mut 参数也必须按指针传：否则被调方拿到的是副本，
+	// 「@mut[self] 方法经 @mut 参数转发」写不回调用方（designs/0006 §4.1 第 5 条）。
+	for _, m := range sig.Muts {
+		if m == sig.Params[i].Name {
+			return true
+		}
+	}
+	return false
 }
 
 // funcLLType 返回（返回类型, 参数类型列表）；区域参数一律 ptr。

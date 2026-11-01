@@ -303,6 +303,23 @@ void aila_rt_sleep_ms(uint64_t ms) {
         last = now;
     }
 }
+/* aila_rt_delay_us：微秒级忙等（I2C 位时序 / 单总线协议用）。
+ * ccount 每周期 +1，换算基准 AILA_CPU_HZ 来自 chip.json（esp32 系复位默认 240MHz）。
+ * 忙等不关中断：中断会把单次延时拉长，位时序敏感的整段事务应放进一次 C 调用
+ *（designs/0006 §4.1）。 */
+void aila_rt_delay_us(uint32_t us) {
+    uint32_t need = us * (AILA_CPU_HZ / 1000000u);
+    if (need == 0) {
+        return;
+    }
+    uint32_t last = rt_ccount();
+    uint32_t waited = 0;
+    while (waited < need) {
+        uint32_t now = rt_ccount();
+        waited += (uint32_t)(now - last);
+        last = now;
+    }
+}
 
 uint64_t aila_rt_seed(void) {
     uint32_t a = rt_ccount();

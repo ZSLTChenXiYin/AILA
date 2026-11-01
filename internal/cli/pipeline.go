@@ -26,6 +26,7 @@ func loadOpts() build.Options {
 		Vendor:       buildVendor,
 		GCSections:   buildGC,
 		SizeDelta:    buildSizeDlt,
+		LTO:          buildLTO,
 	}
 }
 

@@ -241,6 +241,40 @@ void aila_rt_sleep_ms(uint64_t ms) {
 #endif
 }
 
+/* aila_rt_time_us：单调微秒（宿主内部的延时自旋用，不进 AILA 语言面）。
+ * 先除后乘，避免 QPC 计数乘 1e6 溢出（QPC 频率一般 10MHz，系统跑几个月就到 1e14）。 */
+static uint64_t aila_rt_time_us(void) {
+#if defined(_WIN32)
+    AILA_LARGE_INTEGER f, c;
+    if (!QueryPerformanceFrequency(&f) || !QueryPerformanceCounter(&c)) return 0;
+    if (f.QuadPart <= 0) return 0;
+    return (uint64_t)(c.QuadPart / f.QuadPart) * 1000000u +
+           (uint64_t)(c.QuadPart % f.QuadPart) * 1000000u / (uint64_t)f.QuadPart;
+#else
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return (uint64_t)ts.tv_sec * 1000000u + (uint64_t)ts.tv_nsec / 1000u;
+#endif
+}
+
+/* aila_rt_delay_us：微秒级延时（I2C 位时序、单总线协议用）。
+ * 系统睡眠的粒度是毫秒级（Windows 的 Sleep 还有 ~1ms 下限），所以整毫秒交给系统睡、
+ * 余下的微秒用单调钟自旋——既准确又不至于把 CPU 空转几毫秒。
+ * 忙等不关中断：中断会把单次延时拉长，位时序敏感的整段事务应放进一次 C 调用
+ *（designs/0006 §4.1）。 */
+void aila_rt_delay_us(uint32_t us) {
+    if (us == 0) return;
+    const uint32_t spin_us = us % 1000u;
+    const uint32_t sleep_ms = us / 1000u;
+    if (sleep_ms > 0) {
+        aila_rt_sleep_ms((uint64_t)sleep_ms);
+    }
+    if (spin_us == 0) return;
+    const uint64_t t0 = aila_rt_time_us();
+    while (aila_rt_time_us() - t0 < (uint64_t)spin_us) {
+    }
+}
+
 AILA_NORETURN void aila_rt_exit(uint32_t code) {
     fflush(stdout);
     exit((int)code);

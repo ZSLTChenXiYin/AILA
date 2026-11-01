@@ -25,6 +25,7 @@ var (
 	buildVendor   bool
 	buildGC       bool
 	buildSizeDlt  bool
+	buildLTO      bool
 )
 
 // jsonMarshalIndent 统一缩进 JSON（2 空格）。
@@ -46,6 +47,8 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&buildVendor, "vendor", false, "把依赖复制到 vendor/（离线构建）")
 	cmd.Flags().BoolVar(&buildGC, "gc-sections", false,
 		"函数/数据分段 + 链接期 --gc-sections：未被引用的模块代码不进产物（配合 #compile.match 选驱动）")
+	cmd.Flags().BoolVar(&buildLTO, "lto", false,
+		"整程序合并成一个 LLVM 模块再 -O2：非 hot 模块之间允许跨模块内联（铁律 7 的边界只在 module hot）")
 	cmd.Flags().BoolVar(&buildSizeDlt, "emit-size-delta", false,
 		"构建后报告产物与每个模块目标文件的大小（量化换驱动 / 关功能的体积差）")
 }

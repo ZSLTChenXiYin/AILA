@@ -4,11 +4,14 @@
 package build
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"aila/internal/ast"
@@ -51,6 +54,10 @@ type Options struct {
 	// SizeDelta 在构建后报告体积：产物字节数 + 每个模块目标文件的大小，
 	// 用来量化「换驱动 / 关功能」到底省了多少（designs/0006 §1.3 规则 8）。
 	SizeDelta bool
+	// LTO 把全部模块合成一个 LLVM 模块再 -O2：非 hot 模块之间允许内联
+	//（designs/0001 §12.1 的铁律 7 边界只在 module hot 上），顺带让链接器
+	// 更容易删掉死代码。默认关：体积/行为都会变，嵌入式目标需要逐块复验。
+	LTO bool
 }
 
 // Result 是一次构建的结果。
@@ -464,32 +471,77 @@ func Build(root string, opts Options) *Result {
 			irTextSection = sec
 		}
 	}
-	for _, name := range res.Program.Order {
-		ir, ok := irs[name]
-		if !ok || !strings.Contains(ir, "define ") {
-			continue // 纯声明模块不产目标文件
+	// ---- 对象文件：逐模块（默认）或整程序合并（--lto）----
+	//
+	// 铁律 7 的边界只在 `module hot`（designs/0001 §12.1 / §7.8）：非 hot 模块之间
+	// **允许**内联，而 AILA 的模块降的是各自的文本 IR，所以「允许」要靠把整程序合成
+	// 一个 LLVM 模块再 -O2 才能兑现（工具链里没有 opt / llvm-link，文本合并就够）。
+	// hot 模块的函数在 codegen 已经打了 noinline optnone，合并后优化器不会动它们。
+	if opts.LTO {
+		var parts [][2]string // [模块名, IR]
+		for _, name := range res.Program.Order {
+			ir, ok := irs[name]
+			if !ok || !strings.Contains(ir, "define ") {
+				continue
+			}
+			if irTextSection != "" {
+				ir = placeIRInSection(ir, irTextSection)
+			}
+			parts = append(parts, [2]string{name, ir})
 		}
-		if irTextSection != "" {
-			ir = placeIRInSection(ir, irTextSection)
+		if len(parts) > 0 {
+			merged := mergeModules(parts)
+			if opts.EmitIR {
+				if err := os.WriteFile(filepath.Join(outDir, "merged.ll"), []byte(merged), 0666); err != nil {
+					bag.Error("E7001", diag.Empty, "写不了 IR 文件："+err.Error(), "目录", "")
+					return res
+				}
+			}
+			obj := filepath.Join(outDir, "app.merged.o")
+			backend := llvm
+			if strings.Contains(merged, "llvm.coro") {
+				backend = coroLLVM
+			}
+			flags := append([]string{}, irFlags...)
+			flags = append(flags, "-O2") // 整程序视图下才谈得上跨模块内联
+			if opts.GCSections {
+				flags = append(flags, sectionFlags(backend)...)
+			}
+			if err := toolchain.IRToObject(merged, obj, res.Triple, cpu, backend, flags...); err != nil {
+				bag.Error("E8010", diag.Empty, "LLVM 后端失败（--lto）："+err.Error(), "这里",
+					"先 `aila build --emit-ir --lto` 看 merged.ll；或退回逐模块构建（去掉 --lto）")
+				return res
+			}
+			objects = append(objects, obj)
 		}
-		safe := safeName(name)
-		obj := filepath.Join(outDir, safe+".o")
-		backend := llvm
-		if strings.Contains(ir, "llvm.coro") {
-			backend = coroLLVM
+	} else {
+		for _, name := range res.Program.Order {
+			ir, ok := irs[name]
+			if !ok || !strings.Contains(ir, "define ") {
+				continue // 纯声明模块不产目标文件
+			}
+			if irTextSection != "" {
+				ir = placeIRInSection(ir, irTextSection)
+			}
+			safe := safeName(name)
+			obj := filepath.Join(outDir, safe+".o")
+			backend := llvm
+			if strings.Contains(ir, "llvm.coro") {
+				backend = coroLLVM
+			}
+			// --gc-sections 要求每个函数/全局各占一段，否则一个 .o 的 .text 是一整块、
+			// 链接器删不掉函数（designs/0006 §2.6：设备选择靠「编译期剪枝 + 链接期 GC」）。
+			flags := irFlags
+			if opts.GCSections {
+				flags = append(append([]string{}, irFlags...), sectionFlags(backend)...)
+			}
+			if err := toolchain.IRToObject(ir, obj, res.Triple, cpu, backend, flags...); err != nil {
+				bag.Error("E8010", diag.Empty, "LLVM 后端失败："+err.Error(), "这里",
+					"确认 llc/clang 版本在受支持区间；或先 `aila build --emit-ir` 看 IR")
+				return res
+			}
+			objects = append(objects, obj)
 		}
-		// --gc-sections 要求每个函数/全局各占一段，否则一个 .o 的 .text 是一整块、
-		// 链接器删不掉函数（designs/0006 §2.6：设备选择靠「编译期剪枝 + 链接期 GC」）。
-		flags := irFlags
-		if opts.GCSections {
-			flags = append(append([]string{}, irFlags...), sectionFlags(backend)...)
-		}
-		if err := toolchain.IRToObject(ir, obj, res.Triple, cpu, backend, flags...); err != nil {
-			bag.Error("E8010", diag.Empty, "LLVM 后端失败："+err.Error(), "这里",
-				"确认 llc/clang 版本在受支持区间；或先 `aila build --emit-ir` 看 IR")
-			return res
-		}
-		objects = append(objects, obj)
 	}
 
 	// ---- 嵌入式：平台 runtime + 交叉链接 + flash 镜像，全部在 aila 内部完成 ----
@@ -561,6 +613,190 @@ func Build(root string, opts Options) *Result {
 	}
 	res.OK = !bag.HasErrors()
 	return res
+}
+
+// moduleInterfaces 给每个模块算一份「接口摘要」：只对签名取哈希，不看函数体。
+//
+// 这是 designs/0006 §5 记的「接口指纹最小可用形态」：热替换要判的是「只换了实现、
+// 没动接口」，所以摘要必须对函数体（含剪枝结果）免疫。实现上用 IR 的 define/declare
+// 行（去掉 `{` 之前的部分 = 调用约定与参数类型），排序后 sha256。
+func moduleInterfaces(irs map[string]string) map[string]any {
+	out := map[string]any{}
+	for name, ir := range irs {
+		var sigs []string
+		for _, line := range strings.Split(ir, "\n") {
+			if strings.HasPrefix(line, "define ") || strings.HasPrefix(line, "declare ") {
+				head := strings.TrimSpace(line)
+				if k := strings.IndexByte(head, '{'); k >= 0 {
+					head = strings.TrimSpace(head[:k])
+				}
+				sigs = append(sigs, head)
+			}
+		}
+		sort.Strings(sigs)
+		sum := sha256.Sum256([]byte(strings.Join(sigs, "\n")))
+		out[name] = map[string]any{
+			"signatures": len(sigs),
+			"digest":     hex.EncodeToString(sum[:8]),
+		}
+	}
+	return out
+}
+
+// mergeModules 把各模块的文本 IR 合成**一个** LLVM 模块（`--lto` 的实现）。
+//
+// 为什么是文本合并而不是 llvm-link：随包工具链只有 llc / clang / llvm-nm，没有 opt 与
+// llvm-link；而 AILA 的模块降出来就是文本 IR，拼起来再交给 llc -O2 效果相同。
+// 三件必须做的事：
+//  1. 只保留第一份 `target triple` / `target datalayout`（重复会让解析器报错）；
+//  2. `; target:` 注释与模块级标记只留一份；
+//  3. `attributes #N` 组按模块重编号（每个模块都从 #0 开始，直接拼会撞号）。
+// 符号本身不需要改名：函数是 `aila_<模块>__<名>`、全局是 `g_<模块>_<名>`，天然不撞。
+//
+// 铁律 7 的边界只落在 `module hot` 上：那些函数在 codegen 已带 noinline optnone，
+// 合并 + -O2 不会跨过它们（designs/0001 §12.1 / §7.8）。
+func mergeModules(parts [][2]string) string {
+	// 先扫一遍：哪些符号在整程序里**有定义**。合并后同一符号只剩一个模块，
+	// 别处的 `declare` 必须删掉——LLVM 文本 IR 里 define 之后再出现 declare
+	// 会报 "invalid redefinition of function"。
+	defined := map[string]bool{}
+	for _, part := range parts {
+		for _, line := range strings.Split(part[1], "\n") {
+			if strings.HasPrefix(line, "define ") {
+				if sym := irSymbolOf(line); sym != "" {
+					defined[sym] = true
+				}
+			}
+		}
+	}
+	declared := map[string]bool{} // 已经输出过的 declare（同一符号只留第一份）
+	var b strings.Builder
+	offset := 0 // 已用掉的 attribute group 数
+	for i, part := range parts {
+		ir := part[1]
+		// 属性组重编号：先把本模块的 `attributes #N = {...}` 掏出来，再从正文里
+		// 把 `#N` 引用一起挪到新号段。
+		renum := map[string]string{}
+		var attrLines []string
+		var body []string
+		for _, line := range strings.Split(ir, "\n") {
+			t := strings.TrimRight(line, " \t\r")
+			switch {
+			case i == 0 && (strings.HasPrefix(t, "target triple =") ||
+				strings.HasPrefix(t, "target datalayout =") || strings.HasPrefix(t, "; target: ")):
+				// 第一份的模块级事实保留
+			case strings.HasPrefix(t, "target triple ="), strings.HasPrefix(t, "target datalayout ="),
+				strings.HasPrefix(t, "; target: "):
+				continue // 后续模块的重复行必须丢掉
+			case strings.HasPrefix(t, "declare "):
+				// 别处已有定义、或本符号已经声明过 → 声明必须消失（LLVM 文本 IR 不接受
+				// 重复的 declare，也不接受 define 之后再 declare）。
+				sym := irSymbolOf(t)
+				if defined[sym] || declared[sym] {
+					continue
+				}
+				declared[sym] = true
+			case strings.HasPrefix(t, "attributes #"):
+				rest := strings.TrimPrefix(t, "attributes #")
+				num := rest
+				if k := strings.IndexByte(rest, ' '); k >= 0 {
+					num = rest[:k]
+				}
+				newNum := strconv.Itoa(offset + len(renum))
+				renum[num] = newNum
+				attrLines = append(attrLines, strings.Replace(t, "attributes #"+num, "attributes #"+newNum, 1))
+				continue
+			}
+			body = append(body, line)
+		}
+		// 正文里的 `#N` 引用统一换号（只认纯数字组号，别的 `#` 不碰）
+		text := strings.Join(body, "\n")
+		// 字符串常量池的符号名是**模块内**编号（`@.str.0`），跨模块会撞名：
+		// 按模块序重写一遍（定义与所有引用一起改，纯文本替换即可）。
+		text = renameStrPool(text, i)
+		for num, newNum := range renum {
+			text = replaceAttrRef(text, num, newNum)
+		}
+		if i == 0 {
+			b.WriteString(text)
+		} else {
+			b.WriteString("\n")
+			b.WriteString(text)
+		}
+		b.WriteString("\n")
+		for _, l := range attrLines {
+			b.WriteString(l)
+			b.WriteString("\n")
+		}
+		offset += len(renum)
+	}
+	return b.String()
+}
+
+// renameStrPool 把模块私有的字符串常量符号 `@.str.<n>` 改成 `@.str.<mod>.<n>`。
+// codegen 在每个模块里都从 0 开始编号（模块内唯一即可），整程序合并时必须去重。
+func renameStrPool(text string, mod int) string {
+	const needle = "@.str."
+	var b strings.Builder
+	for {
+		i := strings.Index(text, needle)
+		if i < 0 {
+			b.WriteString(text)
+			return b.String()
+		}
+		b.WriteString(text[:i])
+		rest := text[i+len(needle):]
+		k := 0
+		for k < len(rest) && rest[k] >= '0' && rest[k] <= '9' {
+			k++
+		}
+		if k == 0 {
+			b.WriteString(needle)
+			text = rest
+			continue
+		}
+		b.WriteString("@.str." + strconv.Itoa(mod) + "." + rest[:k])
+		text = rest[k:]
+	}
+}
+
+// irSymbolOf 从 `define`/`declare` 行里取被声明的全局符号名（"@aila_x__y"）。
+func irSymbolOf(line string) string {
+	at := strings.IndexByte(line, '@')
+	if at < 0 {
+		return ""
+	}
+	rest := line[at:]
+	if k := strings.IndexAny(rest, "( ,"); k >= 0 {
+		return rest[:k]
+	}
+	return rest
+}
+
+// replaceAttrRef 把文本里的 `#<num>` 换号，只匹配「# 后面直接是数字且后面不是数字/字母」，
+// 避免误伤 `#compile` 之类的注释或 `#1`→`#10` 的前缀包含。
+func replaceAttrRef(s, num, newNum string) string {
+	if num == newNum {
+		return s
+	}
+	var b strings.Builder
+	needle := "#" + num
+	for {
+		i := strings.Index(s, needle)
+		if i < 0 {
+			b.WriteString(s)
+			return b.String()
+		}
+		end := i + len(needle)
+		okEnd := end >= len(s) || !(s[end] >= '0' && s[end] <= '9') && !(s[end] >= 'a' && s[end] <= 'z')
+		b.WriteString(s[:i])
+		if okEnd {
+			b.WriteString("#" + newNum)
+		} else {
+			b.WriteString(needle)
+		}
+		s = s[end:]
+	}
 }
 
 // sectionFlags 返回「每个函数/全局各占一段」的后端标志（--gc-sections 的前提）。
@@ -1026,6 +1262,14 @@ func writeReport(res *Result, outDir string) {
 			}
 		}
 		report["compile_time_prunes"] = prunes
+	}
+	// 模块接口摘要（designs/0006 §5 的「接口指纹」最小可用形态）：
+	// 只对**签名**取摘要——`define` / `declare` 行去掉函数体，排序后哈希。
+	// 于是：换 `#compile.match` 的 const 取值（剪掉另一支）摘要不变（剪枝不动 ABI），
+	// 而函数签名/增删导出一定会变。热替换模块将来用它做「只换实现」的合法性判定；
+	// 非 hot 模块用它做重编译的可观测性。真正的分派表/state 槽在 M2。
+	if res.IR != nil {
+		report["module_interfaces"] = moduleInterfaces(res.IR)
 	}
 	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
