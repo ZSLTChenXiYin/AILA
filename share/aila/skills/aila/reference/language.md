@@ -176,7 +176,7 @@ let x: I64 = parse(s)?;                                   // ? 上抛（= 提前
 | 通用 | `std.utf8` | `encode` / `rune_len` / `cp_at` / `valid` |
 | 通用 | `std.binary` | U16..U64 / I16..I64 × LE/BE 的 `le_/be_read_*`、`le_/be_write_*` |
 | 通用 | `std.sort` | `sort_i64/u64/f64` + `_by` 版（`cmp(a,b) -> Bool` 函数指针） |
-| 宿主 | `std.time` | `mono_ms()` / `sleep_ms(ms)` |
+| 宿主 | `std.time` | `mono_ms()` / `sleep_ms(ms)` / `sleep_us(us)`（I2C 位时序、单总线协议：三家族走 ccount，宿主先睡整毫秒再自旋） |
 | 宿主 | `std.os` | 文件 `open/read/write/close`（`! IoErr`）+ `args_count/args_get` + `env/env_set`；**只有 OS target 可链接** |
 | 宿主 | `std.rand` | `Rand{s}`（`next_u64` / `below(n)`，xorshift） |
 | 宿主 | `std.path` | `base/dir/ext` + `join` |
@@ -203,8 +203,8 @@ let x: I64 = parse(s)?;                                   // ? 上抛（= 提前
 6. 保留字：`out` / `copy` / `move` / `view` / `region` / `import` / `module` 都不能当变量名。
 7. 函数实现必须进 `module { }` 块（只要文件里出现了该块）；壳里只放声明。
 8. 模块级 `let X: Text = "…"` 当前是空串 → 文本常量放函数内（`let s: Text = "…"; view b: [U8] = s;`）。
-9. `const` 初始化器必须是纯字面量（不引用别的 const、不做运算）。
+9. `const` 初始化器必须是纯字面量（不引用别的 const、不做运算）。模块级 `let/const X: Text = "…"` 现在**已经可用**（此前是空串的 bug 已修）。
 10. `[T; N]` 与 `[T]` 不是一种类型：传参前先 `view` 重标（同型用 `let`）。
 11. trap / 越界 / 溢出都会终止进程（嵌入式上 = 重启），所以**库内一律夹住越界再画/写**。
-12. 跨模块调用不可内联（铁律 7）→ 想让优化器跨模块折叠是白费力气，用 `#compile.if/match` 剪枝。
+12. **跨模块内联的边界只在 `module hot`**：非 hot 模块之间允许被优化器内联（`aila build --lto` 把整程序合成一个模块再 -O2）；热替换模块的函数带 `noinline optnone`。所以想让"某段代码一定不存在"，仍用 `#compile.if/match` 剪枝（它不依赖优化器）。
 13. 没有方法重载、没有默认参数、没有具名实参；同名函数不能重载 → 用 `类型.名` 或不同前缀区分。

@@ -436,4 +436,8 @@ func main() {
 - 宿主上直接 `aila run`，用 `std.display_host.sink_host_pbm/ascii` 把画布导出成 golden；
   **别把 `std.display_host` 带进固件**（它要 std.io，白占体积）。
 - 设备选择用 `#compile.match DISPLAY { ... }`，配 `aila build --gc-sections`：
-  未选中的驱动连符号都不进产物。
+  未选中的驱动连符号都不进产物；开 `--lto` 还能让非 hot 模块之间跨模块内联（`module hot` 的函数带
+  `noinline optnone`，替换点始终可寻址）。
+- **驱动分层**：C 只留位时序（`cpacks/sw_i2c`：GPIO 翻转 / START-STOP / ACK / 总线恢复），
+  协议层放 AILA（命令序列 + 页寻址窗口 + 行主序→页格式）；位搬运用 `std.paint.transpose_page`，
+  宿主上就能逐字节 golden，不必等上板。

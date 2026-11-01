@@ -80,7 +80,7 @@ aila new <目录> [--triple xtensa-esp8266-elf]
 aila doctor [--json] [--cc ...] [--llvm ...]
 aila check [路径]
 aila build [路径] [--emit-ir] [--emit-json] [--out 名字] [--triple <三元组>] [--opt 0-3]
-              [--gc-sections] [--emit-size-delta]   # 剪掉未引用模块 / 报体积
+              [--gc-sections] [--emit-size-delta] [--lto]   # 剪未引用模块 / 报体积 / 跨模块内联
 aila run   [路径] [--arg 参数]
 aila parse <文件.aila> [--tokens]      # 语法树 / token 流（排查用）
 aila ir    <文件.aila> [--triple ...]  # 单文件降到 LLVM IR 并打印
@@ -194,7 +194,7 @@ module {
 | | `std.binary` | 字节序 / 打包 |
 | | `std.sort` | 排序 |
 | 宿主（os 限定） | `std.os` | 文件 / 进程环境 |
-| | `std.time` `std.rand` `std.path` | 时间 / 随机 / 路径 |
+| | `std.time` `std.rand` `std.path` | 时间（`mono_ms` / `sleep_ms` / **`sleep_us`**）/ 随机 / 路径 |
 | 嵌入式（三家族） | `std.gpio` | GPIO 方向 / 读 / 写（寄存器直写） |
 | | `std.uart` | UART0 阻塞写 / 非阻塞读（stdout 同路） |
 | 显示栈（designs/0006，任意 target） | `std.pixfmt` | 像素格式（mono1 = 1bpp / 行 4 字节对齐 / MSB 在左） |
@@ -214,6 +214,13 @@ cell 级 diff、脏页换算、ASCII 预览 + 画布指纹）与 `examples/oled_
 
 `aila build --gc-sections` 让「`#compile.match` 选中的驱动」之外的一切不进产物（连符号都没有），
 `--emit-size-delta` 打印产物与逐模块目标文件体积——「换驱动 / 关功能」的体积差可以直接量。
+`--lto` 把整程序合成一个 LLVM 模块再 -O2：**非 hot 模块之间允许跨模块内联**（铁律 7 的边界只在
+`module hot`，那些函数带 `noinline optnone`），同时 `aila-build.json` 的 `module_interfaces` 给出
+每模块的接口摘要（只对签名取哈希，剪枝/内联都不影响它）。
+
+板级驱动的分层（`examples/oled_smoke` 与 `examples/esp8266_oled` 同构）：C 只留**位时序**
+（`cpacks/sw_i2c`：GPIO 翻转、START/STOP、ACK、总线恢复），协议层（命令序列 / 页寻址窗口 /
+行主序→页格式搬运）在 AILA——后者是 `std.paint.transpose_page`，宿主上可逐字节 golden。
 
 ## 编辑器支持
 

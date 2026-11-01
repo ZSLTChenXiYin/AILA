@@ -62,6 +62,7 @@ AILA 是面向嵌入式、以区域内存模型与模块级热替换为核心的
 | `--emit-size-delta` | bool | `—` | 构建后报告产物与每个模块目标文件的大小（量化换驱动 / 关功能的体积差） |
 | `--gc-sections` | bool | `—` | 函数/数据分段 + 链接期 --gc-sections：未被引用的模块代码不进产物（配合 #compile.match 选驱动） |
 | `--llvm` | string | `—` | LLVM 后端选择（auto / bundled / system:...） |
+| `--lto` | bool | `—` | 整程序合并成一个 LLVM 模块再 -O2：非 hot 模块之间允许跨模块内联（铁律 7 的边界只在 module hot） |
 | `--opt` | int | `0` | 优化级别（0-3，临时覆盖清单） |
 | `--out` | string | `—` | 输出文件名（默认 `app` + 平台后缀） |
 | `--triple` | string | `—` | 目标三元组（临时覆盖清单，如 xtensa-esp8266-elf） |
@@ -94,6 +95,7 @@ AILA 是面向嵌入式、以区域内存模型与模块级热替换为核心的
 | `--emit-size-delta` | bool | `—` | 构建后报告产物与每个模块目标文件的大小（量化换驱动 / 关功能的体积差） |
 | `--gc-sections` | bool | `—` | 函数/数据分段 + 链接期 --gc-sections：未被引用的模块代码不进产物（配合 #compile.match 选驱动） |
 | `--llvm` | string | `—` | LLVM 后端选择（auto / bundled / system:...） |
+| `--lto` | bool | `—` | 整程序合并成一个 LLVM 模块再 -O2：非 hot 模块之间允许跨模块内联（铁律 7 的边界只在 module hot） |
 | `--opt` | int | `0` | 优化级别（0-3，临时覆盖清单） |
 | `--out` | string | `—` | 输出文件名（默认 `app` + 平台后缀） |
 | `--triple` | string | `—` | 目标三元组（临时覆盖清单，如 xtensa-esp8266-elf） |
@@ -292,6 +294,7 @@ AILA 是面向嵌入式、以区域内存模型与模块级热替换为核心的
 | `--emit-size-delta` | bool | `—` | 构建后报告产物与每个模块目标文件的大小（量化换驱动 / 关功能的体积差） |
 | `--gc-sections` | bool | `—` | 函数/数据分段 + 链接期 --gc-sections：未被引用的模块代码不进产物（配合 #compile.match 选驱动） |
 | `--llvm` | string | `—` | LLVM 后端选择（auto / bundled / system:...） |
+| `--lto` | bool | `—` | 整程序合并成一个 LLVM 模块再 -O2：非 hot 模块之间允许跨模块内联（铁律 7 的边界只在 module hot） |
 | `--opt` | int | `0` | 优化级别（0-3，临时覆盖清单） |
 | `--out` | string | `—` | 输出文件名（默认 `app` + 平台后缀） |
 | `--triple` | string | `—` | 目标三元组（临时覆盖清单，如 xtensa-esp8266-elf） |
