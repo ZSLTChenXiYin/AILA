@@ -1,0 +1,399 @@
+// AILA 标准库 · std.damage（显示栈 L2）
+//
+// designs/0006 §2.2：对照 Linux 的 damage clips + atomic commit——**局部刷新是一等公民**。
+// 两个 LOD 同时记脏（都定长、零分配、无多边形）：
+//
+//   - `clips`：最多 8 个像素矩形（图形图元用，坐标 = 像素）；
+//   - `cells`：128 cell 位图（文本控制台用，坐标 = 字符格）。
+//
+// 为什么两个都要：文本行内 diff 的最小单位是 cell（§2.4），图形图元的最小单位是矩形；
+// 驱动把两者合起来算「脏页范围」（SSD1306 是页寻址，见 designs/0006 §4.1 第 3 条）。
+//
+// ## 为什么是「句柄 + 区域内存」而不是内联字段的结构体
+//
+// Damage 的自然形态是 `{ clips: [Rect; 8], cells: [U8; 16], n: U8 }` = 81 字节。
+// 在 xtensa call0（16 个寄存器）上，这种大聚合体按值传递 / 构造会把 esp-llvm 的
+// 寄存器分配直接顶崩（"Cannot scavenge register without an emergency spill slot"，
+// -O0..-O3 都一样，designs/0006 §4.1 第 8 条实测）。改成**句柄**：
+//
+//     struct Damage { raw: [U32] }        // 两个机器字，按值传 / 返回都便宜
+//
+// 全部状态住在**调用方 region 里的一块 `[U32; WORDS]`**（`[0; damage.WORDS]@reg`）。
+// 好处有三：
+//   1. 句柄 8 字节 → 参数、返回值、局部变量都不进寄存器分配器的压力区；
+//   2. 写操作一律经 `raw[...]` 切片落地（切片的写入总是真正落到调用方内存），
+//      所以本模块的接口全是**自由函数 + `@mut[d]`**，不需要 `@mut[self]` 方法；
+//   3. 与 designs/0001 §5.4 的 `Matrix { data: [F32] }` 同型：句柄是视图，内存在区域。
+//
+// 布局（单位 = U32 字，全部 U16/WORD 打包，小端）：
+//   raw[0]            = n（clip 数）
+//   raw[1 .. 17)      = 8 个 clip，每 clip 两字：x0 | x1<<16、y0 | y1<<16
+//   raw[17 .. 21)     = cells 位图（128 bit：bit (row*16+col)）
+import std.pixbuf;
+
+// MAX_CLIPS = 定长 clip 数（满了并进第一个，精度换定长）
+public const MAX_CLIPS: USize = 8;
+// CELL_GRID_COLS / CELL_GRID_ROWS = cell 位图的网格尺寸（bit 下标 = row * COLS + col）
+public const CELL_GRID_COLS: U16 = 16;
+public const CELL_GRID_ROWS: U16 = 8;
+// CELL_WORDS = cells 位图占的字数（8 行 × 16 列 = 128 bit → 4 字）
+public const CELL_WORDS: USize = 4;
+// CLIP_WORDS = clips 占的字数（每 clip 两字 → 8 × 2 = 16）
+public const CLIP_WORDS: USize = 16;
+// CELLS_AT = cells 位图在 raw 里的起始字（1 + CLIP_WORDS）
+public const CELLS_AT: USize = 17;
+// WORDS = 句柄背后需要的区域字数（CELLS_AT + CELL_WORDS）
+// 注：`const` 初始化器必须是纯字面量表达式（designs/0001 §6.3），所以这几个值
+// 只能写成数字并在此注明来源；MAX_CLIPS / CELL_GRID_* 改动时必须同步。
+public const WORDS: USize = 21;
+
+// Rect 是半开矩形：[x0, x1) × [y0, y1)。纯数据 8 字节，按值传无压力。
+public struct Rect {
+    x0: U16,
+    y0: U16,
+    x1: U16,
+    y1: U16,
+};
+
+// Damage 是「脏区句柄」：状态在调用方 region 分配的 `[U32; WORDS]` 里。
+public struct Damage {
+    raw: [U32],
+};
+
+// ---- Rect（纯数据：查询走方法、构造走自由函数）----
+
+// rect 构造矩形
+public func rect(x0: U16, y0: U16, x1: U16, y1: U16) -> Rect;
+// rect_empty 空集矩形
+public func rect_empty() -> Rect;
+// Rect.is_empty 判断空集（任一维 <= 0）
+public func Rect.is_empty(self) -> Bool;
+// Rect.w / Rect.h 宽高（空集为 0）
+public func Rect.w(self) -> U16;
+public func Rect.h(self) -> U16;
+// Rect.touches 判断重叠或相邻（间隙 <= gap 也算，用来减少 clip 数）
+public func Rect.touches(self, o: Rect, gap: U16) -> Bool;
+// Rect.union 求并集（空集按单位元处理）
+public func Rect.union(self, o: Rect) -> Rect;
+// Rect.clamp 夹进 w×h 画布
+public func Rect.clamp(self, w: U16, h: U16) -> Rect;
+
+// ---- Damage（自由函数：写操作经 raw 切片落地）----
+
+// new 把调用方的区域内存包成脏区句柄（`[0; damage.WORDS]@reg`），并清零。
+public func new(raw: [U32]) -> Damage;
+// clear 清空（clips 与 cells 都归零）
+public func clear(d: Damage) @mut[d];
+// is_empty 是否没有任何脏区
+public func is_empty(d: Damage) -> Bool;
+// add_rect 追加脏矩形：能并进已有 clip 就并，否则追加；容量满了并进第一个
+public func add_rect(d: Damage, r: Rect) @mut[d];
+// add_cell 标记一个 cell 脏（cell 坐标）
+public func add_cell(d: Damage, col: U16, row: U16) @mut[d];
+// has_cell 查询一个 cell 是否脏
+public func has_cell(d: Damage, col: U16, row: U16) -> Bool;
+// cell_count 脏 cell 数
+public func cell_count(d: Damage) -> USize;
+// clip_count 脏矩形数
+public func clip_count(d: Damage) -> USize;
+// clip 取第 i 个脏矩形（越界 = 空矩形）
+public func clip(d: Damage, i: USize) -> Rect;
+// union_into 把 o 并进 d
+public func union_into(d: Damage, o: Damage) @mut[d];
+// cells_bounds 脏 cell 位图折成的像素矩形（无脏 cell = 空矩形）
+public func cells_bounds(d: Damage) -> Rect;
+// bounds 脏区总包围盒 = clips ∪ cells_bounds
+public func bounds(d: Damage) -> Rect;
+
+module {
+    public func rect(x0: U16, y0: U16, x1: U16, y1: U16) -> Rect {
+        return Rect { x0: x0, y0: y0, x1: x1, y1: y1 };
+    }
+
+    public func rect_empty() -> Rect {
+        return Rect { x0: 0, y0: 0, x1: 0, y1: 0 };
+    }
+
+    public func Rect.is_empty(self) -> Bool {
+        if self.x1 <= self.x0 {
+            return true;
+        }
+        if self.y1 <= self.y0 {
+            return true;
+        }
+        return false;
+    }
+
+    public func Rect.w(self) -> U16 {
+        if self.x1 <= self.x0 {
+            return 0;
+        }
+        return self.x1 - self.x0;
+    }
+
+    public func Rect.h(self) -> U16 {
+        if self.y1 <= self.y0 {
+            return 0;
+        }
+        return self.y1 - self.y0;
+    }
+
+    public func Rect.touches(self, o: Rect, gap: U16) -> Bool {
+        if self.is_empty() {
+            return false;
+        }
+        if o.is_empty() {
+            return false;
+        }
+        if self.x0 > o.x1 + gap {
+            return false;
+        }
+        if o.x0 > self.x1 + gap {
+            return false;
+        }
+        if self.y0 > o.y1 + gap {
+            return false;
+        }
+        if o.y0 > self.y1 + gap {
+            return false;
+        }
+        return true;
+    }
+
+    public func Rect.union(self, o: Rect) -> Rect {
+        if self.is_empty() {
+            return o;
+        }
+        if o.is_empty() {
+            return self;
+        }
+        var r: Rect = self;
+        if o.x0 < r.x0 {
+            r.x0 = o.x0;
+        }
+        if o.y0 < r.y0 {
+            r.y0 = o.y0;
+        }
+        if o.x1 > r.x1 {
+            r.x1 = o.x1;
+        }
+        if o.y1 > r.y1 {
+            r.y1 = o.y1;
+        }
+        return r;
+    }
+
+    public func Rect.clamp(self, w: U16, h: U16) -> Rect {
+        var c: Rect = self;
+        if c.x0 > w {
+            c.x0 = w;
+        }
+        if c.y0 > h {
+            c.y0 = h;
+        }
+        if c.x1 > w {
+            c.x1 = w;
+        }
+        if c.y1 > h {
+            c.y1 = h;
+        }
+        if c.x1 < c.x0 {
+            c.x1 = c.x0;
+        }
+        if c.y1 < c.y0 {
+            c.y1 = c.y0;
+        }
+        return c;
+    }
+
+    public func new(raw: [U32]) -> Damage {
+        var d: Damage = Damage { raw: raw };
+        clear(d);
+        return d;
+    }
+
+    public func clear(d: Damage) @mut[d] {
+        var i: USize = 0;
+        for i < WORDS {
+            if i < #compile.as(USize, #comprun.len(d.raw)) {
+                d.raw[i] = 0;
+            }
+            i = i + 1;
+        }
+    }
+
+    // clip_at 读第 i 个 clip（不检查范围，内部用）
+    func clip_at(d: Damage, i: USize) -> Rect {
+        let a: U32 = d.raw[1 + i * 2];
+        let b: U32 = d.raw[2 + i * 2];
+        return Rect {
+            x0: #compile.as(U16, a & 0xFFFF),
+            x1: #compile.as(U16, a >> 16),
+            y0: #compile.as(U16, b & 0xFFFF),
+            y1: #compile.as(U16, b >> 16),
+        };
+    }
+
+    // set_clip 写第 i 个 clip（内部用）
+    func set_clip(d: Damage, i: USize, r: Rect) @mut[d] {
+        d.raw[1 + i * 2] = #compile.as(U32, r.x0) | (#compile.as(U32, r.x1) << 16);
+        d.raw[2 + i * 2] = #compile.as(U32, r.y0) | (#compile.as(U32, r.y1) << 16);
+    }
+
+    public func clip(d: Damage, i: USize) -> Rect {
+        if i >= MAX_CLIPS {
+            return rect_empty();
+        }
+        return clip_at(d, i);
+    }
+
+    public func clip_count(d: Damage) -> USize {
+        var n: USize = 0;
+        var i: USize = 0;
+        for i < MAX_CLIPS {
+            if !clip_at(d, i).is_empty() {
+                n = n + 1;
+            }
+            i = i + 1;
+        }
+        return n;
+    }
+
+    public func is_empty(d: Damage) -> Bool {
+        if clip_count(d) != 0 {
+            return false;
+        }
+        var k: USize = 0;
+        for k < CELL_WORDS {
+            if d.raw[CELLS_AT + k] != 0 {
+                return false;
+            }
+            k = k + 1;
+        }
+        return true;
+    }
+
+    public func add_rect(d: Damage, r: Rect) @mut[d] {
+        if r.is_empty() {
+            return;
+        }
+        // ① 能并进已有 clip 就并（相邻 2px 内也算，省 clip）
+        var i: USize = 0;
+        for i < MAX_CLIPS {
+            let cur: Rect = clip_at(d, i);
+            if !cur.is_empty() {
+                if cur.touches(r, 2) {
+                    set_clip(d, i, cur.union(r));
+                    return;
+                }
+            }
+            i = i + 1;
+        }
+        // ② 追加到空槽
+        var k: USize = 0;
+        for k < MAX_CLIPS {
+            if clip_at(d, k).is_empty() {
+                set_clip(d, k, r);
+                if d.raw[0] < #compile.as(U32, MAX_CLIPS) {
+                    d.raw[0] = d.raw[0] + 1;
+                }
+                return;
+            }
+            k = k + 1;
+        }
+        // ③ 满了：并进第一个（精度换定长，文档已标明）
+        set_clip(d, 0, clip_at(d, 0).union(r));
+    }
+
+    public func add_cell(d: Damage, col: U16, row: U16) @mut[d] {
+        if col >= CELL_GRID_COLS {
+            return;
+        }
+        if row >= CELL_GRID_ROWS {
+            return;
+        }
+        let bit: USize = #compile.as(USize, row) * #compile.as(USize, CELL_GRID_COLS) + #compile.as(USize, col);
+        let word: USize = CELLS_AT + bit / 32;
+        let mask: U32 = #compile.as(U32, 1) << #compile.as(U32, bit % 32);
+        d.raw[word] = d.raw[word] | mask;
+    }
+
+    public func has_cell(d: Damage, col: U16, row: U16) -> Bool {
+        if col >= CELL_GRID_COLS {
+            return false;
+        }
+        if row >= CELL_GRID_ROWS {
+            return false;
+        }
+        let bit: USize = #compile.as(USize, row) * #compile.as(USize, CELL_GRID_COLS) + #compile.as(USize, col);
+        let word: USize = CELLS_AT + bit / 32;
+        let mask: U32 = #compile.as(U32, 1) << #compile.as(U32, bit % 32);
+        return (d.raw[word] & mask) != 0;
+    }
+
+    public func cell_count(d: Damage) -> USize {
+        var total: USize = 0;
+        var k: USize = 0;
+        for k < CELL_WORDS {
+            var b: U32 = d.raw[CELLS_AT + k];
+            for b != 0 {
+                total = total + 1;
+                b = b & (b - 1);   // 清最低置位
+            }
+            k = k + 1;
+        }
+        return total;
+    }
+
+    public func union_into(d: Damage, o: Damage) @mut[d] {
+        var i: USize = 0;
+        for i < MAX_CLIPS {
+            let r: Rect = clip_at(o, i);
+            if !r.is_empty() {
+                add_rect(d, r);
+            }
+            i = i + 1;
+        }
+        var k: USize = 0;
+        for k < CELL_WORDS {
+            d.raw[CELLS_AT + k] = d.raw[CELLS_AT + k] | o.raw[CELLS_AT + k];
+            k = k + 1;
+        }
+    }
+
+    public func cells_bounds(d: Damage) -> Rect {
+        var r: Rect = rect_empty();
+        let cw: U16 = #compile.as(U16, pixbuf.CELL_W);
+        let ch: U16 = #compile.as(U16, pixbuf.CELL_H);
+        var row: U16 = 0;
+        for row < CELL_GRID_ROWS {
+            var col: U16 = 0;
+            for col < CELL_GRID_COLS {
+                if has_cell(d, col, row) {
+                    r = r.union(Rect {
+                        x0: col * cw,
+                        y0: row * ch,
+                        x1: col * cw + cw,
+                        y1: row * ch + ch,
+                    });
+                }
+                col = col + 1;
+            }
+            row = row + 1;
+        }
+        return r;
+    }
+
+    public func bounds(d: Damage) -> Rect {
+        var r: Rect = cells_bounds(d);
+        var i: USize = 0;
+        for i < MAX_CLIPS {
+            let c: Rect = clip_at(d, i);
+            if !c.is_empty() {
+                r = r.union(c);
+            }
+            i = i + 1;
+        }
+        return r;
+    }
+}

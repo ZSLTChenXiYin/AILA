@@ -1,0 +1,86 @@
+// AILA 标准库 · std.wifi（层 3：esp8266 NonOS SDK build 限定）
+//
+// Wi-Fi station + TCP 同步最小集（designs/0003 §5.2）。实现委托
+// runtime/esp8266/nosdk.c 的 aila_rt_wifi_* / aila_rt_tcp_* 胶水：
+// SDK 侧 wifi_set_opmode_current / wifi_station_* / wifi_get_ip_info +
+// lwip raw TCP（tcp_new/connect/write/recv/close——官方发布版剥离了
+// netconn/sockets 层，raw 回调在胶水层收敛成环形缓冲 + 轮询），
+// extern 手抄声明、不 include SDK 头（SDK 自定义类型按官方头布局手抄，
+// 注释带来源）。
+//
+// 链接门槛：aila_rt_wifi_* / aila_rt_tcp_* 只在 [sdk] = "esp8266-nosdk"
+// 构建编入——其他 target import 本模块会在链接期报未定义符号。
+//
+// 语义约定：
+//   - status() 返回 NonOS 原生状态码（ST_* 常量，user_interface.h 枚举）；
+//   - ip() 为网络序 u32（0 = 未拿到 IP）；
+//   - TCP 句柄 U64 = lwip tcp_pcb 指针（仅经本模块函数使用；M1 单连接）；
+//   - I64 返回 < 0 = lwip err_t 原样透传（负数），0 = 成功 / 无数据，
+//     正数 = 收到字节数；收包环满时丢弃新数据（M1）。
+import std.core;
+
+// 连接状态码（status 的返回值；与 NonOS esconn_stat 枚举一致）
+public const ST_IDLE: U32 = 0;
+public const ST_CONNECTING: U32 = 1;
+public const ST_WRONG_PASSWORD: U32 = 2;
+public const ST_NO_AP_FOUND: U32 = 3;
+public const ST_CONNECT_FAIL: U32 = 4;
+public const ST_GOT_IP: U32 = 5;
+
+#compile.c func aila_rt_wifi_mode_station();
+#compile.c func aila_rt_wifi_connect(ssid: [U8], ssid_len: USize, pass: [U8], pass_len: USize) -> U32;
+#compile.c func aila_rt_wifi_status() -> U32;
+#compile.c func aila_rt_wifi_ip() -> U32;
+#compile.c func aila_rt_tcp_connect(ipa: U32, port: U32) -> I64;
+#compile.c func aila_rt_tcp_send(h: U64, bytes: [U8], n: USize) -> I64;
+#compile.c func aila_rt_tcp_recv(h: U64, buf: [U8], cap: USize) -> I64;
+#compile.c func aila_rt_tcp_close(h: U64);
+
+// mode_station 切到 station 模式（仅本次运行生效，不写 flash）
+public func mode_station() {
+    aila_rt_wifi_mode_station();
+}
+
+// connect 连 SSID：阻塞轮询连接状态至 GOT_IP，确定性失败（密码错 /
+// 找不到 AP / 连接失败）与 ~15s 超时即返回（期间喂软看门狗）
+public func connect(ssid: Text, pass: Text) -> Bool {
+    view sb: [U8] = ssid;
+    view pb: [U8] = pass;
+    return aila_rt_wifi_connect(sb, #comprun.len(sb), pb, #comprun.len(pb)) == ST_GOT_IP;
+}
+
+// status 当前连接状态（ST_* 常量之一）
+public func status() -> U32 {
+    return aila_rt_wifi_status();
+}
+
+// ip station 的 IPv4（网络序 u32；0 = 未拿到）
+public func ip() -> U32 {
+    return aila_rt_wifi_ip();
+}
+
+// tcp_connect 连 TCP（ipa 网络序 u32）。返回句柄；netconn 资源耗尽 =
+// NoSpace，连接失败 = Denied（lwip err 细分码在运行期日志可见）
+public func tcp_connect(ipa: U32, port: U32) -> U64 ! core.IoErr {
+    let r: I64 = aila_rt_tcp_connect(ipa, port);
+    if r < 0 {
+        return .Denied;
+    }
+    return #compile.as(U64, r);
+}
+
+// tcp_send 发 bytes：0 = 成功；负值 = lwip err_t（发送缓冲满 = ERR_MEM）
+public func tcp_send(h: U64, bytes: [U8]) -> I64 {
+    return aila_rt_tcp_send(h, bytes, #comprun.len(bytes));
+}
+
+// tcp_recv 收至多 buf 容量：返回字节数，0 = 暂无数据；-1 = 对端关闭，
+// 其余负值 = lwip err_t（连接是否还活着可用 status/ip 自查）
+public func tcp_recv(h: U64, buf: [U8]) @mut[buf] -> I64 {
+    return aila_rt_tcp_recv(h, buf, #comprun.len(buf));
+}
+
+// tcp_close 关连接并释放句柄（句柄随后失效；重复 close 无害）
+public func tcp_close(h: U64) {
+    aila_rt_tcp_close(h);
+}

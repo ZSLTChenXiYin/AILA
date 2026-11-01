@@ -1,0 +1,396 @@
+// AILA 标准库 · std.textgrid（显示栈 L4）
+//
+// designs/0006 §2.2 / §2.5：对照 Linux 的 fbcon——**文本控制台是画布的客户端**。
+// 滚动 / 换行 / 全半角排版全部在这里，画布（std.pixbuf）不支持滚动。
+//
+// 核心机制 = **内容模型**：网格持「cell → 码点」，滚动只搬码点（不搬像素），
+// `render()` 把当前码点表与上一帧码点表逐 cell 比较，产出**精确到 cell 的 Damage**。
+// 一帧的刷新量 = 真正变的 cell 数，而不是「滚动后整屏重发」（OLED 上 37ms vs 单页 5ms）。
+//
+// cell 编码（一个 U32 同时带宽度，render 时不必再查字库）：
+//   bit31..30 = 宽度（0 = 空 / 1 = 半角 / 2 = 全角），bit29..0 = 码点。
+//   全角字占两格：第一格存编码，第二格存 0（续格）。
+//
+// ## 句柄 + 区域内存（同 std.damage 的形态）
+//
+// 状态（当前帧 cells、上一帧 prev、光标）全住在调用方 region 的一块 `[U32]` 里：
+//
+//     raw[0] = cols        raw[1] = rows
+//     raw[2] = cur_col     raw[3] = cur_row
+//     raw[4 .. 4+N)        = 当前帧 cells（N = cols*rows）
+//     raw[4+N .. 4+2N)     = 上一帧 prev
+//
+// 句柄只有 8 字节（两个机器字），按值传 / 返回都便宜；写操作经 `raw` 切片落地，
+// 所以接口全是自由函数 + `@mut[...]`（xtensa 上大聚合体按值传会把 RA 顶崩，
+// designs/0006 §4.1 第 8 条）。
+//
+// 所有权约定：一块画布区域一旦交给 TextGrid 渲染，该区域就是**纯文本区**——
+// 图形图元请画在网格之外的区域，并由调用方自行 add_rect 记脏。
+import std.pixbuf;
+import std.damage;
+import std.paint;
+
+// W_NONE / W_HALF / W_WIDE 是 cell 编码里的宽度档
+public const W_NONE: U32 = 0;
+public const W_HALF: U32 = 1;
+public const W_WIDE: U32 = 2;
+// CP_MASK 是编码里码点的掩码
+public const CP_MASK: U32 = 0x3FFFFFFF;
+// META 是 raw 里元信息的字数（cols / rows / cur_col / cur_row）
+public const META: USize = 4;
+
+// TextGrid 是文本控制台的内容模型句柄。
+public struct TextGrid {
+    raw: [U32],
+};
+
+// words 返回 cols×rows 网格需要的区域字数（含元信息与两帧）。
+public func words(cols: U16, rows: U16) -> USize;
+// new 把调用方的区域内存包成网格句柄（`[0; words(cols, rows)]@reg`），并清空。
+public func new(raw: [U32], cols: U16, rows: U16) -> TextGrid;
+// encode 把 (码点, 宽度) 编成 cell 值。
+public func encode(cp: U32, w: U32) -> U32;
+// cell_cp / cell_w 从 cell 值取码点 / 宽度。
+public func cell_cp(v: U32) -> U32;
+public func cell_w(v: U32) -> U32;
+// cols_of / rows_of / cursor 读网格几何与光标。
+public func cols_of(g: TextGrid) -> U16;
+public func rows_of(g: TextGrid) -> U16;
+public func cursor(g: TextGrid) -> (U16, U16);
+// clear 清空内容与光标。
+public func clear(g: TextGrid) @mut[g];
+// get / set 读写一个 cell（不动光标）。
+public func get(g: TextGrid, col: U16, row: U16) -> U32;
+public func set(g: TextGrid, col: U16, row: U16, v: U32) @mut[g];
+// scroll_by 内容上移 n 行，底部补空（只搬码点，不碰像素）。
+public func scroll_by(g: TextGrid, n: U16) @mut[g];
+// newline 光标换行；已在末行则滚动一行。
+public func newline(g: TextGrid) @mut[g];
+// put_cp 写一个码点到光标处并按宽度推进（行内放不下自动换行）。
+public func put_cp(g: TextGrid, gs: paint.GlyphSet, cp: U32) @mut[g];
+// put_text 写一段 UTF-8 文本，超宽自动换行。
+public func put_text(g: TextGrid, gs: paint.GlyphSet, bytes: [U8], n: USize) @mut[g];
+// put_cps 写一段码点（等价于 put_text 的码点版）。
+public func put_cps(g: TextGrid, gs: paint.GlyphSet, cps: [U32], n: USize) @mut[g];
+// render 把内容模型画进画布，**只把变化了色的 cell 记进 d**（调用方传入自己的 Damage）。
+public func render(g: TextGrid, gs: paint.GlyphSet, pb: pixbuf.Pixbuf, d: damage.Damage) @mut[g, pb, d];
+// render_all 无视 diff 全量重画（首次上屏 / 屏被外部改动后）。
+public func render_all(g: TextGrid, gs: paint.GlyphSet, pb: pixbuf.Pixbuf, d: damage.Damage) @mut[g, pb, d];
+
+module {
+    public func encode(cp: U32, w: U32) -> U32 {
+        return (w << 30) | (cp & CP_MASK);
+    }
+
+    public func cell_cp(v: U32) -> U32 {
+        return v & CP_MASK;
+    }
+
+    public func cell_w(v: U32) -> U32 {
+        return v >> 30;
+    }
+
+    public func words(cols: U16, rows: U16) -> USize {
+        let n: USize = #compile.as(USize, cols) * #compile.as(USize, rows);
+        return META + n * 2;
+    }
+
+    func cells_at() -> USize {
+        return META;
+    }
+
+    func prev_at(g: TextGrid) -> USize {
+        return META + #compile.as(USize, cols_of(g)) * #compile.as(USize, rows_of(g));
+    }
+
+    public func cols_of(g: TextGrid) -> U16 {
+        return #compile.as(U16, g.raw[0]);
+    }
+
+    public func rows_of(g: TextGrid) -> U16 {
+        return #compile.as(U16, g.raw[1]);
+    }
+
+    public func cursor(g: TextGrid) -> (U16, U16) {
+        return (#compile.as(U16, g.raw[2]), #compile.as(U16, g.raw[3]));
+    }
+
+    func set_cursor(g: TextGrid, col: U16, row: U16) @mut[g] {
+        g.raw[2] = #compile.as(U32, col);
+        g.raw[3] = #compile.as(U32, row);
+    }
+
+    public func new(raw: [U32], cols: U16, rows: U16) -> TextGrid {
+        var g: TextGrid = TextGrid { raw: raw };
+        g.raw[0] = #compile.as(U32, cols);
+        g.raw[1] = #compile.as(U32, rows);
+        g.raw[2] = 0;
+        g.raw[3] = 0;
+        clear(g);
+        return g;
+    }
+
+    public func clear(g: TextGrid) @mut[g] {
+        let total: USize = words(cols_of(g), rows_of(g));
+        var i: USize = META;   // 元信息（cols/rows/光标）不动
+        for i < total {
+            if i < #compile.as(USize, #comprun.len(g.raw)) {
+                g.raw[i] = 0;
+            }
+            i = i + 1;
+        }
+        set_cursor(g, 0, 0);
+    }
+
+    // idx 把 (col, row) 换算成 cells 段内的下标
+    func idx(g: TextGrid, col: U16, row: U16) -> USize {
+        return #compile.as(USize, row) * #compile.as(USize, cols_of(g)) + #compile.as(USize, col);
+    }
+
+    public func get(g: TextGrid, col: U16, row: U16) -> U32 {
+        if col >= cols_of(g) {
+            return 0;
+        }
+        if row >= rows_of(g) {
+            return 0;
+        }
+        return g.raw[cells_at() + idx(g, col, row)];
+    }
+
+    public func set(g: TextGrid, col: U16, row: U16, v: U32) @mut[g] {
+        if col >= cols_of(g) {
+            return;
+        }
+        if row >= rows_of(g) {
+            return;
+        }
+        g.raw[cells_at() + idx(g, col, row)] = v;
+    }
+
+    public func scroll_by(g: TextGrid, n: U16) @mut[g] {
+        if n == 0 {
+            return;
+        }
+        let (c, r) = cursor(g);
+        let nr: U16 = scroll_cells(g, n, r);
+        _ = c;
+        set_cursor(g, 0, nr);
+    }
+
+    public func newline(g: TextGrid) @mut[g] {
+        let (c, r) = cursor(g);
+        let (c2, r2) = newline_at(g, c, r);
+        set_cursor(g, c2, r2);
+    }
+
+    public func put_cp(g: TextGrid, gs: paint.GlyphSet, cp: U32) @mut[g] {
+        let (c, r) = cursor(g);
+        let (c2, r2) = put_cp_at(g, gs, cp, c, r);
+        set_cursor(g, c2, r2);
+    }
+
+    public func put_text(g: TextGrid, gs: paint.GlyphSet, bytes: [U8], n: USize) @mut[g] {
+        let (c0, r0) = cursor(g);
+        var c: U16 = c0;
+        var r: U16 = r0;
+        var i: USize = 0;
+        for i < n {
+            let (cp, step) = paint.decode(bytes, n, i);
+            if step == 0 {
+                break;
+            }
+            let (c2, r2) = put_cp_at(g, gs, cp, c, r);
+            c = c2;
+            r = r2;
+            i = i + step;
+        }
+        set_cursor(g, c, r);
+    }
+
+    public func put_cps(g: TextGrid, gs: paint.GlyphSet, cps: [U32], n: USize) @mut[g] {
+        let (c0, r0) = cursor(g);
+        var c: U16 = c0;
+        var r: U16 = r0;
+        var i: USize = 0;
+        for i < n {
+            let (c2, r2) = put_cp_at(g, gs, cps[i], c, r);
+            c = c2;
+            r = r2;
+            i = i + 1;
+        }
+        set_cursor(g, c, r);
+    }
+
+    public func render(g: TextGrid, gs: paint.GlyphSet, pb: pixbuf.Pixbuf, d: damage.Damage) @mut[g, pb, d] {
+        render_impl(g, gs, pb, d, false);
+    }
+
+    public func render_all(g: TextGrid, gs: paint.GlyphSet, pb: pixbuf.Pixbuf, d: damage.Damage) @mut[g, pb, d] {
+        render_impl(g, gs, pb, d, true);
+    }
+
+    // ---- 内部：全部经 raw / 画布切片落地，光标由调用方赋回 ----
+
+    // scroll_cells 内容上移 n 行并返回新的光标行。
+    func scroll_cells(g: TextGrid, n: U16, cur_row: U16) @mut[g] -> U16 {
+        let cw: USize = #compile.as(USize, cols_of(g));
+        let rw: USize = #compile.as(USize, rows_of(g));
+        let total: USize = cw * rw;
+        let base: USize = cells_at();
+        if n >= rows_of(g) {
+            var t: USize = 0;
+            for t < total {
+                g.raw[base + t] = 0;
+                t = t + 1;
+            }
+            return 0;
+        }
+        let shift: USize = #compile.as(USize, n) * cw;
+        var i: USize = 0;
+        for i < total {
+            if i + shift < total {
+                g.raw[base + i] = g.raw[base + i + shift];
+            } else {
+                g.raw[base + i] = 0;
+            }
+            i = i + 1;
+        }
+        if cur_row >= n {
+            return cur_row - n;
+        }
+        return 0;
+    }
+
+    // newline_at 返回换行后的光标 (col, row)；末行再换行 = 滚一行。
+    func newline_at(g: TextGrid, col: U16, row: U16) @mut[g] -> (U16, U16) {
+        _ = col;
+        let rows: U16 = rows_of(g);
+        if rows == 0 {
+            return (0, 0);
+        }
+        if row + 1 >= rows {
+            let r: U16 = scroll_cells(g, 1, row);
+            return (0, r);
+        }
+        return (0, row + 1);
+    }
+
+    // put_cp_at 在 (col, row) 写一个码点，返回推进后的光标；放不下先换行（全角不劈开）。
+    func put_cp_at(g: TextGrid, gs: paint.GlyphSet, cp: U32, col: U16, row: U16) @mut[g] -> (U16, U16) {
+        var wd: U32 = #compile.as(U32, paint.glyph_width(gs, cp));
+        if wd == 0 {
+            wd = 1;
+        }
+        if wd > 2 {
+            wd = 2;
+        }
+        var c: U16 = col;
+        var r: U16 = row;
+        if c + #compile.as(U16, wd) > cols_of(g) {
+            let (c2, r2) = newline_at(g, c, r);
+            c = c2;
+            r = r2;
+        }
+        if cols_of(g) == 0 || rows_of(g) == 0 {
+            return (c, r);
+        }
+        let at: USize = cells_at() + idx(g, c, r);
+        if at >= #compile.as(USize, #comprun.len(g.raw)) {
+            return (c, r);
+        }
+        g.raw[at] = encode(cp, wd);
+        if wd == 2 {
+            if c + 1 < cols_of(g) {
+                g.raw[at + 1] = 0;
+            }
+        }
+        return (c + #compile.as(U16, wd), r);
+    }
+
+    // render_impl 是 render / render_all 的共同实现：一行一个小函数（xtensa RA 压力）。
+    func render_impl(g: TextGrid, gs: paint.GlyphSet, pb: pixbuf.Pixbuf, d: damage.Damage, force: Bool) @mut[g, pb, d] {
+        var row: U16 = 0;
+        for row < rows_of(g) {
+            let mask: U64 = render_row(g, gs, pb, row, force);
+            var col: U16 = 0;
+            for col < cols_of(g) {
+                if (mask & (#compile.as(U64, 1) << #compile.as(U64, col))) != 0 {
+                    damage.add_cell(d, col, row);
+                }
+                col = col + 1;
+            }
+            row = row + 1;
+        }
+    }
+
+    // render_row 重画第 row 行里变了色的字形单元，返回脏 cell 位图（bit c = 第 c 格脏）。
+    //
+    // 单元 = 一个字形（半角 1 格、全角 2 格）。脏判定按 cell 值比较；命中后
+    // **先清空单元覆盖的像素面，再画新内容**——清空是必须的（blit 只置位，
+    // 旧全角字的右半格不清就会残留）。单元宽度取「新帧与旧帧的较大者」。
+    func render_row(g: TextGrid, gs: paint.GlyphSet, pb: pixbuf.Pixbuf, row: U16, force: Bool) @mut[g, pb] -> U64 {
+        var mask: U64 = 0;
+        let n: USize = #compile.as(USize, cols_of(g)) * #compile.as(USize, rows_of(g));
+        let pv: USize = prev_at(g);
+        var col: U16 = 0;
+        for col < cols_of(g) {
+            let i: USize = idx(g, col, row);
+            let cur: U32 = g.raw[cells_at() + i];
+            let old: U32 = g.raw[pv + i];
+            // 续格（新帧左邻是全角）由左格一起重画，这里跳过
+            if col > 0 {
+                if cell_w(g.raw[cells_at() + i - 1]) == 2 {
+                    col = col + 1;
+                    continue;
+                }
+            }
+            if !force && cur == old {
+                col = col + 1;
+                continue;
+            }
+            let span: U16 = unit_span(g, cur, old, col);
+            repaint_unit(g, gs, pb, cur, col, row, span);
+            mask = mask | (#compile.as(U64, 1) << #compile.as(U64, col));
+            if span == 2 {
+                mask = mask | (#compile.as(U64, 1) << #compile.as(U64, col + 1));
+                g.raw[pv + i + 1] = g.raw[cells_at() + i + 1];
+            }
+            g.raw[pv + i] = cur;
+            col = col + span;
+        }
+        _ = n;
+        return mask;
+    }
+
+    // unit_span 返回一个单元占的格数（新帧或旧帧任一为全角就按 2 格清）。
+    func unit_span(g: TextGrid, cur: U32, old: U32, col: U16) -> U16 {
+        var span: U16 = 1;
+        if cell_w(cur) == 2 || cell_w(old) == 2 {
+            span = 2;
+        }
+        if col + span > cols_of(g) {
+            span = 1;
+        }
+        return span;
+    }
+
+    // repaint_unit 清空并重画一个单元（span 格宽）。
+    func repaint_unit(g: TextGrid, gs: paint.GlyphSet, pb: pixbuf.Pixbuf, cur: U32, col: U16, row: U16, span: U16) @mut[g, pb] {
+        let cw: U16 = #compile.as(U16, pixbuf.CELL_W);
+        let ch: U16 = #compile.as(U16, pixbuf.CELL_H);
+        var clear_r: damage.Rect = paint.cell_rect(col, row);
+        if span == 2 {
+            clear_r = damage.rect(col * cw, row * ch, (col + 2) * cw, (row + 1) * ch);
+        }
+        paint.fill_rect(pb, clear_r, false);
+        if cell_w(cur) != 0 {
+            _ = paint.blit_glyph(pb, gs, cell_cp(cur), col, row);
+        }
+        if span == 2 {
+            let nxt: U32 = g.raw[cells_at() + idx(g, col + 1, row)];
+            if cell_w(nxt) != 0 {
+                _ = paint.blit_glyph(pb, gs, cell_cp(nxt), col + 1, row);
+            }
+        }
+    }
+}

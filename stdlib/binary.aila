@@ -1,0 +1,128 @@
+// AILA 标准库 · std.binary
+//
+// 批次 1（designs/0003 §3.4）：定宽整数的 LE / BE 字节序读写，纯 AILA。
+// 布局按「低地址在先」逐字节拼装 / 拆解；off + 宽度超出 #comprun.len(buf)
+// 时按下标越界 trap——缓冲即寄存器帧 / 线路帧，越界访问本就是编程错误。
+//
+// M1 只做整数族：f32 / f64 的位重解释需要「同宽位型互释」（U32 ↔ F32），
+// 而当前 `#compile.as` 只做数值转换、无位型重释入口，记为 M2 语言项，
+// 落地后补 le_read_f32 / le_write_f32 / be 同型六件。
+//
+// 有符号族用同宽重释实现（U16 → I16 数值无损）：先按无符号拼装，再一次
+// 转换拿符号。
+
+// ---- 小端 LE（低字节在低地址） ----
+
+public func le_read_u16(buf: [U8], off: USize) -> U16 {
+    let v: U32 = (#compile.as(U32, buf[off])) | (#compile.as(U32, buf[off + 1]) << 8);
+    return #compile.as(U16, v);
+}
+
+public func le_read_u32(buf: [U8], off: USize) -> U32 {
+    let lo: U32 = #compile.as(U32, le_read_u16(buf, off));
+    let hi: U32 = #compile.as(U32, le_read_u16(buf, off + 2));
+    return lo | (hi << 16);
+}
+
+public func le_read_u64(buf: [U8], off: USize) -> U64 {
+    let lo: U32 = le_read_u32(buf, off);
+    let hi: U32 = le_read_u32(buf, off + 4);
+    return (#compile.as(U64, lo)) | (#compile.as(U64, hi) << 32);
+}
+
+public func le_read_i16(buf: [U8], off: USize) -> I16 {
+    return #compile.as(I16, le_read_u16(buf, off));
+}
+
+public func le_read_i32(buf: [U8], off: USize) -> I32 {
+    return #compile.as(I32, le_read_u32(buf, off));
+}
+
+public func le_read_i64(buf: [U8], off: USize) -> I64 {
+    return #compile.as(I64, le_read_u64(buf, off));
+}
+
+public func le_write_u16(buf: [U8], off: USize, v: U16) @mut[buf] {
+    buf[off] = #compile.as(U8, v);
+    buf[off + 1] = #compile.as(U8, v >> 8);
+}
+
+public func le_write_u32(buf: [U8], off: USize, v: U32) @mut[buf] {
+    le_write_u16(buf, off, #compile.as(U16, v));
+    le_write_u16(buf, off + 2, #compile.as(U16, v >> 16));
+}
+
+public func le_write_u64(buf: [U8], off: USize, v: U64) @mut[buf] {
+    le_write_u32(buf, off, #compile.as(U32, v));
+    le_write_u32(buf, off + 4, #compile.as(U32, v >> 32));
+}
+
+public func le_write_i16(buf: [U8], off: USize, v: I16) @mut[buf] {
+    le_write_u16(buf, off, #compile.as(U16, v));
+}
+
+public func le_write_i32(buf: [U8], off: USize, v: I32) @mut[buf] {
+    le_write_u32(buf, off, #compile.as(U32, v));
+}
+
+public func le_write_i64(buf: [U8], off: USize, v: I64) @mut[buf] {
+    le_write_u64(buf, off, #compile.as(U64, v));
+}
+
+// ---- 大端 BE（高字节在低地址） ----
+
+public func be_read_u16(buf: [U8], off: USize) -> U16 {
+    let v: U32 = (#compile.as(U32, buf[off]) << 8) | #compile.as(U32, buf[off + 1]);
+    return #compile.as(U16, v);
+}
+
+public func be_read_u32(buf: [U8], off: USize) -> U32 {
+    let hi: U32 = #compile.as(U32, be_read_u16(buf, off));
+    let lo: U32 = #compile.as(U32, be_read_u16(buf, off + 2));
+    return (hi << 16) | lo;
+}
+
+public func be_read_u64(buf: [U8], off: USize) -> U64 {
+    let hi: U32 = be_read_u32(buf, off);
+    let lo: U32 = be_read_u32(buf, off + 4);
+    return (#compile.as(U64, hi) << 32) | #compile.as(U64, lo);
+}
+
+public func be_read_i16(buf: [U8], off: USize) -> I16 {
+    return #compile.as(I16, be_read_u16(buf, off));
+}
+
+public func be_read_i32(buf: [U8], off: USize) -> I32 {
+    return #compile.as(I32, be_read_u32(buf, off));
+}
+
+public func be_read_i64(buf: [U8], off: USize) -> I64 {
+    return #compile.as(I64, be_read_u64(buf, off));
+}
+
+public func be_write_u16(buf: [U8], off: USize, v: U16) @mut[buf] {
+    buf[off] = #compile.as(U8, v >> 8);
+    buf[off + 1] = #compile.as(U8, v);
+}
+
+public func be_write_u32(buf: [U8], off: USize, v: U32) @mut[buf] {
+    be_write_u16(buf, off, #compile.as(U16, v >> 16));
+    be_write_u16(buf, off + 2, #compile.as(U16, v));
+}
+
+public func be_write_u64(buf: [U8], off: USize, v: U64) @mut[buf] {
+    be_write_u32(buf, off, #compile.as(U32, v >> 32));
+    be_write_u32(buf, off + 4, #compile.as(U32, v));
+}
+
+public func be_write_i16(buf: [U8], off: USize, v: I16) @mut[buf] {
+    be_write_u16(buf, off, #compile.as(U16, v));
+}
+
+public func be_write_i32(buf: [U8], off: USize, v: I32) @mut[buf] {
+    be_write_u32(buf, off, #compile.as(U32, v));
+}
+
+public func be_write_i64(buf: [U8], off: USize, v: I64) @mut[buf] {
+    be_write_u64(buf, off, #compile.as(U64, v));
+}

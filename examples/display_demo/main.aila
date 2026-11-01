@@ -1,0 +1,253 @@
+// 示例 · display_demo：显示栈（L0–L5）在**宿主**上的全链路验收
+//
+// designs/0006 §3：L0–L4 全是纯 AILA、零 runtime，所以整套显示栈能在宿主 `aila run`
+// 直接跑，不需要 OLED。这个示例就是那份「宿主 golden」：
+//
+//   [1] 全/半角占格         —— advance 由字库 widths 决定，绘制逻辑里没有 CJK 判断
+//   [2] 换行 / 行内截断     —— cell 坐标为准，全角字不劈开
+//   [3] cell 级 diff 精度   —— 内容不变 0 脏、单 cell 编辑只脏 1 格、滚动只脏变了的行
+//   [4] 脏页换算            —— damage → SSD1306 页范围（驱动侧逻辑的宿主版，量化局部刷新）
+//   [5] 上屏内容 + 指纹     —— ASCII 预览 + 画布字节的 FNV-1a（逐字节可比）
+//
+// 屏假设：128×64 mono1（16×4 cells），行主序 + 4 字节对齐 → stride 16、整屏 1024 字节。
+//
+// 内存形态（designs/0006 §4.1 第 8 条）：画布 / 网格 / 脏区都在 region 里一次分配，
+// 上层拿到的 `Pixbuf` / `TextGrid` / `Damage` 只是句柄（视图），不持有内存。
+import std.core;
+import std.io;
+import std.pixbuf;
+import std.pixfmt;
+import std.damage;
+import std.paint;
+import std.textgrid;
+import std.display;
+import std.display_host;
+import _.font.font16;          // 点阵字库（tools/genfont.ps1 生成，ASCII 半角 + 汉字全角）
+
+const FB_LEN: USize = 1024;   // 128×64 mono1：16 字节/行 × 64 行
+const SCREEN_W: U16 = 128;
+const SCREEN_H: U16 = 64;
+const GRID_COLS: U16 = 16;
+const GRID_ROWS: U16 = 4;
+
+module {
+    func u(v: USize) -> io.FmtVal {
+        return io.FmtVal.U { v: #compile.as(U64, v) };
+    }
+
+    // dump_grid 把内容模型打成 rows 行文本（空 cell 打 '.'），人眼与 golden 共用
+    func dump_grid(g: textgrid.TextGrid) {
+        var row: U16 = 0;
+        for row < textgrid.rows_of(g) {
+            var col: U16 = 0;
+            for col < textgrid.cols_of(g) {
+                let v: U32 = textgrid.get(g, col, row);
+                if textgrid.cell_w(v) == 0 {
+                    io.print(io.FmtVal.T { v: "." });
+                } else {
+                    io.print(io.FmtVal.C { v: #compile.as(C32, textgrid.cell_cp(v)) });
+                }
+                col = col + 1;
+            }
+            io.println(io.FmtVal.T { v: "" });
+            row = row + 1;
+        }
+    }
+
+    // page_mask 把 damage 换算成 SSD1306 的脏页位图（bit p = 第 p 页脏，8 行 = 1 页）。
+    // 驱动侧（cpacks）用的就是这段逻辑：脏 cell 折成页、脏矩形折成页，两者按位或。
+    // 用位图而不是包围盒，才看得出「散落在多行的小改动」到底要发几页。
+    func page_mask(d: damage.Damage) -> U8 {
+        var m: U8 = 0;
+        var row: U16 = 0;
+        for row < damage.CELL_GRID_ROWS {
+            var col: U16 = 0;
+            for col < damage.CELL_GRID_COLS {
+                if damage.has_cell(d, col, row) {
+                    // cell 高 16 行 = 2 页
+                    m = m | (#compile.as(U8, 3) << #compile.as(U8, row * 2));
+                }
+                col = col + 1;
+            }
+            row = row + 1;
+        }
+        var i: USize = 0;
+        for i < damage.MAX_CLIPS {
+            let r: damage.Rect = damage.clip(d, i);
+            if !r.is_empty() {
+                var p: U16 = r.y0 / 8;
+                let pe: U16 = (r.y1 + 7) / 8;
+                for p < pe {
+                    m = m | (#compile.as(U8, 1) << #compile.as(U8, p));
+                    p = p + 1;
+                }
+            }
+            i = i + 1;
+        }
+        return m;
+    }
+
+    func pages_of(d: damage.Damage) -> USize {
+        var m: U8 = page_mask(d);
+        var n: USize = 0;
+        for m != 0 {
+            n = n + 1;
+            m = m & (m - 1);
+        }
+        return n;
+    }
+
+    // hash_fnv64 算画布字节的 FNV-1a 64：ASCII 预览看形态，这个数看逐字节一致
+    func hash_fnv64(bytes: [U8], n: USize) -> U64 {
+        var h: U64 = 0xCBF29CE484222325;
+        var i: USize = 0;
+        for i < n {
+            h = h ^ #compile.as(U64, bytes[i]);
+            h = h * 0x100000001B3;
+            i = i + 1;
+        }
+        return h;
+    }
+
+    func main() {
+        // 文本放在函数内：模块级 `let X: Text = "…"` 本轮实测是空串（view 出来 len=0），
+        // 已在 designs/0006 §4.1 第 6 条登记；局部 Text 字面量 + view 是可靠形态。
+        let s_mix: Text = "AB温C度D!";
+        let s_l1: Text = "line1";
+        let s_l2: Text = "line2";
+        let s_l3: Text = "line3";
+        let s_cjk: Text = "温度你好";
+        let s_long: Text = "0123456789ABCDEFGHIJ";
+        view b_mix: [U8] = s_mix;
+        view b_l1: [U8] = s_l1;
+        view b_l2: [U8] = s_l2;
+        view b_l3: [U8] = s_l3;
+        view b_cjk: [U8] = s_cjk;
+        view b_long: [U8] = s_long;
+
+        region reg {
+            var fbdata: [U8] = [0; FB_LEN]@reg;
+            var grid_buf: [U32] = [0; textgrid.words(GRID_COLS, GRID_ROWS)]@reg;
+            var dmg_buf: [U32] = [0; damage.WORDS]@reg;
+
+            var pb: pixbuf.Pixbuf = pixbuf.new(fbdata, SCREEN_W, SCREEN_H);
+            let gs: paint.GlyphSet = paint.new_glyph_set(
+                font16.font_cps(), font16.font_bits(), font16.font_widths(),
+                font16.font_count(), font16.font_px_h());
+            var g: textgrid.TextGrid = textgrid.new(grid_buf, GRID_COLS, GRID_ROWS);
+            var d: damage.Damage = damage.new(dmg_buf);
+            var c: display.Commit = display.new_commit(pb, d);
+
+            io.printf("canvas %ux%u stride=%u bytes=%u cells=%ux%u glyphs=%u\n",
+                u(#compile.as(USize, pb.w)), u(#compile.as(USize, pb.h)), u(pixbuf.row_bytes(pb)),
+                u(FB_LEN), u(#compile.as(USize, textgrid.cols_of(g))),
+                u(#compile.as(USize, textgrid.rows_of(g))), u(gs.count));
+
+            // ================= [1] 全/半角占格 =================
+            let aw: U16 = paint.glyph_width(gs, 0x41);       // 'A'
+            let cw: U16 = paint.glyph_width(gs, 0x6E29);     // 温
+            let ew: U16 = paint.glyph_width(gs, 0x4E00);     // 一
+            paint.fill(pb, false);
+            let endcol: U16 = paint.text_cells(pb, gs, b_mix, #comprun.len(b_mix), 0, 0);
+            io.printf("[1] widths: A=%u 温=%u 一=%u | 混排到 cell %u（A1+B1+温2+C1+度2+D1+!1=9）\n",
+                u(#compile.as(USize, aw)), u(#compile.as(USize, cw)), u(#compile.as(USize, ew)),
+                u(#compile.as(USize, endcol)));
+
+            // ================= [2] 换行 / 行内截断 =================
+            textgrid.clear(g);
+            textgrid.put_text(g, gs, b_cjk, #comprun.len(b_cjk));     // 4 个全角 = 8 cells
+            textgrid.put_text(g, gs, b_long, #comprun.len(b_long));   // 20 个半角：补满本行 8 格后换行
+            let (cu1, cu2) = textgrid.cursor(g);
+            io.printf("[2a] wrap: cursor=(%u,%u)\n", u(#compile.as(USize, cu1)), u(#compile.as(USize, cu2)));
+            dump_grid(g);
+
+            textgrid.clear(g);
+            textgrid.put_text(g, gs, b_long, #comprun.len(b_long));   // 20 > 16 cells → 换行 + 截断
+            let (cu3, cu4) = textgrid.cursor(g);
+            io.printf("[2b] truncate: cursor=(%u,%u)\n", u(#compile.as(USize, cu3)), u(#compile.as(USize, cu4)));
+            dump_grid(g);
+
+            // ================= [3] cell 级 diff =================
+            textgrid.clear(g);
+            textgrid.put_text(g, gs, b_l1, #comprun.len(b_l1));
+            textgrid.newline(g);
+            textgrid.put_text(g, gs, b_l2, #comprun.len(b_l2));
+            textgrid.newline(g);
+            textgrid.put_text(g, gs, b_l3, #comprun.len(b_l3));
+            damage.clear(d);
+            textgrid.render_all(g, gs, pb, d);
+            io.printf("[3a] first render: cells=%u pages=%u\n", u(damage.cell_count(d)), u(pages_of(d)));
+
+            damage.clear(d);
+            textgrid.render(g, gs, pb, d);
+            io.printf("[3b] no change   : cells=%u pages=%u\n", u(damage.cell_count(d)), u(pages_of(d)));
+
+            // 只改第 2 行最后一个 cell：应只有那 1 个 cell 脏
+            textgrid.set(g, 15, 1, textgrid.encode(0x21, 1));
+            damage.clear(d);
+            textgrid.render(g, gs, pb, d);
+            io.printf("[3c] one cell    : cells=%u pages=%u\n", u(damage.cell_count(d)), u(pages_of(d)));
+            textgrid.set(g, 15, 1, 0);                       // 还原
+
+            // 滚动：3 行内容整体上移 + 空行
+            textgrid.clear(g);
+            textgrid.put_text(g, gs, b_l1, #comprun.len(b_l1));
+            textgrid.newline(g);
+            textgrid.put_text(g, gs, b_l2, #comprun.len(b_l2));
+            textgrid.newline(g);
+            textgrid.put_text(g, gs, b_l3, #comprun.len(b_l3));
+            damage.clear(d);
+            textgrid.render_all(g, gs, pb, d);
+            io.printf("[3d] pre-scroll : cells=%u pages=%u\n", u(damage.cell_count(d)), u(pages_of(d)));
+            textgrid.scroll_by(g, 1);
+            damage.clear(d);
+            textgrid.render(g, gs, pb, d);
+            io.printf("[3e] scroll(1)  : cells=%u pages=%u（line1→line2 只差末位，滚动不是整屏重发）\n",
+                u(damage.cell_count(d)), u(pages_of(d)));
+
+            // 滚动 + 底部重复同一行 → 只有 2 行真变
+            textgrid.clear(g);
+            textgrid.put_text(g, gs, b_l1, #comprun.len(b_l1));
+            textgrid.newline(g);
+            textgrid.put_text(g, gs, b_l2, #comprun.len(b_l2));
+            textgrid.newline(g);
+            textgrid.put_text(g, gs, b_l3, #comprun.len(b_l3));
+            textgrid.newline(g);
+            textgrid.put_text(g, gs, b_l3, #comprun.len(b_l3));   // 第 3、4 行同内容
+            damage.clear(d);
+            textgrid.render_all(g, gs, pb, d);
+            io.printf("[3f] pre-scroll2: cells=%u pages=%u\n", u(damage.cell_count(d)), u(pages_of(d)));
+            textgrid.scroll_by(g, 1);
+            damage.clear(d);
+            textgrid.render(g, gs, pb, d);
+            io.printf("[3g] scroll rep : cells=%u pages=%u（内容模型：只脏真变了的行）\n",
+                u(damage.cell_count(d)), u(pages_of(d)));
+
+            // ================= [4] 脏页换算 + commit 提交路径 =================
+            c.set_damage(d);
+            let pm: U8 = page_mask(c.damage_of());
+            io.printf("[4] commit: page_mask=%u pages=%u bytes_on_wire=%u（整屏 1024 字节 I2C ≈37ms，单页 ≈5ms）\n",
+                u(#compile.as(USize, pm)), u(pages_of(c.damage_of())), u(pages_of(c.damage_of()) * 128));
+
+            // ================= [5] 上屏内容 + 画布指纹 =================
+            textgrid.clear(g);
+            paint.fill(pb, false);
+            textgrid.put_text(g, gs, b_mix, #comprun.len(b_mix));
+            textgrid.newline(g);
+            textgrid.newline(g);
+            textgrid.put_text(g, gs, b_cjk, #comprun.len(b_cjk));
+            damage.clear(d);
+            textgrid.render(g, gs, pb, d);
+            // 底部分隔线：图形图元画在网格之外，自己记脏
+            paint.hline(pb, 0, 127, 62, true);
+            damage.add_rect(d, damage.rect(0, 62, 128, 63));
+            io.printf("[5] final: cells=%u clips=%u pages=%u fnv64=%u\n",
+                u(damage.cell_count(d)), u(damage.clip_count(d)), u(pages_of(d)),
+                io.FmtVal.U { v: hash_fnv64(fbdata, FB_LEN) });
+            dump_grid(g);
+
+            // 画布的 ASCII 预览（'#' 点亮 / '.' 灭）：golden 里既看得见字形，又逐字节可比
+            display_host.sink_host_ascii(c);
+        }
+    }
+}

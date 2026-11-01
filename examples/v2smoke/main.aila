@@ -1,0 +1,261 @@
+// v2 冒烟 · 错误模型 + match v2（designs/0004 §3-§4）
+//
+// 验证点：
+//   1. `#comprun.error enum Error { ... }` 分片声明（成员可带载荷）
+//   2. `return .Nack;` —— 返回位置错误成员构造（自动装载错误态）
+//   3. `return .NoSpace { need: 8 };` —— 带载荷错误成员构造
+//   4. `?` 上抛 + Error 超集通道（具体错误集上抛进保留空间，含载荷分发拷贝）
+//   5. `let e: Error = .Nack;` —— 带标注绑定的 leading-dot 构造
+//   6. match 类型模式：`let v: U8 =>` / `let e: Error =>`
+//   7. match 变体模式：错误空间成员判别 `.Nack =>` / `.Timeout =>`（leading-dot）
+//
+// 期望输出：
+//   43
+//   err path ok
+//   superset propagate ok
+//   payload coerce ok
+//   caught: Timeout
+//   caught: BusBusy
+//   none hit
+//   ok
+//   select: done 5
+//   select: recv 7
+//   select driver ok
+//   4
+//   4
+//   true
+//   1
+//   16
+//   3
+//   200
+//   5
+//   100000
+import std.io;
+
+// 分片声明：成员进入全局错误空间（Error = 保留超集名）
+#comprun.error enum Error {
+    Nack,
+    Timeout,
+    NoSpace { need: USize },
+};
+
+// 模块自有错误集：具体错误通道（静态文档）
+#runtime.error enum I2cErr {
+    BusBusy,
+};
+
+// 带载荷错误集：跨集上抛验证载荷分发拷贝
+#runtime.error enum IoErr {
+    NoSpace { need: USize },
+};
+
+struct Dev {
+    id: U8,
+};
+
+func read_reg(d: Dev) -> U8 ! Error {
+    if d.id == 0 {
+        return .Nack;
+    }
+    if d.id == 1 {
+        return .NoSpace { need: 8 };
+    }
+    return 42;
+}
+
+// `?` 上抛：Error 超集通道接收（0004 §3.2）
+func caller(d: Dev) -> U8 ! Error {
+    let v = read_reg(d)?;
+    return v + 1;
+}
+
+// 具体错误集 + `?` 上抛进超集：I2cErr 的成员进入 Error 空间
+func bus_probe() -> U8 ! I2cErr {
+    return .BusBusy;
+}
+
+func superset_caller() -> U8 ! Error {
+    let v = bus_probe()?;
+    return v;
+}
+
+// 带载荷错误集 → Error 超集：载荷按 tag 分发拷贝
+func writer() -> U8 ! IoErr {
+    return .NoSpace { need: 16 };
+}
+
+func writer_caller() -> U8 ! Error {
+    let v = writer()?;
+    return v;
+}
+
+// 超集兜底 + 成员判别：变体模式 leading-dot（0004 §3.3）
+// 返回码：0=Nack 1=Timeout 2=其他
+func classify(e: Error) -> U8 ! Error {
+    match e {
+        .Nack    => { return 0; },
+        .Timeout => { return 1; },
+        _        => { return 2; },
+    }
+}
+
+// 可空视图（0004 §5）：Text 是视图族，`Text?` 零 tag（ptr==0 即 None）
+func name_of(id: U8) -> Text? {
+    if id == 0 {
+        return None;
+    }
+    return "ok";
+}
+
+// select 用例协程（0004 §6）：yield 两轮 → 发送 → 完成值 5
+coroutine func feeder(send: send chan I32) -> I32 ! Error {
+    yield;
+    yield;
+    send <- 7;
+    return 5;
+}
+
+// ---- P6（0004 §2.4）：层 API + 运算符回绕 ----
+
+// spawn 共享块：off 0 U32 计数器（线程 fetch_add），off 4 U32 完成标志
+var p6block: [U64; 4] = [0; 4];
+
+thread func bump(times: U32) {
+    view sh: [Unsafe] = p6block;
+    var i: U32 = 0;
+    for i < times {
+        _ = #runtime.atomic_fetch_add32(sh, 0, 1);
+        i = i + 1;
+    }
+    _ = #runtime.atomic_store32(sh, 4, 1);
+}
+
+// select 驱动协程：chan 事件 + coro 事件（声明序 try 链，全不就绪挂起）；
+// coro 事件是「等完成」——绑定值就是完成态（`let v: T` / `let e: E`），
+// `Suspended` / `Done` 两个内建模式已退役（0004 §6 v2）
+coroutine func driver(send: send chan I32, recv: recv chan I32) -> I32 ! Error {
+    region cd {
+        let hf = #runtime.coro(feeder, send);
+        var done: Bool = false;
+        for !done {
+            select {
+                case x = <-recv    => {
+                    done = true;
+                    io.println(io.FmtVal.T { v: "select: recv 7" });
+                },
+                case r = resume hf => {
+                    match r {
+                        let v: I32   => io.println(io.FmtVal.T { v: "select: done 5" }),
+                        let e: Error => {
+                            _ = e;
+                            done = true;
+                        },
+                    }
+                },
+            }
+        }
+    }
+    return 0;
+}
+
+func main() {
+    // 类型模式：`let v: U8` 成功分支 / `let e: Error` 错误兜底分支
+    let a = caller(Dev { id: 7 });
+    match a {
+        let v: U8    => io.println(io.FmtVal.I { v: #compile.as(I64, v) }),
+        let e: Error => io.println(io.FmtVal.T { v: "unexpected err" }),
+    }
+    // 错误路径：`.Nack` 构造 + `?` 上抛 + 类型模式错误分支
+    let b = caller(Dev { id: 0 });
+    match b {
+        let v: U8    => io.println(io.FmtVal.T { v: "unexpected ok" }),
+        let e: Error => io.println(io.FmtVal.T { v: "err path ok" }),
+    }
+    // 跨错误集超集上抛
+    let c = superset_caller();
+    match c {
+        let v: U8    => io.println(io.FmtVal.T { v: "unexpected ok" }),
+        let e: Error => io.println(io.FmtVal.T { v: "superset propagate ok" }),
+    }
+    // 带载荷跨集上抛
+    let d = writer_caller();
+    match d {
+        let v: U8    => io.println(io.FmtVal.T { v: "unexpected ok" }),
+        let e: Error => io.println(io.FmtVal.T { v: "payload coerce ok" }),
+    }
+    // 错误空间成员判别：变体模式 leading-dot（超集值直接 match）
+    let t1 = classify(.Timeout);
+    match t1 {
+        let n: U8 => io.println(io.FmtVal.T { v: "caught: Timeout" }),
+        _         => io.println(io.FmtVal.T { v: "misclassified Timeout" }),
+    }
+    let t2 = classify(.BusBusy);
+    match t2 {
+        let n: U8 => io.println(io.FmtVal.T { v: "caught: BusBusy" }),
+        _         => io.println(io.FmtVal.T { v: "misclassified BusBusy" }),
+    }
+    // 可空视图 match：None 字面量模式 + 非空类型模式（0004 §5）
+    let n = name_of(0);
+    match n {
+        let s: Text => io.println(io.FmtVal.T { v: s }),
+        None        => io.println(io.FmtVal.T { v: "none hit" }),
+    }
+    let m = name_of(7);
+    match m {
+        let s: Text => io.println(io.FmtVal.T { v: s }),
+        None        => io.println(io.FmtVal.T { v: "none hit" }),
+    }
+    // 带标注绑定：期待类型驱动成员解析
+    let e: Error = .Nack;
+    _ = e;
+    // select 驱动（0004 §6 v2）：main 里也能 select——全不就绪就重走 try 链
+    // （等价手写的轮转驱动循环），协程完成时才拿到两态绑定值
+    region rs {
+        let (tx, rx) = #runtime.chan(I32, 4);
+        let hd = #runtime.coro(driver, tx, rx);
+        select {
+            case r = resume hd => {
+                match r {
+                    let v: I32   => { _ = v; },
+                    let e: Error => { _ = e; },
+                }
+            },
+        }
+    }
+    io.println(io.FmtVal.T { v: "select driver ok" });
+
+    // ---- P6：运算符回绕 + checked（0004 §2.4） ----
+    var w: U8 = 250;
+    w = w + 10;                                    // 回绕 → 4（不再 trap）
+    io.println(io.FmtVal.I { v: #compile.as(I64, w) });       // 4
+    let h: U8 = 250;
+    let (cv, ov) = #runtime.checked_add(h, 10);    // (U8, Bool)：(4, true)
+    io.println(io.FmtVal.I { v: #compile.as(I64, cv) });      // 4
+    io.println(io.FmtVal.B { v: ov });             // true
+    // ---- P6：sizeof / len / as ----
+    io.println(io.FmtVal.I { v: #compile.as(I64, #compile.sizeof(Dev)) });      // 1
+    io.println(io.FmtVal.I { v: #compile.as(I64, #compile.sizeof([I32; 4])) }); // 16
+    let arr: [I32; 3] = [1, 2, 3];
+    io.println(io.FmtVal.I { v: #compile.as(I64, #comprun.len(arr)) });         // 3
+    let u: U8 = 200;
+    io.println(io.FmtVal.I { v: #compile.as(I64, #compile.as(I32, u)) });       // 200
+    // ---- P6：#runtime.chan / coro（区域推断取词法最内层 region） ----
+    region rc {
+        let (ttx, trx) = #runtime.chan(I32, 4);
+        let hf = #runtime.coro(feeder, ttx);
+        select {
+            case r = resume hf => {
+                match r {
+                    let v: I32   => io.println(io.FmtVal.I { v: #compile.as(I64, v) }),   // 5
+                    let e: Error => { _ = e; },
+                }
+            },
+        }
+        _ = trx;
+    }
+    // ---- P6：#runtime.spawn + atomic（seq_cst 计数 + 完成标志自旋） ----
+    #runtime.spawn(bump, 100000);
+    view sh6: [Unsafe] = p6block;
+    for #runtime.atomic_load32(sh6, 4) == 0 {}
+    io.println(io.FmtVal.I { v: #compile.as(I64, #runtime.atomic_load32(sh6, 0)) }); // 100000
+}

@@ -1,0 +1,42 @@
+// 示例 7 · variadic：原生变参 `rest: ...T` 视图化（docs/designs/0002 §6）
+//
+// 体内 `rest` 就是 `[T]` 只读视图：for-in / len / 下标全部复用视图机制；
+// 调用点实参数量编译期已知 → 栈上打包传视图，零堆分配。
+//
+// 期望输出：
+//   10
+//   7
+//   a-b-c
+//   13
+import std.io;
+
+func sum(base: I32, rest: ...I32) -> I32 {
+    var s: I32 = base;
+    for v in rest {
+        s = s + v;
+    }
+    return s;
+}
+
+func join(sep: Text, rest: ...Text) {
+    var first: Bool = true;
+    for t in rest {
+        if !first {
+            io.print(io.FmtVal.T { v: sep });
+        }
+        io.print(io.FmtVal.T { v: t });
+        first = false;
+    }
+}
+
+func pick(rest: ...USize) -> USize {
+    return rest[0] + #comprun.len(rest);
+}
+
+func main() {
+    io.println(io.FmtVal.I { v: #compile.as(I64, sum(1, 2, 3, 4)) });   // 10
+    io.println(io.FmtVal.I { v: #compile.as(I64, sum(7)) });            // 7（变参为空也合法）
+    join("-", "a", "b", "c");                             // a-b-c
+    io.println();                                         // 换行
+    io.println(io.FmtVal.U { v: #compile.as(U64, pick(10, 20, 30)) });  // 13 = rest[0] + len(rest)
+}

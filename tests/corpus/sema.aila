@@ -1,5 +1,6 @@
 // corpus: 表达式类型推断（判据 bindings.json）
-enum Color { Red, Green, Blue };
+// 兼任错误通道（tries 的 `! Color`）：标注进全局错误空间
+#runtime.error enum Color { Red, Green, Blue };
 
 enum Cmd { Data { v: I32 }, Eof };
 
@@ -28,21 +29,21 @@ module {
     }
 
     func casts(a: I32, f: F32) -> I32 {
-        let w: I64 = a as I64;
-        let back: I32 = w trunc I32;
-        let g: F64 = f as F64;
-        let t: I32 = g trunc I32;
+        let w: I64 = #compile.as(I64, a);
+        let back: I32 = #compile.as(I32, w);
+        let g: F64 = #compile.as(F64, f);
+        let t: I32 = #compile.as(I32, g);
         return back + t;
     }
 
     func views(buf: [U8], raw: [Unsafe]) @region[r] -> USize {
-        let n: USize = len buf;
+        let n: USize = #comprun.len(buf);
         let first: U8 = buf[0];
         let cpy: [U8] = copy buf @[r];
         let arr: [U8; 4] = [1, 2, 3, 4];
         let dyn: [U8] = [0; 8]@r;
-        let sz: USize = #size(Point);
-        return n + len cpy + (first as USize) + (arr[0] as USize) + len dyn + sz;
+        let sz: USize = #compile.sizeof(Point);
+        return n + #comprun.len(cpy) + #compile.as(USize, first) + #compile.as(USize, arr[0]) + #comprun.len(dyn) + sz;
     }
 
     func lits() -> I32 {
@@ -51,14 +52,14 @@ module {
         let ok: Bool = true;
         let p: Point = Point { x: 1, y: 2 };
         let px: I32 = p.x;
-        return px + (c as I32) + (len t trunc I32);
+        return px + #compile.as(I32, c) + #compile.as(I32, #comprun.len(t));
     }
 
     func m1(c: Color) -> I32 {
         let x: I32 = match c {
-            Color.Red => 1,
-            Color.Green => 2,
-            Color.Blue => 3,
+            .Red => 1,
+            .Green => 2,
+            .Blue => 3,
         };
         return x;
     }
@@ -73,7 +74,7 @@ module {
 
     func m3(p: [U8]?) -> I32 {
         let x: I32 = match p {
-            Some { v } => len v trunc I32,
+            let v: [U8] => #compile.as(I32, #comprun.len(v)),
             None => 0,
         };
         return x;
@@ -81,8 +82,8 @@ module {
 
     func m4(c: Cmd) -> I32 {
         let x: I32 = match c {
-            Cmd.Data { v } => v,
-            Cmd.Eof => 0,
+            .Data { v } => v,
+            .Eof => 0,
         };
         return x;
     }

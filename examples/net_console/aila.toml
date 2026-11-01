@@ -1,0 +1,9 @@
+[package]
+name = "net_console"
+version = "0.1.0"
+entry = "_.main"
+
+[build]
+opt = 1
+# 走 Winsock 就要链 ws2_32（`[build] libs` 是系统库名，AILA 侧不用手写 -l）
+libs = ["ws2_32"]

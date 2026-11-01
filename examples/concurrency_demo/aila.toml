@@ -1,0 +1,8 @@
+[package]
+name = "concurrency_demo"
+version = "0.1.0"
+entry = "_.main"
+
+[build]
+opt = 0
+warnings = "default"

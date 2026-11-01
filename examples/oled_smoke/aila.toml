@@ -1,0 +1,10 @@
+[package]
+name = "oled_smoke"
+version = "0.1.0"
+entry = "_.main"
+
+[target]
+triple = "xtensa-esp8266-elf"
+
+[build]
+opt = 1

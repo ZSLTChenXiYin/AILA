@@ -1,0 +1,170 @@
+// 示例 9 · os_demo：批次 2 宿主四模块验收（designs/0003 §4）
+//
+// os（args / env / file）+ time + rand + path 的确定性演示：
+// 不打印真实时间戳 / 随机数（输出必须可快照对比），改打固定种子下的
+// 关系判定与错误通道。
+//
+// 期望输出：
+//   args_count = 1
+//   args_get(99) -> NotFound
+//   AILA_DEMO = 42
+//   AILA_NOPE_XYZ -> NotFound
+//   file wrote 16 bytes
+//   file read back: hello from aila
+//   file read -> 0 (EOF)
+//   sleep(40) measured ok: true
+//   replay consistent: true
+//   below(10) in range: true
+//   base("a/b/c.txt") = [4, 9)
+//   dir("a/b/c.txt") = [0, 4)
+//   ext("a/b/c.txt") = [6, 9)
+//   ext("a/b/c") = [0, 0)
+//   join("a", "b") = a/b
+//   join("", "b") = b
+//   join("a", "/abs") = /abs
+import std.core;
+import std.io;
+import std.os;
+import std.time;
+import std.rand;
+import std.path;
+
+// show 把 buf[0..n) 原样写上 stdout（视图无切片，拷进等长临时再整段 put）
+func show(buf: [U8], n: USize) @region[r] {
+    if n == 0 {
+        return;
+    }
+    var tmp: [U8] = [0; n]@r;
+    var i: USize = 0;
+    for i < n {
+        tmp[i] = buf[i];
+        i = i + 1;
+    }
+    _ = io.stdout().put(tmp);
+}
+
+func main() {
+    region work {
+        // ---- os：命令行参数（run 不传参时 argc = 1，只含程序名） ----
+        io.printf("args_count = %u\n", io.FmtVal.U { v: #compile.as(U64, os.args_count()) });
+        var ab: [U8] = [0; 64]@work;
+        match os.args_get(99, ab) {
+            let n: USize => { io.printf("unexpected: %u\n", io.FmtVal.U { v: #compile.as(U64, n) }); },
+            let e: core.IoErr => {
+                match e {
+                    .NotFound => { io.println(io.FmtVal.T { v: "args_get(99) -> NotFound" }); },
+                    _ => { io.println(io.FmtVal.T { v: "other" }); },
+                }
+            },
+        }
+
+        // ---- os：环境变量（set 后读回；未设置的报 NotFound） ----
+        match os.env_set("AILA_DEMO", "42") {
+            let n: USize => {
+                var eb: [U8] = [0; 32]@work;
+                match os.env("AILA_DEMO", eb) {
+                    let n: USize => {
+                        io.print(io.FmtVal.T { v: "AILA_DEMO = " });
+                        show(eb, n)@[work];
+                        io.println(io.FmtVal.T { v: "" });
+                    },
+                    let e: core.IoErr => { io.println(io.FmtVal.T { v: "env read failed" }); _ = e; },
+                }
+            },
+            let e: core.IoErr => { io.println(io.FmtVal.T { v: "env_set failed" }); _ = e; },
+        }
+        match os.env("AILA_NOPE_XYZ", ab) {
+            let n: USize => { io.printf("unexpected: %u\n", io.FmtVal.U { v: #compile.as(U64, n) }); },
+            let e: core.IoErr => {
+                match e {
+                    .NotFound => { io.println(io.FmtVal.T { v: "AILA_NOPE_XYZ -> NotFound" }); },
+                    _ => { io.println(io.FmtVal.T { v: "other" }); },
+                }
+            },
+        }
+
+        // ---- os：文件（写创建 → 读回 → EOF；路径相对运行 cwd） ----
+        view msg: [U8] = "hello from aila\n";
+        match os.open("os_demo_tmp.txt", os.MODE_WRONLY) {
+            let f: os.File => {
+                match os.write(f, msg) {
+                    let n: USize => { io.printf("file wrote %u bytes\n", io.FmtVal.U { v: #compile.as(U64, n) }); },
+                    let e: core.IoErr => { io.println(io.FmtVal.T { v: "write failed" }); _ = e; },
+                }
+                os.close(f);
+            },
+            let e: core.IoErr => { io.println(io.FmtVal.T { v: "open w failed" }); _ = e; },
+        }
+        match os.open("os_demo_tmp.txt", os.MODE_RDONLY) {
+            let f: os.File => {
+                var fbuf: [U8] = [0; 32]@work;
+                match os.read(f, fbuf) {
+                    let n: USize => {
+                        io.print(io.FmtVal.T { v: "file read back: " });
+                        show(fbuf, n)@[work];
+                    },
+                    let e: core.IoErr => { io.println(io.FmtVal.T { v: "read failed" }); _ = e; },
+                }
+                match os.read(f, fbuf) {
+                    let n: USize => { io.printf("file read -> %u (EOF)\n", io.FmtVal.U { v: #compile.as(U64, n) }); },
+                    let e: core.IoErr => { io.println(io.FmtVal.T { v: "read2 failed" }); _ = e; },
+                }
+                os.close(f);
+            },
+            let e: core.IoErr => { io.println(io.FmtVal.T { v: "open r failed" }); _ = e; },
+        }
+
+        // ---- time：睡眠前后单调钟差值落在预期区间（输出布尔，不露真实值） ----
+        let t0: U64 = time.mono_ms();
+        time.sleep_ms(40);
+        let dt: U64 = time.mono_ms() - t0;
+        io.printf("sleep(40) measured ok: %b\n", io.FmtVal.B { v: dt >= 40 && dt < 5000 });
+
+        // ---- rand：固定种子重放一致 + below 界内（不露随机数本身） ----
+        var r1: rand.Rand = rand.Rand { s: 42 };
+        let a1: U64 = r1.next_u64();
+        let a2: U64 = r1.next_u64();
+        var r2: rand.Rand = rand.Rand { s: 42 };
+        let b1: U64 = r2.next_u64();
+        let b2: U64 = r2.next_u64();
+        io.printf("replay consistent: %b\n",
+            io.FmtVal.B { v: a1 == b1 && a2 == b2 && a1 != a2 });
+        var inrange: Bool = true;
+        var i: USize = 0;
+        for i < 8 {
+            if r1.below(10) >= 10 {
+                inrange = false;
+            }
+            i = i + 1;
+        }
+        io.printf("below(10) in range: %b\n", io.FmtVal.B { v: inrange });
+
+        // ---- path：段定位与拼接（sep = '/' 的 U8 码值 47） ----
+        var s: USize = 0;
+        var e: USize = 0;
+        (s, e) = path.base("a/b/c.txt", 47);
+        io.printf("base(\"a/b/c.txt\") = [%u, %u)\n",
+            io.FmtVal.U { v: #compile.as(U64, s) }, io.FmtVal.U { v: #compile.as(U64, e) });
+        (s, e) = path.dir("a/b/c.txt", 47);
+        io.printf("dir(\"a/b/c.txt\") = [%u, %u)\n",
+            io.FmtVal.U { v: #compile.as(U64, s) }, io.FmtVal.U { v: #compile.as(U64, e) });
+        (s, e) = path.ext("a/b/c.txt");
+        io.printf("ext(\"a/b/c.txt\") = [%u, %u)\n",
+            io.FmtVal.U { v: #compile.as(U64, s) }, io.FmtVal.U { v: #compile.as(U64, e) });
+        (s, e) = path.ext("a/b/c");
+        io.printf("ext(\"a/b/c\") = [%u, %u)\n",
+            io.FmtVal.U { v: #compile.as(U64, s) }, io.FmtVal.U { v: #compile.as(U64, e) });
+
+        var pbuf: [U8] = [0; 32]@work;
+        var w: USize = path.join("a", "b", 47, pbuf);
+        io.print(io.FmtVal.T { v: "join(\"a\", \"b\") = " });
+        show(pbuf, w)@[work];
+        w = path.join("", "b", 47, pbuf);
+        io.print(io.FmtVal.T { v: "\njoin(\"\", \"b\") = " });
+        show(pbuf, w)@[work];
+        w = path.join("a", "/abs", 47, pbuf);
+        io.print(io.FmtVal.T { v: "\njoin(\"a\", \"/abs\") = " });
+        show(pbuf, w)@[work];
+        io.println(io.FmtVal.T { v: "" });
+    }
+}

@@ -1,0 +1,23 @@
+parse_i64("  -42") = -42
+parse_i64("12x") -> Invalid{at=2}
+parse_i64("9223372036854775808") -> Range
+parse_u64(max) = 18446744073709551615
+parse_f64("2.5e-1") = 0.25
+format_i64(-42) = -42 (3 bytes)
+format_u64(max) = 18446744073709551615 (20 bytes)
+format_f64(0.5) = 0.5
+index("hello, AILA", "AILA") = 7
+contains("hello, AILA", "zzz") = false
+has_prefix("hello", "he") = true  has_suffix("hello", "lo") = true
+len_runes("a中b") = 3  cp_at(1) = 20013  valid = true
+cp_at(越界) = 4294967295 (哨兵)
+bounds("  hi  ") = [2, 4)
+concat -> abc (3, cap 3 截断)
+concat -> abc42 (5)
+split("a,b,c") = 3 段 marks: 0 2 4
+join -> x-y-z (5)
+replace -> a!b!c (5)
+upper -> AILA  lower -> aila
+le/be roundtrip: 1234605616436508552 / 9833440827789222417
+i16 -2 roundtrip = -2
+sort asc: 3 7 9 12   desc: 12 9 7 3

@@ -1,0 +1,128 @@
+﻿// AILA 标准库 · std.os（层 2：仅宿主链接通过）
+//
+// 进程级 OS 边界：命令行参数 / 环境 / 文件 / 退出（designs/0003 §4.2）。
+// 全部实现委托给 runtime/aila_rt.c 的 aila_rt_* 原语；嵌入式工程 import
+// 本模块会在链接期报「std.os 需要 OS target」（缺符号映射提示）。
+//
+// 约定：
+//   - 句柄 U64 = C 侧 FILE* 的整数值，0 = 无效；
+//   - read 的 0 = EOF（合法值，不是错误）；错误通道统一 core.IoErr：
+//     M1 变体有限，读写短操作 / 失败一律 NoSpace { need: 要求量 }，
+//     M2 core.IoErr 接口化时再细分（NotFound / Denied 已就位）。
+import std.core;
+
+// #compile.c 视图参数只传指针不展开长度（与 io.aila 的 aila_rt_write 同约定），
+// 缓冲一律显式跟 *_len / *_cap 参数。
+#compile.c func aila_rt_args_count() -> I64;
+#compile.c func aila_rt_args_get(i: USize, dst: [U8], dst_cap: USize) -> I64;
+#compile.c func aila_rt_env_get(name: [U8], name_len: USize, dst: [U8], dst_cap: USize) -> I64;
+#compile.c func aila_rt_env_set(name: [U8], name_len: USize, val: [U8], val_len: USize) -> I64;
+#compile.c func aila_rt_exit(code: U32);
+#compile.c func aila_rt_file_open(path: [U8], path_len: USize, mode: U32) -> U64;
+#compile.c func aila_rt_file_read(h: U64, dst: [U8], dst_cap: USize) -> I64;
+#compile.c func aila_rt_file_write(h: U64, bytes: [U8], n: USize) -> I64;
+#compile.c func aila_rt_file_close(h: U64);
+#compile.c func aila_rt_file_flush(h: U64);
+
+// 文件打开模式（open 的 mode 实参）
+public const MODE_RDONLY: U32 = 0;
+public const MODE_WRONLY: U32 = 1;
+public const MODE_APPEND: U32 = 2;
+
+// File 是文件句柄；h = 0 表示无效（open 失败不会产出 File，0 只出现在默认值）
+public struct File {
+    h: U64,
+};
+
+// open 按 mode 打开文件：0 只读 / 1 写创建（截断）/ 2 追加
+public func open(path: Text, mode: U32) -> File ! core.IoErr {
+    view pb: [U8] = path;
+    let h: U64 = aila_rt_file_open(pb, #comprun.len(pb), mode);
+    if h == 0 {
+        return .NotFound;
+    }
+    return File { h: h };
+}
+
+// read 读满 buf 能容纳的量，返回字节数（0 = EOF）
+public func read(f: File, buf: [U8]) @mut[buf] -> USize ! core.IoErr {
+    let n: I64 = aila_rt_file_read(f.h, buf, #comprun.len(buf));
+    if n < 0 {
+        return .NoSpace { need: #comprun.len(buf) };
+    }
+    return #compile.as(USize, n);
+}
+
+// write 写 bytes，短写 / 失败报错
+public func write(f: File, bytes: [U8]) -> USize ! core.IoErr {
+    let n: I64 = aila_rt_file_write(f.h, bytes, #comprun.len(bytes));
+    if n < 0 || n != #compile.as(I64, #comprun.len(bytes)) {
+        return .NoSpace { need: #comprun.len(bytes) };
+    }
+    return #compile.as(USize, n);
+}
+
+// close 关闭句柄（句柄随后失效；重复 close 无害）
+public func close(f: File) {
+    aila_rt_file_close(f.h);
+}
+
+// flush 冲洗文件缓冲
+public func flush(f: File) {
+    aila_rt_file_flush(f.h);
+}
+
+// exit 终止进程（先冲洗 stdout）
+public func exit(code: U32) {
+    aila_rt_exit(code);
+}
+
+// env 取环境变量写进 dst：返回完整长度；dst 放不下 = NoSpace（已截断拷贝），
+// 未设置 = NotFound
+public func env(name: Text, dst: [U8]) @mut[dst] -> USize ! core.IoErr {
+    view nb: [U8] = name;
+    let n: I64 = aila_rt_env_get(nb, #comprun.len(nb), dst, #comprun.len(dst));
+    if n < 0 {
+        return .NotFound;
+    }
+    let full: USize = #compile.as(USize, n);
+    if full > #comprun.len(dst) {
+        return .NoSpace { need: full };
+    }
+    return full;
+}
+
+// env_set 设置环境变量（覆盖已有）；成功返回 0，失败 = IoErr
+//（v2 收敛：值类型可空退役（0004 §5），可选错误场景回归 `!` 错误通道）
+public func env_set(name: Text, val: Text) -> USize ! core.IoErr {
+    view nb: [U8] = name;
+    view vb: [U8] = val;
+    let r: I64 = aila_rt_env_set(nb, #comprun.len(nb), vb, #comprun.len(vb));
+    if r != 0 {
+        return .NoSpace { need: 0 };
+    }
+    return 0;
+}
+
+// args_count 命令行参数个数（含程序名；未转存时 0）
+public func args_count() -> USize {
+    let n: I64 = aila_rt_args_count();
+    if n < 0 {
+        return 0;
+    }
+    return #compile.as(USize, n);
+}
+
+// args_get 取第 i 个参数写进 dst：返回完整长度；dst 放不下 = NoSpace
+// （已截断拷贝），越界 = NotFound
+public func args_get(i: USize, dst: [U8]) @mut[dst] -> USize ! core.IoErr {
+    let n: I64 = aila_rt_args_get(i, dst, #comprun.len(dst));
+    if n < 0 {
+        return .NotFound;
+    }
+    let full: USize = #compile.as(USize, n);
+    if full > #comprun.len(dst) {
+        return .NoSpace { need: full };
+    }
+    return full;
+}

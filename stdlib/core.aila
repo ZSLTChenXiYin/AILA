@@ -1,0 +1,111 @@
+// AILA 标准库 · std.core
+//
+// 纯度三线的第①线（designs/0002 §1）：本模块 100% AILA，零 #compile.c 绑定、
+// 零 OS 依赖——fill 引擎只往调用方给的缓冲区里写字节，输出到哪由上层决定。
+//
+// fill_* 一族返回写入的字节数；缓冲区按调用方 region 分配，函数只借用
+// （@mut[buf]），不持有。
+
+// io 域的错误词表（designs/0002 §3；批次 2 扩 NotFound / Denied，designs/0003 §4.2）。
+// M1 的 write 槽位暂不携带错误通道，接口化（M2）时升级为 `-> USize ! IoErr`。
+// NoSpace 统一承载「短操作 / 放不下」（need = 要求量）；NotFound / Denied
+// 由 std.os 的资源寻址失败使用。
+#runtime.error public enum IoErr { Closed, NoSpace { need: USize }, Timeout, NotFound, Denied };
+
+// fill_u64 把 v 的十进制数字写进 buf[0..n)，返回位数。
+public func fill_u64(v: U64, buf: [U8]) @mut[buf] -> USize {
+    var x: U64 = v;
+    var n: USize = 1;
+    for !(x < 10) {
+        x = x / 10;
+        n = n + 1;
+    }
+    // 从末尾往前填（AILA 没有指针偏移，所以先算位数再倒着写）
+    var y: U64 = v;
+    var i: USize = n;
+    for !(i == 0) {
+        i = i - 1;
+        let d: U64 = y % 10;
+        buf[i] = #compile.as(U8, #compile.as(U32, d) + 48);
+        y = y / 10;
+    }
+    return n;
+}
+
+// fill_i64 处理符号；负数在 I64 里取反（避开 I32 的 MIN 陷阱）。
+public func fill_i64(v: I64, buf: [U8]) @mut[buf] -> USize {
+    if v < 0 {
+        let mag: U64 = #compile.as(U64, 0 - v);
+        let n: USize = fill_u64(mag, buf) + 1;
+        var k: USize = n;
+        for !(k == 1) {
+            k = k - 1;
+            buf[k] = buf[k - 1];
+        }
+        buf[0] = 45;
+        return n;
+    }
+    return fill_u64(#compile.as(U64, v), buf);
+}
+
+// fill_f64 写「[符号]整数.小数」，小数最多 6 位并去尾零（全零则连点省略）。
+// 嵌入式场景够用且完全可移植；不经过 libc 的 printf。
+public func fill_f64(v: F64, buf: [U8]) @mut[buf] -> USize {
+    var w: F64 = v;
+    var pos: USize = 0;
+    if w < 0.0 {
+        buf[0] = 45;
+        pos = 1;
+        w = 0.0 - w;
+    }
+    let ipi: I64 = #compile.as(I64, w);
+    let ip: U64 = #compile.as(U64, ipi);
+    let nd: USize = digits_u64(ip);
+    // 整数部分倒着填进 buf[pos..pos+nd)
+    var y: U64 = ip;
+    var i: USize = pos + nd;
+    for !(i == pos) {
+        i = i - 1;
+        let d: U64 = y % 10;
+        buf[i] = #compile.as(U8, #compile.as(U32, d) + 48);
+        y = y / 10;
+    }
+    let frac: F64 = w - (#compile.as(F64, ip));
+    if frac > 0.0 {
+        // 小数部分先写到点号位之后，再裁尾零
+        var digits: USize = 0;
+        var f: F64 = frac;
+        for digits < 6 {
+            f = f * 10.0;
+            let d: U32 = #compile.as(U32, f);
+            buf[pos + nd + 1 + digits] = #compile.as(U8, d + 48);
+            digits = digits + 1;
+            f = f - (#compile.as(F64, d));
+        }
+        var last: USize = digits;
+        for last > 0 {
+            if buf[pos + nd + last] != 48 {
+                break;
+            }
+            last = last - 1;
+        }
+        if last > 0 {
+            buf[pos + nd] = 46;
+            return pos + nd + 1 + last;
+        }
+    }
+    return pos + nd;
+}
+
+// utf8 编解码在 std.utf8（批次 1 迁出，designs/0003 §3.3）。
+
+// digits_u64 返回 v 的十进制位数（0 是 1 位）。
+func digits_u64(v: U64) -> USize {
+    var x: U64 = v;
+    var n: USize = 1;
+    for !(x < 10) {
+        x = x / 10;
+        n = n + 1;
+    }
+    return n;
+}

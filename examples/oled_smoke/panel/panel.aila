@@ -1,0 +1,190 @@
+// 子包 · panel —— SSD1306 驱动的 AILA 侧（显示栈 L6）
+//
+// designs/0006 §2.2 的 L6：**只做传输**。所有绘制都在 std.paint / std.textgrid 里完成，
+// 本子包只做两件事：
+//   1. 把 C 侧（cpacks/ssd1306）的薄边界声明成 AILA 可调用的函数；
+//   2. 把 `display.Commit` 的 damage 换算成 SSD1306 的页寻址窗口（pages × columns）——
+//      这是驱动最核心的一步（designs/0006 §4.1 第 3 条：SSD1306 忽略水平寻址）。
+//
+// IoC 方向：本模块 import std.display / std.damage 并调它们；std 侧不知道设备存在。
+import std.pixbuf;
+import std.damage;
+import std.display;
+
+// ---- C 边界（cpacks/ssd1306/ssd1306.c）----
+#compile.c func oled_init(scl: U32, sda: U32) -> U32;
+#compile.c func oled_cmd(b: U8);
+#compile.c func oled_bind(fb: [U8]);
+#compile.c func oled_stride(n: U32);
+#compile.c func oled_present(p0: U32, p1: U32, c0: U32, c1: U32);
+#compile.c func oled_nack() -> U32;
+#compile.c func oled_bytes() -> U32;
+#compile.c func dbg_mark(v: U32);
+
+// PAGE_ROWS = 一页覆盖的行数（SSD1306 页寻址的最小单位）
+public const PAGE_ROWS: U16 = 8;
+// PANEL_PAGES = 128×64 屏的页数
+public const PANEL_PAGES: U16 = 8;
+
+// init 初始化两根线并探地址，返回 1 = 屏在线
+public func init(scl: U32, sda: U32) -> U32;
+// bind 绑定行主序画布（指针只传一次）+ 行跨度
+public func bind(fb: [U8], stride: U32);
+// page_dirty 判断第 p 页是否脏（cell 位图折页 ∪ clip 相交）
+public func page_dirty(d: damage.Damage, p: U16) -> Bool;
+// page_cols 返回第 p 页脏区的列范围 (c0, c1)（半开；无脏区 = (0,0)）
+public func page_cols(d: damage.Damage, p: U16) -> (U16, U16);
+// pages 返回脏页数（诊断用）
+public func pages(d: damage.Damage) -> U16;
+// present 按 commit 的 damage 逐脏页下发（唯一推送通道）
+public func present(c: display.Commit);
+// present_all 整屏下发（首次上屏 / 屏被外部改动）
+public func present_all();
+// nack / sent_bytes / mark 诊断三件套
+public func nack() -> U32;
+public func sent_bytes() -> U32;
+public func mark(v: U32);
+// cmd 下发一条 SSD1306 命令（初始化序列用）
+public func cmd(b: U8);
+
+module {
+    public func init(scl: U32, sda: U32) -> U32 {
+        return oled_init(scl, sda);
+    }
+
+    public func bind(fb: [U8], stride: U32) {
+        oled_bind(fb);
+        oled_stride(stride);
+    }
+
+    public func page_dirty(d: damage.Damage, p: U16) -> Bool {
+        if p >= PANEL_PAGES {
+            return false;
+        }
+        // ① 命中该页的 cell（cell 高 16 行 = 2 页）
+        let cell_row: U16 = p / 2;
+        var col: U16 = 0;
+        for col < #compile.as(U16, damage.CELL_GRID_COLS) {
+            if damage.has_cell(d, col, cell_row) {
+                return true;
+            }
+            col = col + 1;
+        }
+        // ② 与该页相交的 clip
+        let y0: U16 = p * PAGE_ROWS;
+        let y1: U16 = y0 + PAGE_ROWS;
+        var i: USize = 0;
+        for i < damage.MAX_CLIPS {
+            let r: damage.Rect = damage.clip(d, i);
+            if !r.is_empty() {
+                if r.y0 < y1 && r.y1 > y0 {
+                    return true;
+                }
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+
+    public func page_cols(d: damage.Damage, p: U16) -> (U16, U16) {
+        if !page_dirty(d, p) {
+            return (0, 0);
+        }
+        let cw: U16 = #compile.as(U16, pixbuf.CELL_W);
+        var lo: U16 = 0xFFFF;
+        var hi: U16 = 0;
+        var found: Bool = false;
+        // ① cell 位图：一个 cell 占 8 列
+        let cell_row: U16 = p / 2;
+        var col: U16 = 0;
+        for col < #compile.as(U16, damage.CELL_GRID_COLS) {
+            if damage.has_cell(d, col, cell_row) {
+                let a: U16 = col * cw;
+                let b: U16 = a + cw;
+                if a < lo {
+                    lo = a;
+                }
+                if b > hi {
+                    hi = b;
+                }
+                found = true;
+            }
+            col = col + 1;
+        }
+        // ② clip：取与该页相交者
+        let y0: U16 = p * PAGE_ROWS;
+        let y1: U16 = y0 + PAGE_ROWS;
+        var i: USize = 0;
+        for i < damage.MAX_CLIPS {
+            let r: damage.Rect = damage.clip(d, i);
+            if !r.is_empty() {
+                if r.y0 < y1 && r.y1 > y0 {
+                    if r.x0 < lo {
+                        lo = r.x0;
+                    }
+                    if r.x1 > hi {
+                        hi = r.x1;
+                    }
+                    found = true;
+                }
+            }
+            i = i + 1;
+        }
+        if !found {
+            return (0, 0);
+        }
+        if lo > hi {
+            return (0, 0);
+        }
+        return (lo, hi);
+    }
+
+    public func pages(d: damage.Damage) -> U16 {
+        var n: U16 = 0;
+        var p: U16 = 0;
+        for p < PANEL_PAGES {
+            if page_dirty(d, p) {
+                n = n + 1;
+            }
+            p = p + 1;
+        }
+        return n;
+    }
+
+    public func present(c: display.Commit) {
+        let d: damage.Damage = c.damage_of();
+        var p: U16 = 0;
+        for p < PANEL_PAGES {
+            if page_dirty(d, p) {
+                let (c0, c1) = page_cols(d, p);
+                if c1 > c0 {
+                    oled_present(
+                        #compile.as(U32, p), #compile.as(U32, p + 1),
+                        #compile.as(U32, c0), #compile.as(U32, c1));
+                }
+            }
+            p = p + 1;
+        }
+    }
+
+    public func present_all() {
+        oled_present(0, 8, 0, 128);
+    }
+
+    public func nack() -> U32 {
+        return oled_nack();
+    }
+
+    public func sent_bytes() -> U32 {
+        return oled_bytes();
+    }
+
+    public func mark(v: U32) {
+        dbg_mark(v);
+    }
+
+    // cmd 是给 main 用的初始化序列下发口
+    public func cmd(b: U8) {
+        oled_cmd(b);
+    }
+}

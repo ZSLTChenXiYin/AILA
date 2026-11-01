@@ -1,0 +1,293 @@
+// AILA 标准库 · std.strings
+//
+// 批次 1（designs/0003 §3.2）：UTF-8 文本的零分配查询 + 调用方缓冲构造。
+// Text 没有运行时构造路径（§3.1 语言查证），构造族一律写进 out 缓冲并返回
+// **实际写入字节数**；容量不足时写满即止（截断不报错，返回值 = min(需要量, len out)）。
+//
+// 区间族（bounds/base 类）返回 [start, end) 字节下标二元组，零拷贝——
+// 调用方按 [start, end) 遍历原文本即可，不产生新对象。
+import std.utf8;
+
+// ---- 查询（零分配） ----
+
+// len_runes 返回 UTF-8 码点数（非法序列按 1 字节 1 码点跳过）。
+public func len_runes(t: Text) -> USize {
+    view b: [U8] = t;
+    let n: USize = #comprun.len(b);
+    var i: USize = 0;
+    var count: USize = 0;
+    for i < n {
+        var step: USize = utf8.rune_len(b[i]);
+        if step == 0 {
+            step = 1;
+        }
+        i = i + step;
+        count = count + 1;
+    }
+    return count;
+}
+
+// index 返回 sub 在 t 中首次出现的字节下标；没有则返回 len t（哨兵）。
+// 空子串恒出现在 0。
+public func index(t: Text, sub: Text) -> USize {
+    view b: [U8] = t;
+    view s: [U8] = sub;
+    let n: USize = #comprun.len(b);
+    let m: USize = #comprun.len(s);
+    if m == 0 {
+        return 0;
+    }
+    if m > n {
+        return n;
+    }
+    var i: USize = 0;
+    for i <= n - m {
+        var j: USize = 0;
+        var ok: Bool = true;
+        for j < m {
+            if b[i + j] != s[j] {
+                ok = false;
+                break;
+            }
+            j = j + 1;
+        }
+        if ok {
+            return i;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+// contains 判断 t 是否包含 sub。
+public func contains(t: Text, sub: Text) -> Bool {
+    view b: [U8] = t;
+    return index(t, sub) != #comprun.len(b);
+}
+
+// has_prefix 判断 t 是否以 p 开头。
+public func has_prefix(t: Text, p: Text) -> Bool {
+    view b: [U8] = t;
+    view s: [U8] = p;
+    let m: USize = #comprun.len(s);
+    if m > #comprun.len(b) {
+        return false;
+    }
+    var i: USize = 0;
+    for i < m {
+        if b[i] != s[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// has_suffix 判断 t 是否以 s 结尾。
+public func has_suffix(t: Text, s: Text) -> Bool {
+    view b: [U8] = t;
+    view x: [U8] = s;
+    let n: USize = #comprun.len(b);
+    let m: USize = #comprun.len(x);
+    if m > n {
+        return false;
+    }
+    var i: USize = 0;
+    for i < m {
+        if b[n - m + i] != x[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// bounds 去掉首尾 ASCII 空白（\t \n \v \f \r 空格），返回内容的
+// [start, end) 字节区间；空文本 / 全空白 = (0, 0)。
+public func bounds(t: Text) -> (USize, USize) {
+    view b: [U8] = t;
+    let n: USize = #comprun.len(b);
+    var start: USize = 0;
+    for start < n {
+        let c: U8 = b[start];
+        if c == 9 || c == 10 || c == 11 || c == 12 || c == 13 || c == 32 {
+            start = start + 1;
+        } else {
+            break;
+        }
+    }
+    var end: USize = n;
+    for end > start {
+        let c: U8 = b[end - 1];
+        if c == 9 || c == 10 || c == 11 || c == 12 || c == 13 || c == 32 {
+            end = end - 1;
+        } else {
+            break;
+        }
+    }
+    if start == end {
+        return (0, 0);
+    }
+    return (start, end);
+}
+
+// ---- 构造（写进 buf 缓冲，容量不足截断） ----
+
+// concat 把 a、b 首尾相接写进 buf。
+public func concat(a: Text, b: Text, buf: [U8]) @mut[buf] -> USize {
+    let cap: USize = #comprun.len(buf);
+    var w: USize = 0;
+    view ab: [U8] = a;
+    w = blit(buf, w, cap, ab);
+    view bb: [U8] = b;
+    w = blit(buf, w, cap, bb);
+    return w;
+}
+
+// split 用 sep 切 t，把每段起始字节偏移写进 marks（按容量截断），
+// 返回**完整段数**（marks 满了后续偏移丢弃）。空文本 = 1 段（偏移 0）。
+// 结尾 sep 也产生一个空尾段（"a," → 2 段）。
+public func split(t: Text, sep: U8, marks: [USize]) @mut[marks] -> USize {
+    view b: [U8] = t;
+    let n: USize = #comprun.len(b);
+    let cap: USize = #comprun.len(marks);
+    if cap > 0 {
+        marks[0] = 0;
+    }
+    var count: USize = 1;
+    var i: USize = 0;
+    for i < n {
+        if b[i] == sep {
+            if count < cap {
+                marks[count] = i + 1;
+            }
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    return count;
+}
+
+// join 把各段用 sep 连接写进 buf，返回写入字节数。
+// 变参必须末位（language.md §4），所以 buf / sep 在前、parts 收尾。
+public func join(buf: [U8], sep: U8, parts: ...Text) @mut[buf] -> USize {
+    let cap: USize = #comprun.len(buf);
+    var w: USize = 0;
+    var first: Bool = true;
+    for p in parts {
+        if !first {
+            if w < cap {
+                buf[w] = sep;
+                w = w + 1;
+            }
+        }
+        first = false;
+        view pb: [U8] = p;
+        w = blit(buf, w, cap, pb);
+    }
+    return w;
+}
+
+// replace 把 t 中所有 from 出现替换为 to 后写进 buf，返回写入字节数。
+// from 为空 = 原样拷贝（M1 不做 Go 的逐位置插入）。
+public func replace(t: Text, from: Text, to: Text, buf: [U8]) @mut[buf] -> USize {
+    let cap: USize = #comprun.len(buf);
+    view b: [U8] = t;
+    view f: [U8] = from;
+    let n: USize = #comprun.len(b);
+    let m: USize = #comprun.len(f);
+    var w: USize = 0;
+    if m == 0 {
+        w = blit(buf, w, cap, b);
+        return w;
+    }
+    var i: USize = 0;
+    for i < n {
+        var ok: Bool = false;
+        if i + m <= n {
+            ok = true;
+            var j: USize = 0;
+            for j < m {
+                if b[i + j] != f[j] {
+                    ok = false;
+                    break;
+                }
+                j = j + 1;
+            }
+        }
+        if ok {
+            view tb: [U8] = to;
+            w = blit(buf, w, cap, tb);
+            i = i + m;
+        } else {
+            if w < cap {
+                buf[w] = b[i];
+                w = w + 1;
+            }
+            i = i + 1;
+        }
+    }
+    return w;
+}
+
+// upper_ascii 把 a-z 拷成大写写进 buf（多字节序列原样透传）。
+public func upper_ascii(t: Text, buf: [U8]) @mut[buf] -> USize {
+    let cap: USize = #comprun.len(buf);
+    view b: [U8] = t;
+    let n: USize = #comprun.len(b);
+    var w: USize = 0;
+    var i: USize = 0;
+    for i < n {
+        if w == cap {
+            return w;
+        }
+        var c: U8 = b[i];
+        if c >= 97 && c <= 122 {
+            c = c - 32;
+        }
+        buf[w] = c;
+        w = w + 1;
+        i = i + 1;
+    }
+    return w;
+}
+
+// lower_ascii 把 A-Z 拷成小写写进 buf（多字节序列原样透传）。
+public func lower_ascii(t: Text, buf: [U8]) @mut[buf] -> USize {
+    let cap: USize = #comprun.len(buf);
+    view b: [U8] = t;
+    let n: USize = #comprun.len(b);
+    var w: USize = 0;
+    var i: USize = 0;
+    for i < n {
+        if w == cap {
+            return w;
+        }
+        var c: U8 = b[i];
+        if c >= 65 && c <= 90 {
+            c = c + 32;
+        }
+        buf[w] = c;
+        w = w + 1;
+        i = i + 1;
+    }
+    return w;
+}
+
+// ---- 模块私有小件 ----
+
+// blit 把 src 尽量写进 dst[w..cap)，返回新的写入位置（写满即停）。
+func blit(dst: [U8], w: USize, cap: USize, src: [U8]) @mut[dst] -> USize {
+    var k: USize = 0;
+    var at: USize = w;
+    let n: USize = #comprun.len(src);
+    for k < n {
+        if at == cap {
+            return at;
+        }
+        dst[at] = src[k];
+        at = at + 1;
+        k = k + 1;
+    }
+    return at;
+}

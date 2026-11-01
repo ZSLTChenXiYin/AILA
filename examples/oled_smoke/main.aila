@@ -1,0 +1,165 @@
+// 示例 · oled_smoke：裸机（无 SDK）128×64 I2C OLED 上的**显示栈终端**
+//
+// 这一版不再是「手写帧缓冲 + 整屏重发」，而是 designs/0006 那套分层的真实用法：
+//
+//   std.pixbuf   → 行主序画布（128×64 mono1，stride 16）
+//   std.paint    → 点阵绘制（字库位图 → 像素）
+//   std.textgrid → 4 行滚动终端（内容模型 + cell 级 diff）
+//   std.damage   → 脏区（cell 位图 + clip，句柄 + 区域内存）
+//   std.display  → Commit（唯一推送通道）
+//   panel        → L6 驱动胶水：damage → SSD1306 页寻址窗口
+//
+// **设备选择零运行期分派**：`const DISPLAY` + `#compile.match` 在编译期剪掉其它驱动分支
+//（designs/0006 §2.6）。没被选中的驱动模块连符号都不会出现在固件里（配合 --gc-sections）。
+//
+// 板上自证（UART0 115200 8N1）：
+//   开机 `oled: i2c=1 fonts=292 cells=16x4`
+//   每帧 `hb=n cells=k pg=p nz=m`（VERBOSE=true 时）
+//     cells = 本次脏 cell 数；pg = 本次只刷几页（整屏 8 页 = 1024B ≈37ms；一行文字 2 页 ≈5ms）
+//     nz = 画布中被点亮的字节数（=0 说明没画进去）
+//
+// 编译：aila build examples/oled_smoke --triple xtensa-esp8266-elf
+// 烧写：pwsh -File tools/esp-flash.ps1 -Mode oled        # 裸机镜像烧 0x0
+import std.core;
+import std.io;
+import std.time;
+import std.pixbuf;
+import std.pixfmt;
+import std.damage;
+import std.paint;
+import std.textgrid;
+import std.display;
+import _.font.font16;              // 点阵字库（tools/genfont.ps1：ASCII 半角 + 汉字全角）
+import _.panel.panel;             // SSD1306 驱动胶水（L6）
+import cc _.cpacks.ssd1306;       // 软件 I2C + 页寻址写（C 侧薄边界）
+
+const PIN_SCL: U32 = 5;           // D1
+const PIN_SDA: U32 = 4;           // D2
+const FB_LEN: USize = 1024;       // 128×64 mono1：16 字节/行 × 64 行
+const SCREEN_W: U16 = 128;
+const SCREEN_H: U16 = 64;
+const GRID_COLS: U16 = 16;
+const GRID_ROWS: U16 = 4;
+// 设备选择：1 = ssd1306_i2c（本示例），2 = 留给 M2 的第二块屏
+const DISPLAY: U8 = 1;
+// VERBOSE：每帧 UART 诊断日志。编译期常量 → `#compile.if` 在编译期整段剪掉
+// （designs/0006 §1；关掉后固件里连格式串都不存在，不是运行期 if）
+const VERBOSE: Bool = true;
+
+module {
+    // SSD1306 初始化序列（0xAE 关屏 … 0xAF 开屏）
+    let INIT_CMDS: [U8; 26] = [
+        0xAE, 0xD5, 0x80, 0xA8, 0x3F, 0xD3, 0x00, 0x40, 0x8D, 0x14,
+        0x20, 0x00, 0xA1, 0xC8, 0xDA, 0x12, 0x81, 0xCF, 0xD9, 0xF1,
+        0xDB, 0x40, 0xA4, 0xA6, 0x2E, 0xAF,
+    ];
+
+    func u(v: USize) -> io.FmtVal {
+        return io.FmtVal.U { v: #compile.as(U64, v) };
+    }
+
+    // nonzero 数画布里有几个非零字节（诊断：0 = 什么都没画进去）
+    func nonzero(fb: [U8]) -> USize {
+        var n: USize = 0;
+        var i: USize = 0;
+        for i < FB_LEN {
+            if fb[i] != 0 {
+                n = n + 1;
+            }
+            i = i + 1;
+        }
+        return n;
+    }
+
+    // put_line 把一行文本写进终端（Text 字面量只能在函数内转视图：
+    // 模块级 Text 常量本轮实测为空串，见 designs/0006 §4.1 第 6 条）
+    func put_line(g: textgrid.TextGrid, gs: paint.GlyphSet, t: Text) @mut[g] {
+        view b: [U8] = t;
+        textgrid.put_text(g, gs, b, #comprun.len(b));
+    }
+
+    // 依次喂给终端的六行内容（每次循环追加一行，滚上去）
+    func feed(g: textgrid.TextGrid, gs: paint.GlyphSet, idx: U32) @mut[g] {
+        if idx % 6 == 0 {
+            put_line(g, gs, "AILA 显示栈");
+        } else if idx % 6 == 1 {
+            put_line(g, gs, "pixbuf 行主序");
+        } else if idx % 6 == 2 {
+            put_line(g, gs, "textgrid 滚动");
+        } else if idx % 6 == 3 {
+            put_line(g, gs, "damage 局部刷新");
+        } else if idx % 6 == 4 {
+            put_line(g, gs, "ESP8266 80MHz");
+        } else {
+            put_line(g, gs, "ssd1306 page-mode");
+        }
+        textgrid.newline(g);
+    }
+
+    func run_panel() {
+        let ok: U32 = panel.init(PIN_SCL, PIN_SDA);
+        var k: USize = 0;
+        for k < #comprun.len(INIT_CMDS) {
+            panel.cmd(INIT_CMDS[k]);
+            k = k + 1;
+        }
+        let gs: paint.GlyphSet = paint.new_glyph_set(
+            font16.font_cps(), font16.font_bits(), font16.font_widths(),
+            font16.font_count(), font16.font_px_h());
+
+        region reg {
+            var fbdata: [U8] = [0; FB_LEN]@reg;
+            var grid_buf: [U32] = [0; textgrid.words(GRID_COLS, GRID_ROWS)]@reg;
+            var dmg_buf: [U32] = [0; damage.WORDS]@reg;
+            var pb: pixbuf.Pixbuf = pixbuf.new(fbdata, SCREEN_W, SCREEN_H);
+            var g: textgrid.TextGrid = textgrid.new(grid_buf, GRID_COLS, GRID_ROWS);
+            var d: damage.Damage = damage.new(dmg_buf);
+            var c: display.Commit = display.new_commit(pb, d);
+            panel.bind(fbdata, #compile.as(U32, pb.stride));
+
+            io.printf("oled: i2c=%u fonts=%u cells=%ux%u\n",
+                io.FmtVal.U { v: #compile.as(U64, ok) },
+                u(gs.count), u(#compile.as(USize, textgrid.cols_of(g))),
+                u(#compile.as(USize, textgrid.rows_of(g))));
+
+            // 自证第一关：整屏全白 → 全黑（I2C + 页寻址 + 位搬运整条链通）
+            paint.fill(pb, true);
+            panel.present_all();
+            time.sleep_ms(500);
+            paint.fill(pb, false);
+            panel.present_all();
+            time.sleep_ms(200);
+
+            // 第二关：4 行滚动终端，逐帧局部刷新
+            var idx: U32 = 0;
+            var hb: U32 = 0;
+            for {
+                feed(g, gs, idx);
+                damage.clear(d);
+                textgrid.render(g, gs, pb, d);
+                c.set_damage(d);
+                panel.present(c);
+
+                #compile.if VERBOSE {
+                    io.printf("hb=%u cells=%u pg=%u nz=%u\n",
+                        io.FmtVal.U { v: #compile.as(U64, hb) },
+                        u(damage.cell_count(d)),
+                        u(#compile.as(USize, panel.pages(d))),
+                        u(nonzero(fbdata)));
+                }
+                panel.mark(hb);
+                idx = idx + 1;
+                hb = hb + 1;
+                time.sleep_ms(1200);
+            }
+        }
+    }
+
+    func main() {
+        // 编译期设备选择：只有被选中的分支进固件（其余分支仍完整类型检查）
+        #compile.match DISPLAY {
+            1 => run_panel(),
+            _ => {},
+        }
+    }
+}

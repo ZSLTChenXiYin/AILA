@@ -1,0 +1,119 @@
+// AILA 标准库 · std.utf8
+//
+// 批次 1（designs/0003 §3.3）：UTF-8 编码 / 解码的纯 AILA 实现。
+// encode 自 std.core 迁入（core 不再持有该函数，std.io 改调本模块）。
+//
+// 哨兵约定：rune_len 对非法首字节返回 0；cp_at 对非法 / 截断 / 越界序列
+// 返回 0xFFFFFFFF——U32 标量暂无 Optional（T? 仅句柄类），M1 用哨兵。
+// valid 只做**结构性**校验（续字节形态、无截断），不查超长编码、
+// 代理区与 > U+10FFFF（M2 与 Unicode 词表一起收紧）。
+
+// encode 把码点编成 UTF-8 写进 buf（需 ≥ 4 字节），返回 1..4。
+public func encode(cp: U32, buf: [U8]) @mut[buf] -> USize {
+    if cp < 128 {
+        buf[0] = #compile.as(U8, cp);
+        return 1;
+    }
+    if cp < 2048 {
+        buf[0] = #compile.as(U8, 192 + (cp >> 6));
+        buf[1] = #compile.as(U8, 128 + (cp & 63));
+        return 2;
+    }
+    if cp < 65536 {
+        buf[0] = #compile.as(U8, 224 + (cp >> 12));
+        buf[1] = #compile.as(U8, 128 + ((cp >> 6) & 63));
+        buf[2] = #compile.as(U8, 128 + (cp & 63));
+        return 3;
+    }
+    buf[0] = #compile.as(U8, 240 + (cp >> 18));
+    buf[1] = #compile.as(U8, 128 + ((cp >> 12) & 63));
+    buf[2] = #compile.as(U8, 128 + ((cp >> 6) & 63));
+    buf[3] = #compile.as(U8, 128 + (cp & 63));
+    return 4;
+}
+
+// rune_len 由首字节给出序列长度：1 / 2 / 3 / 4；
+// 非法首字节（0x80..0xBF 续字节、0xF8..0xFF）返回 0。
+public func rune_len(first: U8) -> USize {
+    if first < 128 {
+        return 1;
+    }
+    if first < 192 {
+        return 0;
+    }
+    if first < 224 {
+        return 2;
+    }
+    if first < 240 {
+        return 3;
+    }
+    if first < 248 {
+        return 4;
+    }
+    return 0;
+}
+
+// cp_at 解码 t 中字节下标 i 处的码点；非法（续字节开头 / 截断 / 越界 /
+// 续字节形态不对）返回 0xFFFFFFFF 哨兵。
+public func cp_at(t: Text, i: USize) -> U32 {
+    view b: [U8] = t;
+    let n: USize = #comprun.len(b);
+    if i >= n {
+        return 0xFFFFFFFF;
+    }
+    let c0: U32 = #compile.as(U32, b[i]);
+    if c0 < 128 {
+        return c0;
+    }
+    let step: USize = rune_len(b[i]);
+    if step == 0 {
+        return 0xFFFFFFFF;
+    }
+    if i + step > n {
+        return 0xFFFFFFFF;
+    }
+    var cp: U32 = 0;
+    if step == 2 {
+        cp = c0 & 31;
+    } else if step == 3 {
+        cp = c0 & 15;
+    } else {
+        cp = c0 & 7;
+    }
+    var k: USize = 1;
+    for k < step {
+        let cb: U32 = #compile.as(U32, b[i + k]);
+        if (cb & 192) != 128 {   // 必须是 10xxxxxx 续字节
+            return 0xFFFFFFFF;
+        }
+        cp = (cp << 6) | (cb & 63);
+        k = k + 1;
+    }
+    return cp;
+}
+
+// valid 检查整段文本是否为结构合法的 UTF-8（无非法首字节、无截断、
+// 续字节形态正确）。
+public func valid(t: Text) -> Bool {
+    view b: [U8] = t;
+    let n: USize = #comprun.len(b);
+    var i: USize = 0;
+    for i < n {
+        let step: USize = rune_len(b[i]);
+        if step == 0 {
+            return false;
+        }
+        if i + step > n {
+            return false;
+        }
+        var k: USize = 1;
+        for k < step {
+            if (#compile.as(U32, b[i + k]) & 192) != 128 {
+                return false;
+            }
+            k = k + 1;
+        }
+        i = i + step;
+    }
+    return true;
+}

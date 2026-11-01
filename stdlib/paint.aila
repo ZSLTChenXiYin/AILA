@@ -1,0 +1,210 @@
+// AILA 标准库 · std.paint（显示栈 L3）
+//
+// designs/0006 §2.2：对照 Linux 的 `drm_format_helper`——**纯 helper，被驱动调用**（IoC）。
+// 依赖方向只朝下（paint → pixbuf/damage），驱动 import paint 而不是 paint 回调驱动：
+// 跨模块回调要函数指针，撞 designs/0001 §3.9 与 B6。
+//
+// 全/半角是**字库数据**（GlyphSet.widths），不是绘制逻辑里的「这是不是 CJK」判断：
+// `blit_glyph` 只按 advance 推进，文本 API 一律以 **cell 坐标**为参数（§2.4）。
+//
+// 写权口径同 std.pixbuf：自由函数 + `@mut[pb]`，不用 `@mut[self]` 方法（§4.1 第 5 条）。
+import std.pixbuf;
+import std.damage;
+
+// GlyphSet 是字库视图：码点表 + 点阵 + 每字宽度（cell 数）。
+// 每个字形固定 32 字节 = CELL_H(16) 行 × 2 字节（行内 MSB 在左）：
+// 半角字只用每行第 0 字节（左 8 列），第 1 字节留 0——定长记录换零查表开销。
+public struct GlyphSet {
+    cps: [U32],    // 升序码点
+    bits: [U8],    // 每字 32 字节
+    widths: [U8],  // 1 = 半角(8px 宽) / 2 = 全角(16px 宽)
+    count: USize,
+    px_h: U16,     // 字高（M1 恒 16）
+};
+
+// new_glyph_set 装配字库视图（字库模块的视图访问器 + 字数 + 字高）。
+public func new_glyph_set(cps: [U32], bits: [U8], widths: [U8], count: USize, px_h: U16) -> GlyphSet;
+// glyph_index 在字库线性找码点，返回下标；缺字返回 -1。
+public func glyph_index(gs: GlyphSet, cp: U32) -> I64;
+// glyph_width 返回码点占的 cell 数（缺字按 2 = 全角实心块）
+public func glyph_width(gs: GlyphSet, cp: U32) -> U16;
+// fill 整屏填一色
+public func fill(pb: pixbuf.Pixbuf, on: Bool) @mut[pb];
+// fill_rect 填矩形（自动夹进画布）
+public func fill_rect(pb: pixbuf.Pixbuf, r: damage.Rect, on: Bool) @mut[pb];
+// hline / vline 画线（半开区间，自动夹）
+public func hline(pb: pixbuf.Pixbuf, x0: U16, x1: U16, y: U16, on: Bool) @mut[pb];
+public func vline(pb: pixbuf.Pixbuf, x: U16, y0: U16, y1: U16, on: Bool) @mut[pb];
+// blit_glyph 把一个码点画到 (col, row) cell 位置，返回占的 cell 数（advance）。
+// 缺字画实心方块（一眼看出缺哪个字），此时 advance = 2。
+public func blit_glyph(pb: pixbuf.Pixbuf, gs: GlyphSet, cp: U32, col: U16, row: U16) @mut[pb] -> U16;
+// text_cells 把一行 UTF-8 文本画到 (col, row)，放不下就截断；返回结束 cell 列。
+public func text_cells(pb: pixbuf.Pixbuf, gs: GlyphSet, bytes: [U8], n: USize, col: U16, row: U16) @mut[pb] -> U16;
+// cell_rect 返回一个 cell 的像素矩形。
+public func cell_rect(col: U16, row: U16) -> damage.Rect;
+
+module {
+    public func cell_rect(col: U16, row: U16) -> damage.Rect {
+        let cw: U16 = #compile.as(U16, pixbuf.CELL_W);
+        let ch: U16 = #compile.as(U16, pixbuf.CELL_H);
+        return damage.Rect {
+            x0: col * cw,
+            y0: row * ch,
+            x1: col * cw + cw,
+            y1: row * ch + ch,
+        };
+    }
+
+    public func new_glyph_set(cps: [U32], bits: [U8], widths: [U8], count: USize, px_h: U16) -> GlyphSet {
+        return GlyphSet { cps: cps, bits: bits, widths: widths, count: count, px_h: px_h };
+    }
+
+    public func glyph_index(gs: GlyphSet, cp: U32) -> I64 {
+        var i: USize = 0;
+        for i < gs.count {
+            if gs.cps[i] == cp {
+                return #compile.as(I64, i);
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+
+    public func glyph_width(gs: GlyphSet, cp: U32) -> U16 {
+        let gi: I64 = glyph_index(gs, cp);
+        if gi < 0 {
+            return 2;
+        }
+        return #compile.as(U16, gs.widths[#compile.as(USize, gi)]);
+    }
+
+    public func fill(pb: pixbuf.Pixbuf, on: Bool) @mut[pb] {
+        pixbuf.fill(pb, on);
+    }
+
+    public func fill_rect(pb: pixbuf.Pixbuf, r: damage.Rect, on: Bool) @mut[pb] {
+        let cr: damage.Rect = r.clamp(pb.w, pb.h);
+        if cr.is_empty() {
+            return;
+        }
+        var y: U16 = cr.y0;
+        for y < cr.y1 {
+            var x: U16 = cr.x0;
+            for x < cr.x1 {
+                pixbuf.set_px(pb, x, y, on);
+                x = x + 1;
+            }
+            y = y + 1;
+        }
+    }
+
+    public func hline(pb: pixbuf.Pixbuf, x0: U16, x1: U16, y: U16, on: Bool) @mut[pb] {
+        fill_rect(pb, damage.Rect { x0: x0, y0: y, x1: x1, y1: y + 1 }, on);
+    }
+
+    public func vline(pb: pixbuf.Pixbuf, x: U16, y0: U16, y1: U16, on: Bool) @mut[pb] {
+        fill_rect(pb, damage.Rect { x0: x, y0: y0, x1: x + 1, y1: y1 }, on);
+    }
+
+    public func blit_glyph(pb: pixbuf.Pixbuf, gs: GlyphSet, cp: U32, col: U16, row: U16) @mut[pb] -> U16 {
+        let gi: I64 = glyph_index(gs, cp);
+        var wd: U16 = 2;
+        if gi >= 0 {
+            wd = #compile.as(U16, gs.widths[#compile.as(USize, gi)]);
+        }
+        if wd == 0 {
+            wd = 2;
+        }
+        let x0: U16 = col * #compile.as(U16, pixbuf.CELL_W);
+        let y0: U16 = row * #compile.as(U16, pixbuf.CELL_H);
+        var yy: USize = 0;
+        for yy < #compile.as(USize, pixbuf.CELL_H) {
+            var hi: U8 = 0xFF;
+            var lo: U8 = 0xFF;
+            if gi >= 0 {
+                let base: USize = #compile.as(USize, gi) * 32 + yy * 2;
+                hi = gs.bits[base];
+                lo = gs.bits[base + 1];
+            }
+            var c: U16 = 0;
+            for c < 8 {
+                let bitc: U8 = #compile.as(U8, 0x80) >> #compile.as(U8, c);
+                if (hi & bitc) != 0 {
+                    pixbuf.set_px(pb, x0 + c, y0 + #compile.as(U16, yy), true);
+                }
+                if wd > 1 {
+                    if (lo & bitc) != 0 {
+                        pixbuf.set_px(pb, x0 + 8 + c, y0 + #compile.as(U16, yy), true);
+                    }
+                }
+                c = c + 1;
+            }
+            yy = yy + 1;
+        }
+        return wd;
+    }
+
+    public func text_cells(pb: pixbuf.Pixbuf, gs: GlyphSet, bytes: [U8], n: USize, col: U16, row: U16) @mut[pb] -> U16 {
+        let cols: U16 = pixbuf.cols(pb);
+        var i: USize = 0;
+        var x: U16 = col;
+        for i < n {
+            if x >= cols {
+                break;
+            }
+            let (cp, step) = decode(bytes, n, i);
+            if step == 0 {
+                break;
+            }
+            let wd: U16 = glyph_width(gs, cp);
+            if x + wd > cols {
+                break;   // 行内放不下（全角不劈开），截断
+            }
+            _ = blit_glyph(pb, gs, cp, x, row);
+            x = x + wd;
+            i = i + step;
+        }
+        return x;
+    }
+
+    // decode 解一个 UTF-8 码点：返回 (码点, 步长)；非法序列返回 (0, 0)。
+    public func decode(bytes: [U8], n: USize, i: USize) -> (U32, USize) {
+        if i >= n {
+            return (0, 0);
+        }
+        let b0: U32 = #compile.as(U32, bytes[i]);
+        if b0 < 128 {
+            return (b0, 1);
+        }
+        var need: USize = 0;
+        var cp: U32 = 0;
+        if b0 >= 0xC2 {
+            if b0 < 0xE0 {
+                need = 1;
+                cp = b0 & 0x1F;
+            } else if b0 < 0xF0 {
+                need = 2;
+                cp = b0 & 0x0F;
+            } else if b0 < 0xF5 {
+                need = 3;
+                cp = b0 & 0x07;
+            }
+        }
+        if need == 0 {
+            return (0, 0);   // 非法首字节（含裸续字节）
+        }
+        if i + need >= n {
+            return (0, 0);   // 截断序列
+        }
+        var k: USize = 1;
+        for k <= need {
+            let cb: U32 = #compile.as(U32, bytes[i + k]);
+            if (cb & 0xC0) != 0x80 {
+                return (0, 0);
+            }
+            cp = (cp << 6) | (cb & 0x3F);
+            k = k + 1;
+        }
+        return (cp, need + 1);
+    }
+}

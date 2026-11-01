@@ -5,7 +5,8 @@ struct Pair {
     b: I32,
 };
 
-enum Color { Red, Green, Blue, Bad };
+// 兼任错误通道（safe_div 的 `! Color`）：标注进全局错误空间
+#runtime.error enum Color { Red, Green, Blue, Bad };
 
 enum Shape {
     Circle { r: I32 },
@@ -26,24 +27,24 @@ func classify(n: I32) -> I32 {
 
 func color_tag(c: Color) -> I32 {
     return match c {
-        Color.Red => 1,
-        Color.Green => 2,
-        Color.Blue => 3,
+        .Red => 1,
+        .Green => 2,
+        .Blue => 3,
         _ => 0,
     };
 }
 
 func shape_area(s: Shape) -> I32 {
     return match s {
-        Shape.Circle { r } => r * r * 3,
-        Shape.Rect { w, h } => w * h,
-        Shape.Empty => 0,
+        .Circle { r } => r * r * 3,
+        .Rect { w, h } => w * h,
+        .Empty => 0,
     };
 }
 
 func safe_div(a: I32, b: I32) -> I32 ! Color {
     if b == 0 {
-        return _ ! Color.Bad;
+        return .Bad;
     }
     return a / b;
 }
@@ -53,10 +54,15 @@ func twice(v: I32) -> I32 ! Color {
     return q + q;
 }
 
+// 返回位自动装载：Text 进 Text? 非空态（0004 §5）
+func wrap_text(t: Text) -> Text? {
+    return t;
+}
+
 func sum_view(buf: [U8]) -> I32 {
     var s: I32 = 0;
     for x in buf {
-        s = s + (x as I32);
+        s = s + #compile.as(I32, x);
     }
     return s;
 }
@@ -85,7 +91,7 @@ func mixed(a: I32, b: I32) -> I32 {
 func main() {
     var p: Pair = Pair { a: 3, b: 4 };
     let total: I32 = p.sum() + classify(0) + color_tag(Color.Green) + shape_area(Shape.Rect { w: 2, h: 5 });
-    let scaled: I32 = total trunc I8 as I32;
+    let scaled: I32 = #compile.as(I32, #compile.as(I8, total));
     let flag: Bool = total > 10 || scaled == 0;
     var acc: I32 = 0;
     if flag {
@@ -93,40 +99,41 @@ func main() {
     }
     let f: F32 = 1.5;
     let g: F64 = 2.25;
-    let wide: I64 = acc as I64;
-    let narrow: I16 = wide trunc I16;
+    let wide: I64 = #compile.as(I64, acc);
+    let narrow: I16 = #compile.as(I16, wide);
 
     var fixed: [I32; 4] = [1, 2, 3, 4];
-    fixed[0] = narrow as I32;
-    let n: USize = len fixed;
-    let sz: USize = #size(Pair);
-    let al: USize = #align(Shape);
+    fixed[0] = #compile.as(I32, narrow);
+    let n: USize = #comprun.len(fixed);
+    let sz: USize = #compile.sizeof(Pair);
+    let al: USize = #compile.alignof(Shape);
 
     region work {
         var buf: [U8] = [7; 4]@work;
         buf[1] = 9;
-        acc = acc + sum_view([7; 4]@work) + (buf[0] as I32) + (n trunc I32) + (sz trunc I32) + (al trunc I32);
+        acc = acc + sum_view([7; 4]@work) + #compile.as(I32, buf[0]) + #compile.as(I32, n) + #compile.as(I32, sz) + #compile.as(I32, al);
     }
 
+    // 可空视图：返回位自动装载非空态（0004 §5），None 字面量 + 类型模式
     let msg: Text = "wide";
-    var maybe: Text? = Some { v: msg };
+    var maybe: Text? = wrap_text(msg);
     match maybe {
-        Some { v } => { acc = acc + (len v trunc I32); },
+        let v: Text => { acc = acc + #compile.as(I32, #comprun.len(v)); },
         None => { acc = 0; },
     }
 
     let res = twice(acc);
     match res {
-        Ok { v } => { acc = v; },
-        Err { e } => {
+        let v: I32 => { acc = v; },
+        let e: Color => {
             match e {
-                Color.Bad => { acc = -1; },
+                .Bad => { acc = -1; },
                 _ => { acc = -2; },
             }
         },
     }
 
-    let q: F32 = f + (g trunc F32);
+    let q: F32 = f + #compile.as(F32, g);
     _ = q;
     (acc, _) = (acc + 1, total);
     return;

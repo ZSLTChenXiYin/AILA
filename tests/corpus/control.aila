@@ -15,17 +15,17 @@ func worker(cmds: recv chan Cmd) {
 }
 
 func recv_of() -> recv chan Cmd {
-    var rx: recv chan Cmd = chan@r Cmd(4);
+    var rx: recv chan Cmd = #runtime.chan(Cmd, 4);
     return rx;
 }
 
 func control(ready: Bool, buf: [U8], n: USize) @region[r] {
     if ready {
-        io.print_text("yes");
+        io.print(io.FmtVal.T { v: "yes" });
     } else if !ready {
-        io.print_text("no");
+        io.print(io.FmtVal.T { v: "no" });
     } else {
-        io.print_text("maybe");
+        io.print(io.FmtVal.T { v: "maybe" });
     }
 
     for var i: USize = 0; i < n; i = i + 1 {
@@ -51,20 +51,20 @@ func control(ready: Bool, buf: [U8], n: USize) @region[r] {
     }
 
     match n {
-        0 => { io.print_text("zero"); }
-        _ => { io.print_text("many"); }
+        0 => { io.print(io.FmtVal.T { v: "zero" }); }
+        _ => { io.print(io.FmtVal.T { v: "many" }); }
     }
 
     let c: Cmd = Cmd.Eof;
     match c {
-        Cmd.Data { v } => { io.print_i32(v); }
-        Cmd.Eof => { io.print_text("eof"); }
+        .Data { v } => { io.print(io.FmtVal.I { v: #compile.as(I64, v) }); }
+        .Eof => { io.print(io.FmtVal.T { v: "eof" }); }
     }
 
     let opt: [U8]? = None;
     match opt {
-        Some { v } => { io.print_usize(len v); }
-        None => { io.print_text("none"); }
+        let v: [U8] => { io.print(io.FmtVal.U { v: #compile.as(U64, #comprun.len(v)) }); }
+        None => { io.print(io.FmtVal.T { v: "none" }); }
     }
 
     region tmp: 4096 {
@@ -77,11 +77,11 @@ func control(ready: Bool, buf: [U8], n: USize) @region[r] {
         _ = words;
     }
 
-    defer io.print_nl();
+    defer io.println();
     defer {
-        io.print_text("done");
+        io.print(io.FmtVal.T { v: "done" });
     }
 
-    thread: 4096 worker(recv_of());
-    trap "unreachable";
+    #runtime.spawn(worker, recv_of());
+    #runtime.trap("unreachable");
 }

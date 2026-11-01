@@ -1,0 +1,8 @@
+[coro] tick 1
+[coro] tick 2
+[coro] done: 42
+[coro] returned 42
+[chan] producer sent 3, consumer sum = 3
+[atomics] count = 200000 (expect 200000)
+[atomics] race settled exactly once: true
+[atomics] u8: 10 - 4 = 6 (fetch_sub old = 10)

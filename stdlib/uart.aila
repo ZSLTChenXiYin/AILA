@@ -1,0 +1,29 @@
+// AILA 标准库 · std.uart（层 3：嵌入式通用，宿主无链接目标）
+//
+// UART 最小集：init / 写 / 读（designs/0003 §5.1）。M1 只有 UART0——
+// stdout（io.print）与本模块同一路 UART0，reset 后的默认波特率取自
+// chip.json（esp8266/esp32 系均 115200）；init 重配会立即生效于后续输出。
+//
+// 阻塞语义：
+//   - write 阻塞写满（逐字节等 TX FIFO 空位）；
+//   - read 非阻塞：只取 RX FIFO 当前已有字节，返回 0 = 无数据。
+// 分频由 runtime 用 chip.json 的 clk_hz 16.8 定点计算（含小数域的芯片写 FRAG）。
+
+#compile.c func aila_rt_uart_init(id: U32, baud: U32);
+#compile.c func aila_rt_uart_write(id: U32, bytes: [U8], n: USize) -> U32;
+#compile.c func aila_rt_uart_read(id: U32, buf: [U8], cap: USize) -> U32;
+
+// init 配波特率（id 恒为 0；非 0 运行期 trap）
+public func init(id: U32, baud: U32) {
+    aila_rt_uart_init(id, baud);
+}
+
+// write 阻塞写满 bytes，返回写入字节数（恒 = #comprun.len(bytes)）
+public func write(id: U32, bytes: [U8]) -> USize {
+    return #compile.as(USize, aila_rt_uart_write(id, bytes, #comprun.len(bytes)));
+}
+
+// read 非阻塞读：取 RX FIFO 当前可用字节写进 buf，返回字节数（0 = 无数据）
+public func read(id: U32, buf: [U8]) @mut[buf] -> USize {
+    return #compile.as(USize, aila_rt_uart_read(id, buf, #comprun.len(buf)));
+}

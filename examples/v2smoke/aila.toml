@@ -1,0 +1,7 @@
+[package]
+name = "p2smoke"
+version = "0.1.0"
+entry = "_.main"
+
+[build]
+opt = 0

@@ -3,8 +3,7 @@ import std.io;
 import _.sensors.camera as cam;
 
 func main() {
-    io.print_text("hello, AILA!");
-    io.print_nl();
+    io.println(io.FmtVal.T { v: "hello, AILA!" });
     let a: Bool = true;
     let b: Float = 1.5;
     let c: Text = r"no\escape";

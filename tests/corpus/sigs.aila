@@ -1,5 +1,5 @@
 // corpus: 函数签名与模块级值（判据 sigs.json）
-enum Err {
+#runtime.error enum Err {
     Bad,
     Worse { code: U8 },
 };
@@ -37,15 +37,15 @@ module hot {
 
     coroutine func poll(id: U8) @region[buf] -> I32 ! Err {
         yield;
-        return _ ! Err.Bad;
+        return .Bad;
     }
 
     thread func worker(cmds: [Unsafe]?) { }
 
-    #[c] func ext_printf(fmt: [U8], ...) -> I32;
+    #compile.c func ext_printf(fmt: [U8], ...) -> I32;
 
     func fallible(buf: [U8]) -> I32 ! Err {
-        return _ ! Err.Bad;
+        return .Bad;
     }
 
     func pair() -> (U8, U16) { return (1, 2); }
@@ -65,7 +65,7 @@ module hot {
     public func detect(img: [U8]) @region[work] -> I32 {
         region tmp {
             let buf: [U8] = [0; 4]@tmp;
-            return buf[0] as I32;
+            return #compile.as(I32, buf[0]);
         }
     }
 }

@@ -14,7 +14,7 @@ func fill(n: USize, v: U8) @region[r] -> [U8] {
 func sum_of(buf: [U8]) -> I32 {
     var s: I32 = 0;
     for x in buf {
-        s = s + (x as I32);
+        s = s + #compile.as(I32, x);
     }
     return s;
 }
@@ -24,25 +24,21 @@ func main() {
         // 分配：长度由初始化器决定，落 work
         var nums: [U8] = [5; 4]@work;
         nums[0] = 5;
-        io.print_text("sum = ");
-        io.print_i32_nl(sum_of(nums));          // 20
+        io.printf("sum = %d\n", io.FmtVal.I { v: #compile.as(I64, sum_of(nums)) });   // 20
 
         // 下层函数把内存分配进调用方区域 —— 跨函数寿命由区域名决定
         var buf: [U8] = fill(4, 7)@[work];
         buf[0] = 7;
 
-        io.print_text("buf[0] = ");
-        io.print_i32(buf[0] as I32);
-        io.print_text("  len = ");
-        io.print_usize(len buf);
-        io.print_text(" (bytes ");
-        io.print_usize(#size(I32) * 4);
-        io.print_text(")");
-        io.print_nl();
+        io.print(io.FmtVal.T { v: "buf[0] = " });
+        io.print(io.FmtVal.I { v: #compile.as(I64, buf[0]) });
+        io.print(io.FmtVal.T { v: "  len = " });
+        io.print(io.FmtVal.U { v: #compile.as(U64, #comprun.len(buf)) });
+        io.printf(" (bytes %u)\n", io.FmtVal.U { v: #compile.as(U64, #compile.sizeof(I32) * 4) });
 
         // 视图重标：等元素宽度的零拷贝出口
         let text: Text = "AILA";
         view bytes: [U8] = text;
-        io.print_i32_nl(len bytes trunc I32);   // 4 字节
+        io.println(io.FmtVal.U { v: #compile.as(U64, #comprun.len(bytes)) });   // 4 字节
     }   // work 退出：nums / buf 整块回收，无 free、无析构
 }

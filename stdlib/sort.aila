@@ -1,0 +1,111 @@
+// AILA 标准库 · std.sort
+//
+// 批次 1（designs/0003 §3.5）：定宽元素的就地排序，希尔排序——迭代、
+// 无递归、无栈深度风险，嵌入式场景够用。
+//
+// _by 版收「严格先序」fnptr cmp(a, b)：a 应排在 b 前面返回 true。
+// cmp 必须满足严格弱序，违者结果未定义（不 trap）。NaN 参与 F64 排序
+// 位置未定义（严格弱序同样被破坏），调用方自行规避。
+//
+// 通用元素版（esize + 字节交换）等 M2 泛型落地后补。
+
+// sort_i64 就地升序。
+public func sort_i64(buf: [I64]) @mut[buf] {
+    sort_i64_by(buf, lt_i64);
+}
+
+// sort_u64 就地升序。
+public func sort_u64(buf: [U64]) @mut[buf] {
+    sort_u64_by(buf, lt_u64);
+}
+
+// sort_f64 就地升序。
+public func sort_f64(buf: [F64]) @mut[buf] {
+    sort_f64_by(buf, lt_f64);
+}
+
+// sort_i64_by 按 cmp 就地排序。
+public func sort_i64_by(buf: [I64], cmp: (I64, I64) -> Bool) @mut[buf] {
+    let n: USize = #comprun.len(buf);
+    var gap: USize = n / 2;
+    for gap > 0 {
+        var i: USize = gap;
+        for i < n {
+            let tmp: I64 = buf[i];
+            var j: USize = i;
+            for j >= gap {
+                if cmp(tmp, buf[j - gap]) {   // tmp 应排在 buf[j-gap] 前 → 右移腾位
+                    buf[j] = buf[j - gap];
+                    j = j - gap;
+                } else {
+                    break;
+                }
+            }
+            buf[j] = tmp;
+            i = i + 1;
+        }
+        gap = gap / 2;
+    }
+}
+
+// sort_u64_by 按 cmp 就地排序。
+public func sort_u64_by(buf: [U64], cmp: (U64, U64) -> Bool) @mut[buf] {
+    let n: USize = #comprun.len(buf);
+    var gap: USize = n / 2;
+    for gap > 0 {
+        var i: USize = gap;
+        for i < n {
+            let tmp: U64 = buf[i];
+            var j: USize = i;
+            for j >= gap {
+                if cmp(tmp, buf[j - gap]) {
+                    buf[j] = buf[j - gap];
+                    j = j - gap;
+                } else {
+                    break;
+                }
+            }
+            buf[j] = tmp;
+            i = i + 1;
+        }
+        gap = gap / 2;
+    }
+}
+
+// sort_f64_by 按 cmp 就地排序。
+public func sort_f64_by(buf: [F64], cmp: (F64, F64) -> Bool) @mut[buf] {
+    let n: USize = #comprun.len(buf);
+    var gap: USize = n / 2;
+    for gap > 0 {
+        var i: USize = gap;
+        for i < n {
+            let tmp: F64 = buf[i];
+            var j: USize = i;
+            for j >= gap {
+                if cmp(tmp, buf[j - gap]) {
+                    buf[j] = buf[j - gap];
+                    j = j - gap;
+                } else {
+                    break;
+                }
+            }
+            buf[j] = tmp;
+            i = i + 1;
+        }
+        gap = gap / 2;
+    }
+}
+
+// ---- 模块私有比较子（升序「严格先序」） ----
+
+func lt_i64(a: I64, b: I64) -> Bool {
+    return a < b;
+}
+
+func lt_u64(a: U64, b: U64) -> Bool {
+    return a < b;
+}
+
+func lt_f64(a: F64, b: F64) -> Bool {
+    return a < b;
+}

@@ -1,216 +1,241 @@
 // AILA 标准库 · std.io
 //
-// 分工（designs/0001 §12.3、§13.1）：
-//   - **能用 AILA 实现的，就用 AILA 实现**：十进制转换、符号、UTF-8 编码、浮点小数位、
-//     换行与组合函数全在下面，不经过 libc 的 printf；
-//   - **只有 OS 边界交给 C**：写标准输出这件事各平台差异大（fwrite / write(2) / ESP-IDF），
-//     由 runtime/aila_rt.c 用 `#[c]` 提供两条最小绑定（write / flush）。
+// 分工（designs/0002 §1 纯度三线）：
+//   - **能用 AILA 实现的，就用 AILA 实现**：put_* 格式化引擎把 std.core 的
+//     缓冲区算法接到 Writer 上，不经过 libc 的 printf；
+//   - **只有 OS 边界交给 C**：写标准输出这件事各平台差异大（fwrite / write(2) /
+//     UART 外设寄存器），由平台 runtime 的 aila_rt 提供两条 #compile.c 绑定（write / flush）。
 //
-// 缓冲区用 `region` 块就地分配：打印一次、回收一次，不占全局状态。
+// Writer 是 vtable 形态的输出抽象（Go io.Writer 小接口的运行时本质，designs/0002 §2）：
+//
+//     struct Writer { write: 函数指针, ctx: 上下文 }
+//
+// stdout 是它的一个实例；UART、内存缓冲等后端按同一签名接入。
+// print / println / printf 是「遇错静默吞」的便利层（C printf / Go fmt.Println 同理），
+// 需要精确处理写入结果时直接使用 Writer 方法（返回值即写入字节数）。
+import std.core;
+import std.utf8;
 
-// 唯一的 OS 边界：C 绑定（各平台的实现差异在 runtime/aila_rt.c 里消化）
-#[c] func aila_rt_write(bytes: [U8], n: USize);
-#[c] func aila_rt_flush();
+// 唯一的 OS 边界：C 绑定（各平台的实现差异在 runtime/<家族>/aila_rt_*.c 里消化）
+#compile.c func aila_rt_write(bytes: [U8], n: USize);
+#compile.c func aila_rt_flush();
 
-// ---- 对外接口（壳里 public = 包外可见） ----
+// vtable Writer：write 槽位收 (ctx, bytes, n)，返回实际写入字节数；
+// ctx 是后端自有状态（stdout 无状态，为 None）。
+public struct Writer {
+    write: ([Unsafe]?, [U8], USize) -> USize,
+    ctx: [Unsafe]?,
+};
 
-public func print_text(t: Text);
+// stdout 实例：宿主走 fwrite / write(2)，嵌入式走 UART，由平台 runtime 承接。
+public func stdout() -> Writer;
 
-public func print_bytes(b: [U8]);
+// ---- Writer 方法（fmt 引擎：std.core 缓冲区算法 → Writer 槽位） ----
 
-public func print_u32(v: U32);
+public func Writer.put(self, bytes: [U8]) -> USize;
 
-public func print_i32(v: I32);
+public func Writer.put_text(self, t: Text) -> USize;
 
-public func print_usize(v: USize);
+public func Writer.put_u64(self, v: U64) -> USize;
 
-public func print_f32(v: F32);
+public func Writer.put_i64(self, v: I64) -> USize;
 
-public func print_f64(v: F64);
+public func Writer.put_f64(self, v: F64) -> USize;
 
-public func print_bool(v: Bool);
+public func Writer.put_bool(self, v: Bool) -> USize;
 
-public func print_char(c: C32);
+public func Writer.put_char(self, c: C32) -> USize;
 
-public func print_nl();
+// 写一个换行并冲洗（stdout 路径保持原有 flush 语义）
+public func Writer.put_nl(self) -> USize;
 
-public func print_i32_nl(v: I32);
+// ---- print 家族（唯一便利层，designs/0002 §4） ----
+//
+// FmtVal 是 printf 的封闭联合：AILA 的带载荷 enum 本身就是 tagged union，
+// tag 分派编译成 switch——printf 只支持基础类型，无运行时反射、零堆分配。
+public enum FmtVal {
+    I { v: I64 },
+    U { v: U64 },
+    F { v: F64 },
+    B { v: Bool },
+    C { v: C32 },
+    T { v: Text },
+};
 
-public func print_u32_nl(v: U32);
+// 逐实参直接连接（无分隔符），不冲洗
+public func print(vals: ...FmtVal);
+
+// print + 换行冲洗
+public func println(vals: ...FmtVal);
+
+// 格式符驱动：`%d %u %f %b %c %s %%`（最小集，无宽/精度）。
+// 格式符与实参 tag 错配 = 编程错误，trap 终止；实参不足时下标越界 trap 兜底。
+public func printf(fmt: Text, args: ...FmtVal);
 
 module {
-    // 单个字节（换行等）
-    func put_byte(b: U8) {
-        region one {
-            var buf: [U8] = [0; 1]@one;
-            buf[0] = b;
-            aila_rt_write(buf, 1);
-        }
-    }
-
-    // fill_u64 把 v 的十进制数字写进 buf[0..n)，返回位数。
-    func fill_u64(v: U64, buf: [U8]) @mut[buf] -> USize {
-        var x: U64 = v;
-        var n: USize = 1;
-        for !(x < 10) {
-            x = x / 10;
-            n = n + 1;
-        }
-        // 从末尾往前填（AILA 没有指针偏移，所以先算位数再倒着写）
-        var y: U64 = v;
-        var i: USize = n;
-        for !(i == 0) {
-            i = i - 1;
-            let d: U64 = y % 10;
-            buf[i] = (d trunc U32 + 48) trunc U8;
-            y = y / 10;
-        }
+    // stdout 后端：write 槽位的实例（平台差异全部在 aila_rt_write 里消化）
+    func stdout_write(ctx: [Unsafe]?, bytes: [U8], n: USize) -> USize {
+        aila_rt_write(bytes, n);
         return n;
     }
 
-    // fill_i64 处理符号；负数在 I64 里取反（避开 I32 的 MIN 陷阱）。
-    func fill_i64(v: I64, buf: [U8]) @mut[buf] -> USize {
-        if v < 0 {
-            let mag: U64 = (0 - v) trunc U64;
-            let n: USize = fill_u64(mag, buf) + 1;
-            var k: USize = n;
-            for !(k == 1) {
-                k = k - 1;
-                buf[k] = buf[k - 1];
-            }
-            buf[0] = 45;
-            return n;
-        }
-        return fill_u64(v trunc U64, buf);
+    public func stdout() -> Writer {
+        return Writer { write: stdout_write, ctx: None };
     }
 
-    func print_u32(v: U32) {
+    // ---- fmt 引擎：std.core 缓冲区算法 → Writer 槽位 ----
+
+    public func Writer.put(self, bytes: [U8]) -> USize {
+        return self.write(self.ctx, bytes, #comprun.len(bytes));
+    }
+
+    public func Writer.put_text(self, t: Text) -> USize {
+        view bytes: [U8] = t;
+        return self.write(self.ctx, bytes, #comprun.len(bytes));
+    }
+
+    public func Writer.put_u64(self, v: U64) -> USize {
         region fmt {
             var buf: [U8] = [0; 24]@fmt;
-            let n: USize = fill_u64(v trunc U64, buf);
-            aila_rt_write(buf, n);
+            let n: USize = core.fill_u64(v, buf);
+            return self.write(self.ctx, buf, n);
         }
     }
 
-    func print_i32(v: I32) {
+    public func Writer.put_i64(self, v: I64) -> USize {
         region fmt {
             var buf: [U8] = [0; 24]@fmt;
-            let n: USize = fill_i64(v as I64, buf);
-            aila_rt_write(buf, n);
+            let n: USize = core.fill_i64(v, buf);
+            return self.write(self.ctx, buf, n);
         }
     }
 
-    func print_usize(v: USize) {
-        region fmt {
-            var buf: [U8] = [0; 24]@fmt;
-            let n: USize = fill_u64(v trunc U64, buf);
-            aila_rt_write(buf, n);
-        }
-    }
-
-    // 浮点：整数部分 + 最多 6 位小数（去尾零）。嵌入式场景够用且完全可移植。
-    func print_f64(v: F64) {
+    public func Writer.put_f64(self, v: F64) -> USize {
         region fmt {
             var buf: [U8] = [0; 40]@fmt;
-            var w: F64 = v;
-            if w < 0.0 {
-                put_byte(45);
-                w = 0.0 - w;
-            }
-            let ip: I64 = w trunc I64;
-            let pos: USize = fill_u64(ip trunc U64, buf);
-            let frac: F64 = w - (ip trunc F64);
-            if frac > 0.0 {
-                var digits: USize = 0;
-                var f: F64 = frac;
-                for digits < 6 {
-                    f = f * 10.0;
-                    let d: U32 = f trunc U32;
-                    buf[pos + 1 + digits] = (d + 48) trunc U8;
-                    digits = digits + 1;
-                    f = f - (d trunc F64);
-                }
-                var last: USize = digits;
-                for last > 0 {
-                    if buf[pos + last] != 48 {
-                        break;
-                    }
-                    last = last - 1;
-                }
-                if last > 0 {
-                    buf[pos] = 46;
-                    aila_rt_write(buf, pos + 1 + last);
-                    return;
-                }
-            }
-            aila_rt_write(buf, pos);
+            let n: USize = core.fill_f64(v, buf);
+            return self.write(self.ctx, buf, n);
         }
     }
 
-    func print_f32(v: F32) {
-        print_f64(v as F64);
-    }
-
-    func print_bool(v: Bool) {
+    public func Writer.put_bool(self, v: Bool) -> USize {
         if v {
-            print_text("true");
-        } else {
-            print_text("false");
+            return self.put_text("true");
         }
+        return self.put_text("false");
     }
 
-    // UTF-8 编码
-    func print_char(c: C32) {
+    public func Writer.put_char(self, c: C32) -> USize {
         region fmt {
             var buf: [U8] = [0; 4]@fmt;
-            let cp: U32 = c as U32;
-            if cp < 128 {
-                buf[0] = cp trunc U8;
-                aila_rt_write(buf, 1);
-                return;
-            }
-            if cp < 2048 {
-                buf[0] = (192 + (cp >> 6)) trunc U8;
-                buf[1] = (128 + (cp & 63)) trunc U8;
-                aila_rt_write(buf, 2);
-                return;
-            }
-            if cp < 65536 {
-                buf[0] = (224 + (cp >> 12)) trunc U8;
-                buf[1] = (128 + ((cp >> 6) & 63)) trunc U8;
-                buf[2] = (128 + (cp & 63)) trunc U8;
-                aila_rt_write(buf, 3);
-                return;
-            }
-            buf[0] = (240 + (cp >> 18)) trunc U8;
-            buf[1] = (128 + ((cp >> 12) & 63)) trunc U8;
-            buf[2] = (128 + ((cp >> 6) & 63)) trunc U8;
-            buf[3] = (128 + (cp & 63)) trunc U8;
-            aila_rt_write(buf, 4);
+            let n: USize = utf8.encode(#compile.as(U32, c), buf);
+            return self.write(self.ctx, buf, n);
         }
     }
 
-    func print_nl() {
-        put_byte(10);
-        aila_rt_flush();
+    // 写一个换行并冲洗（stdout 路径保持原有 flush 语义）
+    public func Writer.put_nl(self) -> USize {
+        region fmt {
+            var buf: [U8] = [0; 1]@fmt;
+            buf[0] = 10;
+            let n: USize = self.write(self.ctx, buf, 1);
+            aila_rt_flush();
+            return n;
+        }
     }
 
-    func print_text(t: Text) {
-        view bytes: [U8] = t;
-        aila_rt_write(bytes, len bytes);
+    // ---- print 家族实现 ----
+
+    // 按 tag 分派到引擎方法（print / println / printf 共用）
+    func put_val(w: Writer, v: FmtVal) {
+        match v {
+            .I { v } => { _ = w.put_i64(v); },
+            .U { v } => { _ = w.put_u64(v); },
+            .F { v } => { _ = w.put_f64(v); },
+            .B { v } => { _ = w.put_bool(v); },
+            .C { v } => { _ = w.put_char(v); },
+            .T { v } => { _ = w.put_text(v); },
+        }
     }
 
-    func print_bytes(b: [U8]) {
-        aila_rt_write(b, len b);
+    public func print(vals: ...FmtVal) {
+        let w: Writer = stdout();
+        for v in vals {
+            put_val(w, v);
+        }
     }
 
-    func print_i32_nl(v: I32) {
-        print_i32(v);
-        print_nl();
+    public func println(vals: ...FmtVal) {
+        let w: Writer = stdout();
+        for v in vals {
+            put_val(w, v);
+        }
+        _ = w.put_nl();
     }
 
-    func print_u32_nl(v: U32) {
-        print_u32(v);
-        print_nl();
+    public func printf(fmt: Text, args: ...FmtVal) {
+        let w: Writer = stdout();
+        view bytes: [U8] = fmt;
+        let n: USize = #comprun.len(bytes);
+        region put_buf {
+            var b: [U8] = [0; 1]@put_buf;
+            var i: USize = 0;
+            var k: USize = 0;
+            for i < n {
+                let c: U8 = bytes[i];
+                if c == 37 {
+                    // '%'-格式符：类型符决定引擎方法，实参 tag 必须一致（错配 trap）
+                    i = i + 1;
+                    let f: U8 = bytes[i];
+                    if f == 100 {          // d —— 有符号十进制
+                        match args[k] {
+                            .I { v } => { _ = w.put_i64(v); },
+                            _ => { #runtime.trap("printf: %d 需要整数实参（FmtVal.I）"); },
+                        }
+                        k = k + 1;
+                    } else if f == 117 {   // u —— 无符号十进制
+                        match args[k] {
+                            .U { v } => { _ = w.put_u64(v); },
+                            _ => { #runtime.trap("printf: %u 需要无符号实参（FmtVal.U）"); },
+                        }
+                        k = k + 1;
+                    } else if f == 102 {   // f —— 浮点
+                        match args[k] {
+                            .F { v } => { _ = w.put_f64(v); },
+                            _ => { #runtime.trap("printf: %f 需要浮点实参（FmtVal.F）"); },
+                        }
+                        k = k + 1;
+                    } else if f == 98 {    // b —— 布尔
+                        match args[k] {
+                            .B { v } => { _ = w.put_bool(v); },
+                            _ => { #runtime.trap("printf: %b 需要布尔实参（FmtVal.B）"); },
+                        }
+                        k = k + 1;
+                    } else if f == 99 {    // c —— 字符
+                        match args[k] {
+                            .C { v } => { _ = w.put_char(v); },
+                            _ => { #runtime.trap("printf: %c 需要字符实参（FmtVal.C）"); },
+                        }
+                        k = k + 1;
+                    } else if f == 115 {   // s —— 文本
+                        match args[k] {
+                            .T { v } => { _ = w.put_text(v); },
+                            _ => { #runtime.trap("printf: %s 需要文本实参（FmtVal.T）"); },
+                        }
+                        k = k + 1;
+                    } else if f == 37 {    // %% —— 字面量 '%'
+                        b[0] = 37;
+                        _ = w.put(b);
+                    } else {
+                        #runtime.trap("printf: 未知格式符（支持 %d %u %f %b %c %s %%）");
+                    }
+                    i = i + 1;
+                } else {
+                    b[0] = c;
+                    _ = w.put(b);
+                    i = i + 1;
+                }
+            }
+        }
     }
 }

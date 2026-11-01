@@ -1,0 +1,65 @@
+// AILA 标准库 · std.rand（层 1：宿主 / 嵌入式通用）
+//
+// xorshift64（Marsaglia 三元移位 13/7/17，周期 2^64-1）+ 拒绝采样的
+// below（designs/0003 §4.2）。不用乘法变体（xorshift64*）：AILA 的整数
+// 运算是溢出陷阱语义，64 位乘法必然溢出——移位 + 异或天然不溢出。
+//
+// 种子来自 aila_rt_seed()（宿主 OS 熵源 / 嵌入式 ccount 快照）；种子 0
+// 是移位序列的死态，seed/构造处强制非零。
+
+#compile.c func aila_rt_seed() -> U64;
+
+// 默认种子（0x9E3779B97F4A7C15 的黄金比例常数）
+const SEED_GOLDEN: U64 = 0x9E3779B97F4A7C15;
+
+// new 用平台熵源构造生成器
+public func new() -> Rand {
+    let s: U64 = aila_rt_seed();
+    if s == 0 {
+        return Rand { s: SEED_GOLDEN };
+    }
+    return Rand { s: s };
+}
+
+// 重设种子（0 视为死态，换成默认常数）
+public func Rand.seed(self, s: U64) @mut[self] {
+    if s == 0 {
+        self.s = SEED_GOLDEN;
+        return;
+    }
+    self.s = s;
+}
+
+// next_u64 产出 64 位伪随机数
+public func Rand.next_u64(self) @mut[self] -> U64 {
+    var x: U64 = self.s;
+    x = x ^ (x << 13);
+    x = x ^ (x >> 7);
+    x = x ^ (x << 17);
+    self.s = x;
+    return x;
+}
+
+// below 均匀产出 [0, bound)（bound < 2 时恒 0）。拒绝采样取
+// zone = 2^64 mod bound（由 (2^64-1) % bound + 1 等价算出，U64 域无溢出），
+// 落在 [0, zone) 的样本重抽——消除模偏差。
+public func Rand.below(self, bound: U64) @mut[self] -> U64 {
+    if bound < 2 {
+        return 0;
+    }
+    let zone: U64 = (0xFFFFFFFFFFFFFFFF % bound) + 1;
+    var x: U64 = 0;
+    var ok: Bool = false;
+    for !ok {
+        x = self.next_u64();
+        if x >= zone {
+            ok = true;
+        }
+    }
+    return x % bound;
+}
+
+// 生成器状态（直接构造请保证 s 非 0，否则用 new / seed）
+public struct Rand {
+    s: U64,
+};

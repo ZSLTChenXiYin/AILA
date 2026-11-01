@@ -1,0 +1,103 @@
+// AILA 标准库 · std.pixfmt（显示栈 L0）
+//
+// designs/0006 §2.2：对照 Linux 的 `drm_format_info`——**格式是数据，不进代码分支**。
+// 绘制代码（std.paint）与驱动（cpacks）都只查 PixelFormat 的字段，不写「如果这是 mono1」。
+//
+// M1 只实现 mono1：1 位 1 像素、行主序、每行向上对齐到 4 字节、字节内 MSB 在左
+//（designs/0006 §2.3 canonical）。PixelFormat 带 bpp / row_align / bit_order 三列，
+// 足以描述将来的一族单色 / 调色板格式——加格式只加一行表项，不改调用方。
+//
+// 实现说明（本会话实测）：模块级定长数组的初始值必须是字面量，装不下 struct
+//（E9002 全局定长数组的初始值含非字面量元素），所以表暂时以 mono1() 直构造的形态
+// 存在，等编译器支持 struct 常量再收回成数据表——调用方签名不变。
+
+// 位序：一个字节内最左边的像素在最高位（M1 唯一使用）
+public const ORDER_MSB: U8 = 0;
+// 位序：最左边的像素在最低位（表里留位，M1 不实现）
+public const ORDER_LSB: U8 = 1;
+
+// 格式码（PixelFormat.code 的取值域；未知码一律回落 mono1）
+public const CODE_MONO1: U8 = 1;
+
+// PixelFormat 描述「一个像素如何落进字节」。
+public struct PixelFormat {
+    code: U8,      // 格式码（CODE_*）
+    bpp: U8,       // 每像素位数
+    row_align: U8, // 每行字节数的对齐（0 = 不对齐）
+    bit_order: U8, // 字节内位序（ORDER_*）
+};
+
+// mono1 是 M1 的 canonical 格式。
+public func mono1() -> PixelFormat;
+// of 按格式码取格式：未知码回落 mono1（永不 fail，调用方无需错误通道）。
+public func of(code: U8) -> PixelFormat;
+// row_bytes = ceil(w * bpp / 8)：一行像素占的字节数（不含对齐）。
+public func row_bytes(fmt: PixelFormat, w: U16) -> U16;
+// stride_for = row_bytes 向上对齐到 row_align：行主序画布的真实行跨度。
+public func stride_for(fmt: PixelFormat, w: U16) -> U16;
+// byte_of = 第 x 列像素所在字节的下标（行内），落点 = y * stride + byte_of(x)。
+public func byte_of(fmt: PixelFormat, x: U16) -> U16;
+// bit_of = 第 x 列像素在字节内的掩码（按 bit_order 定）。
+public func bit_of(fmt: PixelFormat, x: U16) -> U8;
+
+module {
+    public func mono1() -> PixelFormat {
+        return PixelFormat { code: 1, bpp: 1, row_align: 4, bit_order: 0 };
+    }
+
+    public func of(code: U8) -> PixelFormat {
+        // 表驱动的落点：M1 只有 mono1（未知码回落）。加格式时在此并列 if，
+        // 或等 struct 常量落地后换成真正的表数组。
+        if code == 1 {
+            return mono1();
+        }
+        return mono1();
+    }
+
+    public func row_bytes(fmt: PixelFormat, w: U16) -> U16 {
+        if fmt.bpp == 0 {
+            return 0;
+        }
+        let bits: USize = #compile.as(USize, w) * #compile.as(USize, fmt.bpp);
+        return #compile.as(U16, (bits + 7) / 8);
+    }
+
+    public func stride_for(fmt: PixelFormat, w: U16) -> U16 {
+        let rb: USize = #compile.as(USize, row_bytes(fmt, w));
+        let al: USize = #compile.as(USize, fmt.row_align);
+        if al == 0 {
+            return #compile.as(U16, rb);
+        }
+        if rb % al == 0 {
+            return #compile.as(U16, rb);
+        }
+        let st: USize = rb / al * al + al;
+        return #compile.as(U16, st);
+    }
+
+    public func byte_of(fmt: PixelFormat, x: U16) -> U16 {
+        if fmt.bpp == 0 {
+            return 0;
+        }
+        let per_byte: USize = 8 / #compile.as(USize, fmt.bpp);
+        if per_byte == 0 {
+            return 0;
+        }
+        return #compile.as(U16, #compile.as(USize, x) / per_byte);
+    }
+
+    public func bit_of(fmt: PixelFormat, x: U16) -> U8 {
+        if fmt.bpp == 0 {
+            return 0;
+        }
+        let per_byte: USize = 8 / #compile.as(USize, fmt.bpp);
+        if per_byte == 0 {
+            return 0;
+        }
+        let k: U8 = #compile.as(U8, #compile.as(USize, x) % per_byte);
+        if fmt.bit_order == 1 {
+            return #compile.as(U8, 1) << k;
+        }
+        return #compile.as(U8, 0x80) >> k;
+    }
+}

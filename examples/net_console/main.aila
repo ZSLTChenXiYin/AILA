@@ -1,0 +1,93 @@
+// 示例 · net_console：Windows 控制台 TCP 服务端（等一个 ESP8266 连上来，
+// 你把中文打回车，字符串就发给它，由它在 OLED 上显示）
+//
+// 配套固件：examples/esp8266_oled（对端）。协议极简——一行一条消息（UTF-8 +
+// `\n`），所以对端只靠找换行就能切行：
+//
+//   <服务端控制台输入的一行中文>\n
+//
+// 想清屏就发一行 `CLEAR`（固件约定，见 esp8266_oled/main.aila）。
+//
+// 用法：
+//   aila run examples/net_console
+//   等控制台打印「等待连接」，给 ESP8266 上电（固件里填的就是本机 IP 和这个端口），
+//   连上后每敲一行回车发一行；空行 = 退出。
+//
+// 期望输出（示意）：
+//   监听 0.0.0.0:8266 …
+//   等待 ESP8266 连接（网线/Wi-Fi 要在同一网段）…
+//   已连上。输入中文后回车发送；空行退出。
+//   > 你好，世界
+//   [已发送 13 字节] 你好，世界
+import std.io;
+import cc _.cpacks.ws;   // 只编译 C 源、不生成绑定：声明在下面手写（要控制 [U8] 视图形态）
+
+// OS 边界（实现在 cpacks/ws/ws.c）：句柄统一 I64，负值 = 出错
+#compile.c func ws_console_utf8();
+#compile.c func ws_start(port: U32) -> I64;
+#compile.c func ws_accept(lfd: I64) -> I64;
+#compile.c func ws_send(fd: I64, bytes: [U8], n: USize) -> I64;
+#compile.c func ws_close(fd: I64);
+#compile.c func ws_line(dst: [U8], cap: USize) -> I32;
+#compile.c func aila_rt_flush();   // 提示符要及时出现（std.io 的同名运行时原语）
+
+// 服务端口（和固件里的 PORT 必须一致）
+const PORT: U32 = 8266;
+// 一行最多多少字节（UTF-8 中文 3 字节/字，256 够放 80 来个汉字）
+const LINE_CAP: USize = 256;
+
+module {
+    // send_line 把一行正文 + 换行发给对端。返回是否发成功。
+    // 写 line[n] 是跨函数写视图，要有 `@mut[line]` 写权标注。
+    func send_line(fd: I64, line: [U8], n: USize) @mut[line] -> Bool {
+        line[n] = 0x0A;                     // '\n'：协议的行分隔符
+        let sent: I64 = ws_send(fd, line, n + 1);
+        return sent > 0;
+    }
+
+    func main() {
+        ws_console_utf8();
+        io.printf("监听 0.0.0.0:%u …\n", io.FmtVal.U { v: #compile.as(U64, PORT) });
+
+        let lfd: I64 = ws_start(PORT);
+        if lfd < 0 {
+            io.println(io.FmtVal.T { v: "监听失败：端口被占用 / 被防火墙拦 / 没有网络栈" });
+            return;
+        }
+        io.println(io.FmtVal.T { v: "等待 ESP8266 连接（同一 Wi-Fi 网段）…" });
+
+        let cfd: I64 = ws_accept(lfd);
+        if cfd < 0 {
+            io.println(io.FmtVal.T { v: "accept 失败，收工" });
+            ws_close(lfd);
+            return;
+        }
+        io.println(io.FmtVal.T { v: "已连上。输入中文后回车发送；空行退出。" });
+
+        region buf {
+            var line: [U8] = [0; LINE_CAP]@buf;
+            for {
+                io.print(io.FmtVal.T { v: "> " });   // 提示符（无换行，手动冲洗）
+                aila_rt_flush();
+                let n: I32 = ws_line(line, LINE_CAP);
+                if n < 0 {
+                    io.println(io.FmtVal.T { v: "控制台读到 EOF，收工。" });
+                    break;
+                }
+                if n == 0 {
+                    io.println(io.FmtVal.T { v: "空行 = 结束。" });
+                    break;
+                }
+                let usize_n: USize = #compile.as(USize, n);
+                if !send_line(cfd, line, usize_n) {
+                    io.println(io.FmtVal.T { v: "发送失败：对端可能已断开。" });
+                    break;
+                }
+                io.printf("[已发送 %u 字节]\n", io.FmtVal.U { v: #compile.as(U64, usize_n) });
+            }
+        }
+        ws_close(cfd);
+        ws_close(lfd);
+        io.println(io.FmtVal.T { v: "bye" });
+    }
+}

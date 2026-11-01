@@ -1,0 +1,142 @@
+// 示例 10 · concurrency_demo：并发全家族验收（designs/0001 第 10 章）
+//
+// 协程（yield / resume 三态）+ chan（SPSC 满空双挂起路径）+ thread（宿主
+// 真并发）+ 层 API 原子（#runtime.atomic_*，跨执行流共享）的组合演示。确定性约定：
+//   - 协程 / chan 段由 main 交替 resume 驱动，输出顺序恒定；
+//   - 线程段工作线程不打印，只以原子操作写共享块，main 自旋等完成标志后
+//     打聚合值与不变式判定——竞争是真并发，输出是确定的。
+// 期望输出：
+//   [coro] tick 1
+//   [coro] tick 2
+//   [coro] done: 42
+//   [coro] returned 42
+//   [chan] producer sent 3, consumer sum = 3
+//   [atomics] count = 200000 (expect 200000)
+//   [atomics] race settled exactly once: true
+//   [atomics] u8: 10 - 4 = 6 (fetch_sub old = 10)
+import std.core;
+import std.io;
+import std.time;
+
+// ---- 协程段：eager 启动跑到首个挂起点，resume 逐段推进 ----
+coroutine func stepper() -> I32 {
+    io.println(io.FmtVal.T { v: "[coro] tick 1" });
+    yield;
+    io.println(io.FmtVal.T { v: "[coro] tick 2" });
+    yield;
+    io.println(io.FmtVal.T { v: "[coro] done: 42" });
+    return 42;
+}
+
+// ---- chan 段：容量 1，消费者先启动（空则挂起），生产者连发（满则挂起） ----
+enum Cmd {
+    Data { v: I32 },
+    Eof,
+};
+
+coroutine func producer(ch: send chan Cmd) -> I32 {
+    var i: I32 = 0;
+    for i < 3 {
+        ch <- Cmd.Data { v: i };
+        i = i + 1;
+    }
+    ch <- Cmd.Eof;
+    return 3;
+}
+
+coroutine func consumer(ch: recv chan Cmd) -> I32 {
+    var sum: I32 = 0;
+    var running: Bool = true;
+    for running {
+        match <-ch {
+            .Data { v } => { sum = sum + v; },
+            .Eof        => { running = false; },
+        }
+        yield;
+    }
+    return sum;
+}
+
+// ---- thread + 原子段：跨执行流共享 = 模块级定长块 + 视图重标 + 层 API 原子 ----
+// 共享块布局（[U64; 8] 模块级 var，.data 段 8 字节对齐，§3.8 视图重标）：
+//   off 0 : U32 竞争计数器（双线程各 fetch_add 100000 次，终值必须精确）
+//   off 4 : U32 完成标志（每个线程收尾 +1，main 自旋等 4）
+//   off 8 : U32 cas 抢占槽（期望 0 → 写 1，谁抢到谁赢）
+//   off 16: U64 赢家 / off 24: U64 输家（赢家代以不变式判定，不赌调度顺序）
+//   off 32: U8 宽度族抽查格
+var block: [U64; 8] = [0; 8];
+
+thread func counter(times: U32) {
+    view sh: [Unsafe] = block;
+    var i: U32 = 0;
+    for i < times {
+        _ = #runtime.atomic_fetch_add32(sh, 0, 1);
+        i = i + 1;
+    }
+    _ = #runtime.atomic_fetch_add32(sh, 4, 1);
+}
+
+thread func racer(id: U64) {
+    view sh: [Unsafe] = block;
+    let old = #runtime.atomic_cas32(sh, 8, 0, 1);
+    if old == 0 {
+        #runtime.atomic_store64(sh, 16, id);   // 抢占成功：旧值 = 期望
+    } else {
+        #runtime.atomic_store64(sh, 24, id);   // 抢占失败
+    }
+    _ = #runtime.atomic_fetch_add32(sh, 4, 1);
+}
+
+func main() {
+    // ---- 协程：句柄活不过区域，帧随区域整块回收 ----
+    region cw {
+        let hs = #runtime.coro(stepper);   // eager：已打印 tick 1
+        // 等完成语义（0004 §6 v2）：协程完成时才就绪，绑定值 = 完成态
+        select {
+            case r = resume hs => {
+                io.printf("[coro] returned %d\n", io.FmtVal.I { v: #compile.as(I64, r) });
+            },
+        }
+    }
+
+    // ---- chan：双端 move 唯一，main 交替驱动到双端完结 ----
+    region rw {
+        let (tx, rx) = #runtime.chan(Cmd, 1);
+        let hc = #runtime.coro(consumer, rx);   // 空通道首 recv 必挂起
+        let hp = #runtime.coro(producer, tx);
+        var p: I32 = 0;
+        var c: I32 = 0;
+        var pd: Bool = false;
+        var cd: Bool = false;
+        for !pd || !cd {
+            // 已消费的句柄永远不就绪，select 自然跳过——两个事件一路轮转到双完结
+            select {
+                case r = resume hp => { p = r; pd = true; },
+                case r = resume hc => { c = r; cd = true; },
+            }
+        }
+        io.printf("[chan] producer sent %d, consumer sum = %d\n",
+            io.FmtVal.I { v: #compile.as(I64, p) }, io.FmtVal.I { v: #compile.as(I64, c) });
+    }
+
+    // ---- thread + 原子：无 join，自旋等完成标志（§10.8） ----
+    view sh: [Unsafe] = block;
+    #runtime.spawn(counter, 100000);
+    #runtime.spawn(counter, 100000);
+    #runtime.spawn(racer, 7);
+    #runtime.spawn(racer, 9);
+    for #runtime.atomic_load32(sh, 4) < 4 {
+        time.sleep_ms(1);
+    }
+    io.printf("[atomics] count = %d (expect 200000)\n",
+        io.FmtVal.I { v: #compile.as(I64, #runtime.atomic_load32(sh, 0)) });
+    let w = #runtime.atomic_load64(sh, 16);
+    let l = #runtime.atomic_load64(sh, 24);
+    let settled: Bool = (w == 7 && l == 9) || (w == 9 && l == 7);
+    io.printf("[atomics] race settled exactly once: %b\n", io.FmtVal.B { v: settled });
+    #runtime.atomic_store8(sh, 32, 10);
+    let old8 = #runtime.atomic_fetch_sub8(sh, 32, 4);
+    io.printf("[atomics] u8: 10 - 4 = %d (fetch_sub old = %d)\n",
+        io.FmtVal.I { v: #compile.as(I64, #runtime.atomic_load8(sh, 32)) },
+        io.FmtVal.I { v: #compile.as(I64, old8) });
+}

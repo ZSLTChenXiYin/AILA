@@ -1,0 +1,65 @@
+// AILA 标准库 · std.display（显示栈 L5）
+//
+// designs/0006 §2.2：对照 Linux 的 `*_funcs` + `Commit { buf, damage }`——但**不做运行期分派**：
+// 设备选择在应用侧用 `#compile.match` 剪枝（§2.6），所以这里没有 vtable、没有驱动注册表。
+//
+// 唯一推送通道 = 带 damage 的 commit（§2.5 / §2.7）：
+//
+//     var c: display.Commit = display.new_commit(pb);
+//     c.set_damage(dmg);                // textgrid.render 的返回 + 图形自己的 add_rect
+//     ssd1306.present(c);               // 驱动侧：按 damage 算脏页范围，只发那几页
+//
+// IoC 方向：本模块不知道任何设备存在；驱动 import 本模块与 std.paint 并调用它们。
+// 宿主 sink（PBM / ASCII）是同一份 commit 的调试出口——**L0–L4 因此可以在宿主上跑**，
+// 这是 designs/0006 §3 全部断言的落地点。
+import std.pixbuf;
+import std.pixfmt;
+import std.damage;
+
+// Commit 是一次提交：画布 + 本次脏区 + 开关屏状态。
+public struct Commit {
+    fb: pixbuf.Pixbuf,
+    dmg: damage.Damage,
+    enable: Bool,
+};
+
+// new_commit 包一个 commit（脏区由调用方随后 set_damage 覆盖）。
+// 句柄形态：dmg 是 8 字节的 Damage 句柄，区域内存由调用方持有。
+public func new_commit(fb: pixbuf.Pixbuf, dmg: damage.Damage) -> Commit;
+// Commit.set_damage 覆盖本次 commit 的脏区（驱动侧读它决定发哪几页）。
+public func Commit.set_damage(self, d: damage.Damage) @mut[self];
+// Commit.damage_of 读脏区。
+public func Commit.damage_of(self) -> damage.Damage;
+// Commit.set_enable 开关屏（false = 关闭显示，内容保留）。
+public func Commit.set_enable(self, on: Bool) @mut[self];
+// Commit.enabled 读开关屏状态。
+public func Commit.enabled(self) -> Bool;
+// Commit.buf 读画布（驱动侧取像素）。
+public func Commit.buf(self) -> pixbuf.Pixbuf;
+module {
+    public func new_commit(fb: pixbuf.Pixbuf, dmg: damage.Damage) -> Commit {
+        return Commit { fb: fb, dmg: dmg, enable: true };
+    }
+
+    public func Commit.set_damage(self, d: damage.Damage) @mut[self] {
+        self.dmg = d;
+    }
+
+    public func Commit.damage_of(self) -> damage.Damage {
+        return self.dmg;
+    }
+
+    public func Commit.set_enable(self, on: Bool) @mut[self] {
+        self.enable = on;
+    }
+
+    public func Commit.enabled(self) -> Bool {
+        return self.enable;
+    }
+
+    public func Commit.buf(self) -> pixbuf.Pixbuf {
+        return self.fb;
+    }
+
+    // 宿主 sink（PBM / ASCII）在 std.display_host：设备固件不该为调试出口付体积与依赖。
+}

@@ -1,4 +1,4 @@
-// 示例 5 · result：错误三通道（可恢复 T ! E / 可空 T? / 不可恢复 trap）
+// 示例 5 · result：错误三通道（可恢复 T ! E / 不可恢复 trap）+ match 类型模式
 //
 // 期望输出：
 //   parse(4 bytes) -> Truncated{got=4, need=8}
@@ -6,23 +6,23 @@
 //   recovered by ?: 42
 import std.io;
 
-enum ParseErr {
+#runtime.error enum ParseErr {
     BadMagic,
     Truncated { got: USize, need: USize },
 };
 
 // 可恢复通道：`T ! E`
 func parse_header(buf: [U8]) -> I32 ! ParseErr {
-    if len buf < 8 {
-        return _ ! ParseErr.Truncated { got: len buf, need: 8 };
+    if #comprun.len(buf) < 8 {
+        return .Truncated { got: #comprun.len(buf), need: 8 };
     }
     if buf[0] != 0x41 {
-        return _ ! ParseErr.BadMagic;
+        return .BadMagic;
     }
     return 0x2A;
 }
 
-// 可空通道：`T?`（句柄类才能为空）
+// 纯计算（三通道里的第三条 = 运算回绕 + #runtime.checked_*，见 v2smoke P6 段）
 func maybe_scale(v: I32, factor: I32) -> I32 {
     var scaled: I32 = 0;
     if factor != 0 {
@@ -42,33 +42,30 @@ func main() {
         var short: [U8] = [0; 4]@work;
         let r = parse_header(short);
         match r {
-            Ok  { v } => io.print_i32_nl(v),
-            Err { e } => {
+            let v: I32 => io.println(io.FmtVal.I { v: #compile.as(I64, v) }),
+            let e: ParseErr => {
                 match e {
-                    ParseErr.Truncated { got, need } => {
-                        io.print_text("parse(4 bytes) -> Truncated{got=");
-                        io.print_usize(got);
-                        io.print_text(", need=");
-                        io.print_usize(need);
-                        io.print_text("}");
-                        io.print_nl();
+                    .Truncated { got, need } => {
+                        io.printf("parse(4 bytes) -> Truncated{got=%u, need=%u}\n",
+                            io.FmtVal.U { v: #compile.as(U64, got) },
+                            io.FmtVal.U { v: #compile.as(U64, need) });
                     }
-                    _ => io.print_text("parse failed"),
+                    _ => io.println(io.FmtVal.T { v: "parse failed" }),
                 }
             }
         }
         // `?` 传播：调用方在这里把错误接住
         match read_or_default(short) {
-            Ok  { v } => io.print_i32_nl(v),
-            Err { e } => {
-                io.print_text("safe parse failed, fallback = ");
-                io.print_i32_nl(0);
+            let v: I32 => io.println(io.FmtVal.I { v: #compile.as(I64, v) }),
+            let e: ParseErr => {
+                io.println(io.FmtVal.T { v: "safe parse failed, fallback = 0" });
+                _ = e;
             }
         }
         // 显式丢弃：`_ =` 是静默丢错的法定豁免口
         _ = parse_header(short);
 
-        io.print_text("recovered by ?: ");
-        io.print_i32_nl(maybe_scale(14, 3));
+        io.print(io.FmtVal.T { v: "recovered by ?: " });
+        io.println(io.FmtVal.I { v: #compile.as(I64, maybe_scale(14, 3)) });
     }
 }

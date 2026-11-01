@@ -1,13 +1,13 @@
-// corpus: extern 变参（bindgen 产物形态）与 #[c] 无体声明
-#[c]
+// corpus: extern 变参（bindgen 产物形态）与 #compile.c 无体声明
+#compile.c
 func printf(fmt: [U8], ...);
 
-#[c]
+#compile.c
 func xTaskCreate(task: [Unsafe]?, name: [U8]?, depth: U32, arg: [Unsafe]?,
                  prio: U32, handle: [Unsafe]?) -> I32;
 
-#[c]
+#compile.c
 let errno_value: I32;
 
-#[c]
+#compile.c
 var shared_flag: U32;

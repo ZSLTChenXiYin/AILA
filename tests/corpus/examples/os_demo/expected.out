@@ -1,0 +1,17 @@
+args_count = 1
+args_get(99) -> NotFound
+AILA_DEMO = 42
+AILA_NOPE_XYZ -> NotFound
+file wrote 16 bytes
+file read back: hello from aila
+file read -> 0 (EOF)
+sleep(40) measured ok: true
+replay consistent: true
+below(10) in range: true
+base("a/b/c.txt") = [4, 9)
+dir("a/b/c.txt") = [0, 4)
+ext("a/b/c.txt") = [6, 9)
+ext("a/b/c") = [0, 0)
+join("a", "b") = a/b
+join("", "b") = b
+join("a", "/abs") = /abs

@@ -3,7 +3,7 @@
 // 期望输出：
 //   norm2(3, 4) = 10
 //   Detection{label=1 score=0.75 bbox=[1, 2, 3, 4]}
-//   #size(Detection) = 24  #align = 4
+//   sizeof(Detection) = 24  align = 4
 import std.io;
 
 struct Detection {
@@ -13,23 +13,21 @@ struct Detection {
 };
 
 func Detection.norm2(self) -> I32 {
-    return self.label * self.label + self.bbox[0] trunc I32 * self.bbox[0] trunc I32;
+    let x: I32 = #compile.as(I32, self.bbox[0]);
+    return self.label * self.label + x * x;
 }
 
 func Detection.describe(self) {
-    io.print_text("Detection{label=");
-    io.print_i32(self.label);
-    io.print_text(" score=");
-    io.print_f32(self.score);
-    io.print_text(" bbox=[");
+    io.printf("Detection{label=%d score=%f bbox=[",
+        io.FmtVal.I { v: #compile.as(I64, self.label) },
+        io.FmtVal.F { v: #compile.as(F64, self.score) });
     for i, v in self.bbox {
         if i > 0 {
-            io.print_text(", ");
+            io.print(io.FmtVal.T { v: ", " });
         }
-        io.print_i32(v trunc I32);
+        io.print(io.FmtVal.I { v: #compile.as(I64, #compile.as(I32, v)) });
     }
-    io.print_text("]");
-    io.print_nl();
+    io.println(io.FmtVal.T { v: "]}" });
 }
 
 func main() {
@@ -38,12 +36,10 @@ func main() {
         score: 0.75,
         bbox: [1.0, 2.0, 3.0, 4.0],
     };
-    io.print_text("norm2(3, 4) = ");
-    io.print_i32_nl(d.norm2());
+    io.printf("norm2(3, 4) = %d\n", io.FmtVal.I { v: #compile.as(I64, d.norm2()) });
     d.describe();
-    io.print_text("#size(Detection) = ");
-    io.print_usize(#size(Detection));
-    io.print_text("  #align = ");
-    io.print_usize(#align(Detection));
-    io.print_nl();
+    io.print(io.FmtVal.T { v: "sizeof(Detection) = " });
+    io.print(io.FmtVal.U { v: #compile.as(U64, #compile.sizeof(Detection)) });
+    io.print(io.FmtVal.T { v: "  align = " });
+    io.println(io.FmtVal.U { v: #compile.as(U64, #compile.alignof(Detection)) });
 }

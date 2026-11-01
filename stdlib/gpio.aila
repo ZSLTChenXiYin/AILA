@@ -1,0 +1,38 @@
+// AILA 标准库 · std.gpio（层 3：嵌入式通用，宿主无链接目标）
+//
+// GPIO 最小集：方向 / 写 / 读（designs/0003 §5.1）。三家族寄存器直写实现，
+// 物理常量来自各芯片 chip.json（单一事实源），rt 原语 aila_rt_gpio_*：
+//   - esp8266：GPIO@0x60000300（OUT/W1TS/W1TC/ENABLE_W1TS/W1TC/IN），引脚 0-15
+//   - esp32 / esp32s3：OUT@+0x04 / W1TS@+0x08 / W1TC@+0x0C /
+//     ENABLE_W1TS@+0x24 / W1TC@+0x28 / IN@+0x3C，位域 0-31
+//
+// M1 范围：只做 GPIO 块主寄存器。IO_MUX / pad 复用与输入使能属 pad 管理（M2），
+// read 的前置条件：pad 已配 GPIO 功能且输入使能（esp8266 pad 输入恒使能，
+// 无需配置）；esp32 系引脚 32+ 走 OUT1/ENABLE1 组寄存器（M2），越界运行期 trap。
+
+// 方向常量（mode 的 m 实参）
+public const MODE_IN: U32 = 0;
+public const MODE_OUT: U32 = 1;
+
+#compile.c func aila_rt_gpio_mode(pin: U32, m: U32);
+#compile.c func aila_rt_gpio_write(pin: U32, v: U32);
+#compile.c func aila_rt_gpio_read(pin: U32) -> U32;
+
+// mode 设引脚方向：MODE_IN（默认上电态）/ MODE_OUT
+public func mode(pin: U32, m: U32) {
+    aila_rt_gpio_mode(pin, m);
+}
+
+// write 输出电平（W1TS/W1TC 原子置位清零，不读改写）
+public func write(pin: U32, v: Bool) {
+    if v {
+        aila_rt_gpio_write(pin, 1);
+    } else {
+        aila_rt_gpio_write(pin, 0);
+    }
+}
+
+// read 采样输入电平（true = 高）
+public func read(pin: U32) -> Bool {
+    return aila_rt_gpio_read(pin) != 0;
+}

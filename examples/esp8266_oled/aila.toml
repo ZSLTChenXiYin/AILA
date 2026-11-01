@@ -1,0 +1,13 @@
+[package]
+name = "esp8266_oled"
+version = "0.1.0"
+entry = "_.main"
+
+[target]
+triple = "xtensa-esp8266-elf"
+
+[sdk]
+name = "esp8266-nosdk"
+
+[build]
+opt = 1

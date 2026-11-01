@@ -11,9 +11,9 @@ enum Color { Red, Green, Blue };
 
 func name_of(c: Color) -> Text {
     return match c {
-        Color.Red   => "red",
-        Color.Green => "green",
-        Color.Blue  => "blue",
+        .Red   => "red",
+        .Green => "green",
+        .Blue  => "blue",
     };
 }
 
@@ -23,7 +23,7 @@ func main() {
     for var i: I32 = 1; i <= 5; i = i + 1 {
         total = total + i;
     }
-    io.print_i32_nl(total);            // 15
+    io.println(io.FmtVal.I { v: #compile.as(I64, total) });            // 15
 
     // 条件循环 + break / continue
     var hits: I32 = 0;
@@ -34,18 +34,16 @@ func main() {
             done = true;
         }
     }
-    io.print_i32_nl(hits);             // 3
+    io.println(io.FmtVal.I { v: #compile.as(I64, hits) });             // 3
 
     // match 取值位置：所有分支产出同型
-    io.print_text(name_of(Color.Blue));
-    io.print_nl();
+    io.println(io.FmtVal.T { v: name_of(Color.Blue) });     // blue
 
     // for-in 双变量：i 是下标，x 是元素拷贝
     let samples: [I32] = [10, 20, 7]@static;
     for i, x in samples {
         if i == 2 {
-            io.print_text("digit: ");
-            io.print_i32_nl(x);        // digit: 7
+            io.printf("digit: %d\n", io.FmtVal.I { v: #compile.as(I64, x) });   // digit: 7
         }
     }
 }

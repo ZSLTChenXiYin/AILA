@@ -1,0 +1,129 @@
+﻿// AILA 标准库 · std.path（层 1：宿主 / 嵌入式通用）
+//
+// 路径段的零拷贝定位与拼接（designs/0003 §4.2）。视图无切片语法，
+// 段用 [start, end) 字节下标对返回（与 std.strings.bounds 同约定）。
+// 分隔符参数化：POSIX 惯用 '/'（= 47）；Windows 传 '\\'（= 92）。
+// M1 只做字节级定位，不做 UTF-8 感知（路径段定位在字节层面即可）。
+
+// SEP_POSIX 是 POSIX 路径分隔符 '/'
+const SEP_POSIX: U8 = 47;
+
+// base 返回最后一个分隔符之后的末段 [start, end)；
+// 以分隔符结尾 / 全是分隔符时 = (0, 0)（与空文本同形）
+public func base(p: Text, sep: U8) -> (USize, USize) {
+    view b: [U8] = p;
+    let n: USize = #comprun.len(b);
+    var i: USize = n;
+    for i > 0 {
+        i = i - 1;
+        if b[i] == sep {
+            return (i + 1, n);
+        }
+    }
+    return (0, n);
+}
+
+// dir 返回末段之前的部分 [start, end)（含末个分隔符）；无分隔符 = (0, 0)
+public func dir(p: Text, sep: U8) -> (USize, USize) {
+    view b: [U8] = p;
+    let n: USize = #comprun.len(b);
+    var i: USize = n;
+    for i > 0 {
+        i = i - 1;
+        if b[i] == sep {
+            return (0, i + 1);
+        }
+    }
+    return (0, 0);
+}
+
+// ext 返回末段内最后一个 '.' 之后的 [start, end)；
+// 无 '.'（或 '.' 是末段首字符 / 结尾字符）= (0, 0)
+public func ext(p: Text) -> (USize, USize) {
+    var bs: USize = 0;
+    var be: USize = 0;
+    (bs, be) = base(p, SEP_POSIX);
+    view b: [U8] = p;
+    var i: USize = be;
+    for i > bs {
+        i = i - 1;
+        let c: U8 = b[i];
+        if c == 46 {              // '.'
+            if be - (i + 1) == 0 {
+                return (0, 0);    // '.' 在末尾：无扩展名
+            }
+            return (i + 1, be);
+        }
+    }
+    return (0, 0);
+}
+
+// join 把两段路径拼进 dst（缓冲截断语义：返回 min(需要量, #comprun.len(dst))）。
+// b 以分隔符开头（绝对段）时只写 b；a 空 / b 空按单段处理。
+public func join(a: Text, b: Text, sep: U8, dst: [U8]) @mut[dst] -> USize {
+    let need: USize = join_len(a, b, sep);
+    let cap: USize = #comprun.len(dst);
+    if cap == 0 || need == 0 {
+        return 0;
+    }
+    var w: USize = 0;
+    if !has_abs(b, sep) && #comprun.len(a) > 0 {
+        // 写 a（不超过 need-1，留 1 字节给分隔符）
+        let take_a: USize = min3((need - 1), cap, #comprun.len(a));
+        blit_at(dst, 0, a, take_a);
+        w = take_a;
+        if w < cap && w < need {
+            dst[w] = sep;
+            w = w + 1;
+        }
+    }
+    if w < cap {
+        let room: USize = cap - w;
+        let take_b: USize = min3(#comprun.len(b), room, need - w);
+        if take_b > 0 {
+            blit_at(dst, w, b, take_b);
+            w = w + take_b;
+        }
+    }
+    return w;
+}
+
+// ---- 私有帮手 ----
+
+// join_len 计算拼接后的完整长度（含分隔符；b 绝对段时不重复计 a）
+func join_len(a: Text, b: Text, sep: U8) -> USize {
+    if has_abs(b, sep) || #comprun.len(a) == 0 {
+        return #comprun.len(b);
+    }
+    if #comprun.len(b) == 0 {
+        return #comprun.len(a);
+    }
+    return #comprun.len(a) + 1 + #comprun.len(b);
+}
+
+// has_abs 判断 b 是否以 sep 开头（绝对段）
+func has_abs(b: Text, sep: U8) -> Bool {
+    view bb: [U8] = b;
+    return #comprun.len(bb) > 0 && bb[0] == sep;
+}
+
+// blit_at 把 t 拷进 dst[w..w+n)
+func blit_at(dst: [U8], w: USize, t: Text, n: USize) @mut[dst] {
+    view tb: [U8] = t;
+    var i: USize = 0;
+    for i < n {
+        dst[w + i] = tb[i];
+        i = i + 1;
+    }
+}
+
+func min3(a: USize, b: USize, c: USize) -> USize {
+    var m: USize = a;
+    if b < m {
+        m = b;
+    }
+    if c < m {
+        m = c;
+    }
+    return m;
+}

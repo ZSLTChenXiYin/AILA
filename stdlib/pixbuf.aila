@@ -1,0 +1,147 @@
+// AILA 标准库 · std.pixbuf（显示栈 L1）
+//
+// designs/0006 §2.2 / §2.3：跨平台**点阵画布**。它只管「内存怎么解释成像素」——
+// 行主序 + stride（行向上对齐）+ 1bpp；**不管屏幕、不管传输、不支持滚动**。
+//
+// 三条硬契约（designs/0006 §4.1 实测坑落成 API 约束）：
+//   1. `data` 是**调用方在 region 内分配的 `[U8]` 视图**，Pixbuf 只借用、不持有、不分配；
+//      标准库里没有一处「函数内 view 模块级数组」的写法。
+//   2. 所有写操作都是**自由函数 + `@mut[pb]`**（不用 `@mut[self]` 方法）：
+//      实测 `@mut[self]` 方法经另一个函数的 `@mut[f]` 参数转发时写不回调用方内存
+//      （见 designs/0006 §4.1 第 5 条），画布这一层会被 paint / textgrid / 驱动多层转发，
+//      只有自由函数形态能保证写权一路传到像素上。
+//   3. 下标 / 越界一律在库内夹住（不 trap）：绘制是「能画多少画多少」的语义。
+import std.pixfmt;
+
+// cell 网格（designs/0006 §2.4）：8×16 像素一格；全角字占 2 格（由字库 widths 定）
+public const CELL_W: U8 = 8;
+public const CELL_H: U8 = 16;
+
+// Pixbuf 是一块画布：像素数据 + 几何 + 像素格式。
+public struct Pixbuf {
+    data: [U8],
+    w: U16,
+    h: U16,
+    stride: U16,
+    fmt: pixfmt.PixelFormat,
+};
+
+// new 把调用方的 region 内存包成 mono1 画布（stride 由格式推出）。
+public func new(data: [U8], w: U16, h: U16) -> Pixbuf;
+// new_of 指定像素格式（M1 只有 mono1，接口给未来留位）。
+public func new_of(data: [U8], w: U16, h: U16, fmt: pixfmt.PixelFormat) -> Pixbuf;
+// cap_bytes 返回 w×h mono1 画布需要的字节数（分配 `[0; n]@r` 时用）。
+public func cap_bytes(w: U16, h: U16) -> USize;
+// row_bytes 返回已对齐的行跨度（= Pixbuf.stride）。
+public func row_bytes(pb: Pixbuf) -> USize;
+// clear 整屏清零（全黑）。
+public func clear(pb: Pixbuf) @mut[pb];
+// fill 整屏填一色（mono1：true = 全亮、false = 全灭）。
+public func fill(pb: Pixbuf, on: Bool) @mut[pb];
+// set_px 置/清一个像素；越界静默返回。
+public func set_px(pb: Pixbuf, x: U16, y: U16, on: Bool) @mut[pb];
+// get_px 读一个像素；越界返回 false。
+public func get_px(pb: Pixbuf, x: U16, y: U16) -> Bool;
+// in_bounds 判断坐标是否在画布内。
+public func in_bounds(pb: Pixbuf, x: U16, y: U16) -> Bool;
+// cols / rows 返回 cell 网格的列数 / 行数（128×64 → 16×4）。
+public func cols(pb: Pixbuf) -> U16;
+public func rows(pb: Pixbuf) -> U16;
+// byte_index 返回 (x, y) 所在字节的线性下标（不检查越界，内部用）。
+public func byte_index(pb: Pixbuf, x: U16, y: U16) -> USize;
+
+module {
+    public func new(data: [U8], w: U16, h: U16) -> Pixbuf {
+        return new_of(data, w, h, pixfmt.mono1());
+    }
+
+    public func new_of(data: [U8], w: U16, h: U16, fmt: pixfmt.PixelFormat) -> Pixbuf {
+        let st: U16 = pixfmt.stride_for(fmt, w);
+        return Pixbuf { data: data, w: w, h: h, stride: st, fmt: fmt };
+    }
+
+    public func cap_bytes(w: U16, h: U16) -> USize {
+        let st: USize = #compile.as(USize, pixfmt.stride_for(pixfmt.mono1(), w));
+        return st * #compile.as(USize, h);
+    }
+
+    public func row_bytes(pb: Pixbuf) -> USize {
+        return #compile.as(USize, pb.stride);
+    }
+
+    public func clear(pb: Pixbuf) @mut[pb] {
+        fill(pb, false);
+    }
+
+    public func fill(pb: Pixbuf, on: Bool) @mut[pb] {
+        let v: U8 = 0x00;
+        var byte: U8 = v;
+        if on {
+            byte = 0xFF;
+        }
+        let n: USize = row_bytes(pb) * #compile.as(USize, pb.h);
+        let len: USize = #compile.as(USize, #comprun.len(pb.data));
+        var i: USize = 0;
+        for i < n {
+            if i >= len {
+                break;   // 缓冲区比几何小：能填多少填多少（不让越界 trap）
+            }
+            pb.data[i] = byte;
+            i = i + 1;
+        }
+    }
+
+    public func in_bounds(pb: Pixbuf, x: U16, y: U16) -> Bool {
+        if x >= pb.w {
+            return false;
+        }
+        if y >= pb.h {
+            return false;
+        }
+        return true;
+    }
+
+    public func byte_index(pb: Pixbuf, x: U16, y: U16) -> USize {
+        let row: USize = #compile.as(USize, y) * row_bytes(pb);
+        let col: USize = #compile.as(USize, pixfmt.byte_of(pb.fmt, x));
+        return row + col;
+    }
+
+    public func set_px(pb: Pixbuf, x: U16, y: U16, on: Bool) @mut[pb] {
+        if !in_bounds(pb, x, y) {
+            return;
+        }
+        let bi: USize = byte_index(pb, x, y);
+        let len: USize = #compile.as(USize, #comprun.len(pb.data));
+        if bi >= len {
+            return;
+        }
+        let mask: U8 = pixfmt.bit_of(pb.fmt, x);
+        if on {
+            pb.data[bi] = pb.data[bi] | mask;
+        } else {
+            pb.data[bi] = pb.data[bi] & (~mask);
+        }
+    }
+
+    public func get_px(pb: Pixbuf, x: U16, y: U16) -> Bool {
+        if !in_bounds(pb, x, y) {
+            return false;
+        }
+        let bi: USize = byte_index(pb, x, y);
+        let len: USize = #compile.as(USize, #comprun.len(pb.data));
+        if bi >= len {
+            return false;
+        }
+        let mask: U8 = pixfmt.bit_of(pb.fmt, x);
+        return (pb.data[bi] & mask) != 0;
+    }
+
+    public func cols(pb: Pixbuf) -> U16 {
+        return pb.w / #compile.as(U16, CELL_W);
+    }
+
+    public func rows(pb: Pixbuf) -> U16 {
+        return pb.h / #compile.as(U16, CELL_H);
+    }
+}

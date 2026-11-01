@@ -1,0 +1,125 @@
+// AILA 标准库 · std.display_host（显示栈 L5 的**宿主调试出口**）
+//
+// designs/0006 §3：L0–L4 全是纯 AILA、零 runtime，所以整套显示栈能在宿主上跑。
+// 这一层就是那份「宿主 golden」的出口：把 commit 的画布打成 PBM(P4) 或 ASCII。
+//
+// **为什么单独一个模块而不是塞进 std.display**：两条硬理由
+//   1. 嵌入式固件不该为调试出口付体积/依赖——它要 std.io（Writer / 格式化），
+//      而设备侧只 import std.display 就够（designs/0006 §4.1 第 9 条实测：
+//      xtensa 上这个模块的格式化循环会把寄存器分配顶崩，本就不该进固件）；
+//   2. 分层清白：设备驱动 import std.display，宿主测试 import std.display_host。
+import std.pixbuf;
+import std.pixfmt;
+import std.damage;
+import std.display;
+import std.io;
+
+// sink_host_pbm 把画布按 PBM(P4) 打到 stdout：1 = 黑（PBM 定义），与画布「1 = 点亮」同型，
+// 于是看图工具里就是「白底黑字」。跳过行对齐填充，逐行只写 ceil(w/8) 字节。
+public func sink_host_pbm(c: display.Commit);
+// sink_host_ascii 把画布按 '#'（点亮）/ '.'（灭）打到 stdout，一行一条。
+public func sink_host_ascii(c: display.Commit);
+
+module {
+    // digits_u64 返回 v 的十进制位数（0 → 1）
+    func digits_u64(v: U64) -> USize {
+        var x: U64 = v;
+        var n: USize = 1;
+        for x >= 10 {
+            x = x / 10;
+            n = n + 1;
+        }
+        return n;
+    }
+
+    // fill_dec 把 v 的十进制（定宽 nd 位）写进 buf[off .. off+nd)
+    func fill_dec(v: U64, buf: [U8], off: USize, nd: USize) @mut[buf] {
+        var y: U64 = v;
+        var i: USize = off + nd;
+        for i > off {
+            i = i - 1;
+            let dg: U64 = y % 10;
+            buf[i] = #compile.as(U8, #compile.as(U32, dg) + 48);
+            y = y / 10;
+        }
+    }
+
+    // put_dec 把 v 的十进制写成一行到 writer（动态长度 = 位数占的缓冲）
+    func put_dec(w: io.Writer, v: U64, nd: USize) @region[r] {
+        var buf: [U8] = [0; nd]@r;
+        fill_dec(v, buf, 0, nd);
+        _ = w.put(buf);
+    }
+
+    public func sink_host_pbm(c: display.Commit) {
+        let w: io.Writer = io.stdout();
+        let fb: pixbuf.Pixbuf = c.buf();
+        if fb.w == 0 || fb.h == 0 {
+            return;
+        }
+        let rb: USize = #compile.as(USize, pixfmt.row_bytes(fb.fmt, fb.w));
+        let dw: USize = digits_u64(#compile.as(U64, fb.w));
+        let dh: USize = digits_u64(#compile.as(U64, fb.h));
+        // 头："P4\n" + w + " " + h + "\n"（3 + dw + 1 + dh + 1）
+        region pbm {
+            put_bytes(w, "P4\n");
+            put_dec(w, #compile.as(U64, fb.w), dw)@[pbm];
+            put_bytes(w, " ");
+            put_dec(w, #compile.as(U64, fb.h), dh)@[pbm];
+            put_bytes(w, "\n");
+            // 逐行：跳过 stride 里的对齐填充，只写 ceil(w/8) 字节
+            sink_rows(w, fb, rb)@[pbm];
+        }
+    }
+
+    func put_bytes(w: io.Writer, t: Text) {
+        view b: [U8] = t;
+        _ = w.put(b);
+    }
+
+    func sink_rows(w: io.Writer, fb: pixbuf.Pixbuf, rb: USize) @region[r] {
+        let rs: USize = #compile.as(USize, fb.stride);
+        var row: [U8] = [0; rb]@r;
+        var y: USize = 0;
+        for y < #compile.as(USize, fb.h) {
+            var i: USize = 0;
+            for i < rb {
+                row[i] = fb.data[y * rs + i];
+                i = i + 1;
+            }
+            _ = w.put(row);
+            y = y + 1;
+        }
+    }
+
+    public func sink_host_ascii(c: display.Commit) {
+        let w: io.Writer = io.stdout();
+        let fb: pixbuf.Pixbuf = c.buf();
+        if fb.w == 0 || fb.h == 0 {
+            return;
+        }
+        region asc {
+            ascii_rows(w, fb)@[asc];
+        }
+    }
+
+    func ascii_rows(w: io.Writer, fb: pixbuf.Pixbuf) @region[r] {
+        let lw: USize = #compile.as(USize, fb.w) + 1;
+        var line: [U8] = [0; lw]@r;
+        var y: USize = 0;
+        for y < #compile.as(USize, fb.h) {
+            var x: USize = 0;
+            for x < #compile.as(USize, fb.w) {
+                var ch: U8 = 46;   // '.'
+                if pixbuf.get_px(fb, #compile.as(U16, x), #compile.as(U16, y)) {
+                    ch = 35;       // '#'
+                }
+                line[x] = ch;
+                x = x + 1;
+            }
+            line[lw - 1] = 10;     // '\n'
+            _ = w.put(line);
+            y = y + 1;
+        }
+    }
+}

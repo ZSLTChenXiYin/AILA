@@ -1,0 +1,218 @@
+// 示例 8 · stdlib_demo：批次 1 五个纯库模块验收（designs/0003 §3）
+//
+// strconv / strings / utf8 / binary / sort 的往返与错误通道演示。
+//
+// 期望输出：
+//   parse_i64("  -42") = -42
+//   parse_i64("12x") -> Invalid{at=2}
+//   parse_i64("9223372036854775808") -> Range
+//   parse_u64(max) = 18446744073709551615
+//   parse_f64("2.5e-1") = 0.25
+//   format_i64(-42) = -42 (3 bytes)
+//   format_u64(max) = 18446744073709551615 (20 bytes)
+//   format_f64(0.5) = 0.5
+//   index("hello, AILA", "AILA") = 7
+//   contains("...", "zzz") = false
+//   has_prefix("hello", "he") = true  has_suffix("hello", "lo") = true
+//   len_runes("a中b") = 3  cp_at(1) = 20013  valid = true
+//   cp_at(越界) = 4294967295 (哨兵)
+//   bounds("  hi  ") = [2, 4)
+//   concat -> abc (3, cap 3 截断)
+//   concat -> abc42 (5)
+//   split("a,b,c") = 3 段 marks: 0 2 4
+//   join -> x-y-z (5)
+//   replace -> a!b!c (5)
+//   upper -> AILA  lower -> aila
+//   le/be roundtrip: 1234605616436508552 / 9833440827789222417
+//   i16 -2 roundtrip = -2
+//   sort asc: 3 7 9 12   desc: 12 9 7 3
+import std.io;
+import std.strconv;
+import std.strings;
+import std.utf8;
+import std.binary;
+import std.sort;
+
+// desc_i64 是演示用「严格先序」：a 大者排前（降序）。
+func desc_i64(a: I64, b: I64) -> Bool {
+    return a > b;
+}
+
+// show_bytes 把 buf[0..n) 原样写上 stdout（缓冲打印：视图无切片，
+// 拷进等长临时再整段 put）。
+func show_bytes(buf: [U8], n: USize) @region[r] {
+    if n == 0 {
+        return;
+    }
+    var tmp: [U8] = [0; n]@r;
+    var i: USize = 0;
+    for i < n {
+        tmp[i] = buf[i];
+        i = i + 1;
+    }
+    _ = io.stdout().put(tmp);
+}
+
+func main() {
+    region work {
+        // ---- strconv：解析三通道 ----
+        match strconv.parse_i64("  -42") {
+            let v: I64 => { io.printf("parse_i64(\"  -42\") = %d\n", io.FmtVal.I { v: v }); },
+            let e: strconv.Err => { io.println(io.FmtVal.T { v: "unexpected" }); _ = e; },
+        }
+        match strconv.parse_i64("12x") {
+            let v: I64 => { io.println(io.FmtVal.T { v: "unexpected" }); _ = v; },
+            let e: strconv.Err => {
+                match e {
+                    .Invalid { at } => {
+                        io.printf("parse_i64(\"12x\") -> Invalid{at=%u}\n",
+                            io.FmtVal.U { v: #compile.as(U64, at) });
+                    },
+                    _ => { io.println(io.FmtVal.T { v: "other" }); },
+                }
+            },
+        }
+        match strconv.parse_i64("9223372036854775808") {
+            let v: I64 => { io.println(io.FmtVal.T { v: "unexpected" }); _ = v; },
+            let e: strconv.Err => {
+                match e {
+                    .Range => {
+                        io.println(io.FmtVal.T { v: "parse_i64(\"9223372036854775808\") -> Range" });
+                    },
+                    _ => { io.println(io.FmtVal.T { v: "other" }); },
+                }
+            },
+        }
+        match strconv.parse_u64("18446744073709551615") {
+            let v: U64 => { io.printf("parse_u64(max) = %u\n", io.FmtVal.U { v: v }); },
+            let e: strconv.Err => { io.println(io.FmtVal.T { v: "unexpected" }); _ = e; },
+        }
+        match strconv.parse_f64("2.5e-1") {
+            let v: F64 => { io.printf("parse_f64(\"2.5e-1\") = %f\n", io.FmtVal.F { v: v }); },
+            let e: strconv.Err => { io.println(io.FmtVal.T { v: "unexpected" }); _ = e; },
+        }
+
+        // ---- strconv：格式化到调用方缓冲 ----
+        var fbuf: [U8] = [0; 40]@work;
+        var n: USize = strconv.format_i64(-42, fbuf);
+        io.print(io.FmtVal.T { v: "format_i64(-42) = " });
+        show_bytes(fbuf, n)@[work];
+        io.printf(" (%u bytes)\n", io.FmtVal.U { v: #compile.as(U64, n) });
+        n = strconv.format_u64(0xFFFFFFFFFFFFFFFF, fbuf);
+        io.print(io.FmtVal.T { v: "format_u64(max) = " });
+        show_bytes(fbuf, n)@[work];
+        io.printf(" (%u bytes)\n", io.FmtVal.U { v: #compile.as(U64, n) });
+        n = strconv.format_f64(0.5, fbuf);
+        io.print(io.FmtVal.T { v: "format_f64(0.5) = " });
+        show_bytes(fbuf, n)@[work];
+        io.println(io.FmtVal.T { v: "" });
+
+        // ---- strings：查询 ----
+        io.printf("index(\"hello, AILA\", \"AILA\") = %u\n",
+            io.FmtVal.U { v: #compile.as(U64, strings.index("hello, AILA", "AILA")) });
+        io.printf("contains(\"hello, AILA\", \"zzz\") = %b\n",
+            io.FmtVal.B { v: strings.contains("hello, AILA", "zzz") });
+        io.printf("has_prefix(\"hello\", \"he\") = %b  has_suffix(\"hello\", \"lo\") = %b\n",
+            io.FmtVal.B { v: strings.has_prefix("hello", "he") },
+            io.FmtVal.B { v: strings.has_suffix("hello", "lo") });
+
+        // ---- utf8：码点统计 / 解码 / 结构校验 ----
+        io.printf("len_runes(\"a中b\") = %u  cp_at(1) = %u  valid = %b\n",
+            io.FmtVal.U { v: #compile.as(U64, strings.len_runes("a中b")) },
+            io.FmtVal.U { v: #compile.as(U64, utf8.cp_at("a中b", 1)) },
+            io.FmtVal.B { v: utf8.valid("a中b") });
+        io.printf("cp_at(越界) = %u (哨兵)\n",
+            io.FmtVal.U { v: #compile.as(U64, utf8.cp_at("ab", 5)) });
+
+        // ---- strings：区间与构造 ----
+        var s: USize = 0;
+        var e: USize = 0;
+        (s, e) = strings.bounds("  hi  ");
+        io.printf("bounds(\"  hi  \") = [%u, %u)\n",
+            io.FmtVal.U { v: #compile.as(U64, s) },
+            io.FmtVal.U { v: #compile.as(U64, e) });
+
+        var small: [U8] = [0; 3]@work;
+        n = strings.concat("abc", "42", small);
+        io.print(io.FmtVal.T { v: "concat -> " });
+        show_bytes(small, n)@[work];
+        io.printf(" (%u, cap 3 截断)\n", io.FmtVal.U { v: #compile.as(U64, n) });
+
+        var buf: [U8] = [0; 40]@work;
+        n = strings.concat("abc", "42", buf);
+        io.print(io.FmtVal.T { v: "concat -> " });
+        show_bytes(buf, n)@[work];
+        io.printf(" (%u)\n", io.FmtVal.U { v: #compile.as(U64, n) });
+
+        var marks: [USize] = [0; 8]@work;
+        let segs: USize = strings.split("a,b,c", 44, marks);
+        io.print(io.FmtVal.T { v: "split(\"a,b,c\") = " });
+        io.print(io.FmtVal.U { v: #compile.as(U64, segs) });
+        io.print(io.FmtVal.T { v: " 段 marks: " });
+        var k: USize = 0;
+        for k < segs {
+            io.print(io.FmtVal.U { v: #compile.as(U64, marks[k]) });
+            if k + 1 < segs {
+                io.print(io.FmtVal.T { v: " " });
+            }
+            k = k + 1;
+        }
+        io.println(io.FmtVal.T { v: "" });
+
+        n = strings.join(buf, 45, "x", "y", "z");
+        io.print(io.FmtVal.T { v: "join -> " });
+        show_bytes(buf, n)@[work];
+        io.printf(" (%u)\n", io.FmtVal.U { v: #compile.as(U64, n) });
+
+        n = strings.replace("a?b?c", "?", "!", buf);
+        io.print(io.FmtVal.T { v: "replace -> " });
+        show_bytes(buf, n)@[work];
+        io.printf(" (%u)\n", io.FmtVal.U { v: #compile.as(U64, n) });
+
+        n = strings.upper_ascii("aila", buf);
+        io.print(io.FmtVal.T { v: "upper -> " });
+        show_bytes(buf, n)@[work];
+        io.print(io.FmtVal.T { v: "  lower -> " });
+        n = strings.lower_ascii("AILA", buf);
+        show_bytes(buf, n)@[work];
+        io.println(io.FmtVal.T { v: "" });
+
+        // ---- binary：LE 写入 → LE 读回 / BE 读回 ----
+        var bbuf: [U8] = [0; 16]@work;
+        binary.le_write_u64(bbuf, 0, 0x1122334455667788);
+        io.printf("le/be roundtrip: %u / %u\n",
+            io.FmtVal.U { v: binary.le_read_u64(bbuf, 0) },
+            io.FmtVal.U { v: binary.be_read_u64(bbuf, 0) });
+        binary.le_write_i16(bbuf, 8, -2);
+        io.printf("i16 -2 roundtrip = %d\n",
+            io.FmtVal.I { v: #compile.as(I64, binary.le_read_i16(bbuf, 8)) });
+
+        // ---- sort：升序 + 自定义比较子降序 ----
+        var a: [I64] = [0; 4]@work;
+        a[0] = 9;
+        a[1] = 3;
+        a[2] = 12;
+        a[3] = 7;
+        sort.sort_i64(a);
+        io.print(io.FmtVal.T { v: "sort asc: " });
+        k = 0;
+        for k < 4 {
+            io.print(io.FmtVal.I { v: a[k] });
+            if k + 1 < 4 {
+                io.print(io.FmtVal.T { v: " " });
+            }
+            k = k + 1;
+        }
+        sort.sort_i64_by(a, desc_i64);
+        io.print(io.FmtVal.T { v: "   desc: " });
+        k = 0;
+        for k < 4 {
+            io.print(io.FmtVal.I { v: a[k] });
+            if k + 1 < 4 {
+                io.print(io.FmtVal.T { v: " " });
+            }
+            k = k + 1;
+        }
+        io.println(io.FmtVal.T { v: "" });
+    }
+}

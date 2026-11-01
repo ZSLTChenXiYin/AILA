@@ -2,13 +2,12 @@
 ; target: x86_64-w64-windows-gnu
 target triple = "x86_64-w64-windows-gnu"
 
-@.str.0 = private unnamed_addr constant [17 x i8] c"integer overflow\00", align 1
+@.str.0 = private unnamed_addr constant [28 x i8] c"match \E6\9C\AA\E8\A6\86\E7\9B\96\E7\9A\84\E5\88\A4\E5\88\AB\E5\80\BC\00", align 1
 @.str.1 = private unnamed_addr constant [10 x i8] c"main.aila\00", align 1
-@.str.2 = private unnamed_addr constant [28 x i8] c"match \E6\9C\AA\E8\A6\86\E7\9B\96\E7\9A\84\E5\88\A4\E5\88\AB\E5\80\BC\00", align 1
-@.str.3 = private unnamed_addr constant [17 x i8] c"division by zero\00", align 1
-@.str.4 = private unnamed_addr constant [29 x i8] c"integer overflow in division\00", align 1
-@.str.5 = private unnamed_addr constant [20 x i8] c"index out of bounds\00", align 1
-@.str.6 = private unnamed_addr constant [5 x i8] c"wide\00", align 1
+@.str.2 = private unnamed_addr constant [17 x i8] c"division by zero\00", align 1
+@.str.3 = private unnamed_addr constant [29 x i8] c"integer overflow in division\00", align 1
+@.str.4 = private unnamed_addr constant [20 x i8] c"index out of bounds\00", align 1
+@.str.5 = private unnamed_addr constant [5 x i8] c"wide\00", align 1
 
 declare void @aila_rt_trap(ptr, i64, ptr, i64)
 declare ptr @aila_rt_region_enter(i64)
@@ -22,15 +21,8 @@ define i32 @aila_main__Pair__sum({ i32, i32 } %p_self) {
   %t2 = load i32, ptr %t1
   %t3 = getelementptr inbounds { i32, i32 }, ptr %slot_self_1, i32 0, i32 1
   %t4 = load i32, ptr %t3
-  %t5 = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 %t2, i32 %t4)
-  %t6 = extractvalue { i32, i1 } %t5, 0
-  %t7 = extractvalue { i32, i1 } %t5, 1
-  br i1 %t7, label %chk.bad2, label %chk.ok1
-chk.bad2:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 17)
-  unreachable
-chk.ok1:
-  ret i32 %t6
+  %t5 = add i32 %t2, %t4
+  ret i32 %t5
 }
 
 define i32 @aila_main__classify(i32 %p_n) {
@@ -112,7 +104,7 @@ m.next6:
   %t6 = icmp eq i8 %t3, 2
   br i1 %t6, label %m.arm24, label %m.next7
 m.next7:
-  call void @aila_rt_trap(ptr @.str.2, i64 27, ptr @.str.1, i64 37)
+  call void @aila_rt_trap(ptr @.str.0, i64 27, ptr @.str.1, i64 38)
   unreachable
 m.arm02:
   %t7 = getelementptr inbounds { i8, { i32, i32 } }, ptr %slot___head_6, i32 0, i32 1, i32 0
@@ -120,54 +112,34 @@ m.arm02:
   store i32 %t8, ptr %slot_r_2
   %t9 = load i32, ptr %slot_r_2
   %t10 = load i32, ptr %slot_r_2
-  %t11 = call { i32, i1 } @llvm.smul.with.overflow.i32(i32 %t9, i32 %t10)
-  %t12 = extractvalue { i32, i1 } %t11, 0
-  %t13 = extractvalue { i32, i1 } %t11, 1
-  br i1 %t13, label %chk.bad9, label %chk.ok8
-chk.bad9:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 38)
-  unreachable
-chk.ok8:
-  %t14 = call { i32, i1 } @llvm.smul.with.overflow.i32(i32 %t12, i32 3)
-  %t15 = extractvalue { i32, i1 } %t14, 0
-  %t16 = extractvalue { i32, i1 } %t14, 1
-  br i1 %t16, label %chk.bad11, label %chk.ok10
-chk.bad11:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 38)
-  unreachable
-chk.ok10:
-  store i32 %t15, ptr %slot___match_5
+  %t11 = mul i32 %t9, %t10
+  %t12 = mul i32 %t11, 3
+  store i32 %t12, ptr %slot___match_5
   br label %m.end1
 m.arm13:
-  %t17 = getelementptr inbounds { i8, { i32, i32 } }, ptr %slot___head_6, i32 0, i32 1, i32 0
-  %t18 = load i32, ptr %t17
-  store i32 %t18, ptr %slot_w_3
-  %t19 = getelementptr inbounds { i8, { i32, i32 } }, ptr %slot___head_6, i32 0, i32 1, i32 1
-  %t20 = load i32, ptr %t19
-  store i32 %t20, ptr %slot_h_4
-  %t21 = load i32, ptr %slot_w_3
-  %t22 = load i32, ptr %slot_h_4
-  %t23 = call { i32, i1 } @llvm.smul.with.overflow.i32(i32 %t21, i32 %t22)
-  %t24 = extractvalue { i32, i1 } %t23, 0
-  %t25 = extractvalue { i32, i1 } %t23, 1
-  br i1 %t25, label %chk.bad13, label %chk.ok12
-chk.bad13:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 39)
-  unreachable
-chk.ok12:
-  store i32 %t24, ptr %slot___match_5
+  %t13 = getelementptr inbounds { i8, { i32, i32 } }, ptr %slot___head_6, i32 0, i32 1, i32 0
+  %t14 = load i32, ptr %t13
+  store i32 %t14, ptr %slot_w_3
+  %t15 = getelementptr inbounds { i8, { i32, i32 } }, ptr %slot___head_6, i32 0, i32 1, i32 1
+  %t16 = load i32, ptr %t15
+  store i32 %t16, ptr %slot_h_4
+  %t17 = load i32, ptr %slot_w_3
+  %t18 = load i32, ptr %slot_h_4
+  %t19 = mul i32 %t17, %t18
+  store i32 %t19, ptr %slot___match_5
   br label %m.end1
 m.arm24:
   store i32 0, ptr %slot___match_5
   br label %m.end1
 m.end1:
-  %t26 = load i32, ptr %slot___match_5
-  ret i32 %t26
+  %t20 = load i32, ptr %slot___match_5
+  ret i32 %t20
 }
 
 define { i1, i32, i32 } @aila_main__safe_div(i32 %p_a, i32 %p_b) {
   %slot_a_1 = alloca i32, align 8
   %slot_b_2 = alloca i32, align 8
+  %slot___lit_3 = alloca i32, align 8
   store i32 %p_a, ptr %slot_a_1
   store i32 %p_b, ptr %slot_b_2
   %t1 = load i32, ptr %slot_b_2
@@ -185,13 +157,13 @@ if.end1:
   %t7 = icmp eq i32 %t6, 0
   br i1 %t7, label %chk.bad5, label %chk.ok4
 chk.bad5:
-  call void @aila_rt_trap(ptr @.str.3, i64 16, ptr @.str.1, i64 48)
+  call void @aila_rt_trap(ptr @.str.2, i64 16, ptr @.str.1, i64 49)
   unreachable
 chk.ok4:
   %t8 = icmp eq i32 %t5, -2147483648
   br i1 %t8, label %chk.bad7, label %chk.ok6
 chk.bad7:
-  call void @aila_rt_trap(ptr @.str.4, i64 28, ptr @.str.1, i64 48)
+  call void @aila_rt_trap(ptr @.str.3, i64 28, ptr @.str.1, i64 49)
   unreachable
 chk.ok6:
   %t9 = sdiv i32 %t5, %t6
@@ -220,17 +192,17 @@ try.ok1:
   store i32 %t7, ptr %slot_q_2
   %t8 = load i32, ptr %slot_q_2
   %t9 = load i32, ptr %slot_q_2
-  %t10 = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 %t8, i32 %t9)
-  %t11 = extractvalue { i32, i1 } %t10, 0
-  %t12 = extractvalue { i32, i1 } %t10, 1
-  br i1 %t12, label %chk.bad4, label %chk.ok3
-chk.bad4:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 53)
-  unreachable
-chk.ok3:
-  %t13 = insertvalue { i1, i32, i32 } undef, i1 1, 0
-  %t14 = insertvalue { i1, i32, i32 } %t13, i32 %t11, 1
-  ret { i1, i32, i32 } %t14
+  %t10 = add i32 %t8, %t9
+  %t11 = insertvalue { i1, i32, i32 } undef, i1 1, 0
+  %t12 = insertvalue { i1, i32, i32 } %t11, i32 %t10, 1
+  ret { i1, i32, i32 } %t12
+}
+
+define { ptr, i64 } @aila_main__wrap_text({ ptr, i64 } %p_t) {
+  %slot_t_1 = alloca { ptr, i64 }, align 8
+  store { ptr, i64 } %p_t, ptr %slot_t_1
+  %t1 = load { ptr, i64 }, ptr %slot_t_1
+  ret { ptr, i64 } %t1
 }
 
 define i32 @aila_main__sum_view({ ptr, i64 } %p_buf) {
@@ -262,23 +234,16 @@ fi.body4:
   %t10 = load i32, ptr %slot_s_2
   %t11 = load i8, ptr %slot_x_3
   %t12 = zext i8 %t11 to i32
-  %t13 = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 %t10, i32 %t12)
-  %t14 = extractvalue { i32, i1 } %t13, 0
-  %t15 = extractvalue { i32, i1 } %t13, 1
-  br i1 %t15, label %chk.bad6, label %chk.ok5
-chk.bad6:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 59)
-  unreachable
-chk.ok5:
-  store i32 %t14, ptr %slot_s_2
+  %t13 = add i32 %t10, %t12
+  store i32 %t13, ptr %slot_s_2
   br label %fi.step3
 fi.step3:
-  %t16 = add i64 %t5, 1
-  store i64 %t16, ptr %slot___idx_4
+  %t14 = add i64 %t5, 1
+  store i64 %t14, ptr %slot___idx_4
   br label %fi.cond2
 for.end1:
-  %t17 = load i32, ptr %slot_s_2
-  ret i32 %t17
+  %t15 = load i32, ptr %slot_s_2
+  ret i32 %t15
 }
 
 define i32 @aila_main__mixed(i32 %p_a, i32 %p_b) {
@@ -308,116 +273,67 @@ if.end5:
   %t5 = load i32, ptr %slot_acc_3
   %t6 = load i32, ptr %slot_a_1
   %t7 = load i32, ptr %slot_i_4
-  %t8 = call { i32, i1 } @llvm.smul.with.overflow.i32(i32 %t6, i32 %t7)
-  %t9 = extractvalue { i32, i1 } %t8, 0
-  %t10 = extractvalue { i32, i1 } %t8, 1
-  br i1 %t10, label %chk.bad9, label %chk.ok8
-chk.bad9:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 70)
-  unreachable
-chk.ok8:
-  %t11 = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 %t5, i32 %t9)
-  %t12 = extractvalue { i32, i1 } %t11, 0
-  %t13 = extractvalue { i32, i1 } %t11, 1
-  br i1 %t13, label %chk.bad11, label %chk.ok10
-chk.bad11:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 70)
-  unreachable
-chk.ok10:
-  store i32 %t12, ptr %slot_acc_3
+  %t8 = mul i32 %t6, %t7
+  %t9 = add i32 %t5, %t8
+  store i32 %t9, ptr %slot_acc_3
   br label %for.step3
 for.step3:
-  %t14 = load i32, ptr %slot_i_4
-  %t15 = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 %t14, i32 1)
-  %t16 = extractvalue { i32, i1 } %t15, 0
-  %t17 = extractvalue { i32, i1 } %t15, 1
-  br i1 %t17, label %chk.bad13, label %chk.ok12
-chk.bad13:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 66)
-  unreachable
-chk.ok12:
-  store i32 %t16, ptr %slot_i_4
+  %t10 = load i32, ptr %slot_i_4
+  %t11 = add i32 %t10, 1
+  store i32 %t11, ptr %slot_i_4
   br label %for.cond2
 for.end1:
-  %t18 = load i32, ptr %slot_a_1
-  %t19 = load i32, ptr %slot_b_2
-  %t20 = icmp sgt i32 %t18, %t19
-  br i1 %t20, label %if.then15, label %if.next16
-if.then15:
-  %t21 = load i32, ptr %slot_acc_3
-  %t22 = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 %t21, i32 1)
-  %t23 = extractvalue { i32, i1 } %t22, 0
-  %t24 = extractvalue { i32, i1 } %t22, 1
-  br i1 %t24, label %chk.bad18, label %chk.ok17
-chk.bad18:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 73)
-  unreachable
-chk.ok17:
+  %t12 = load i32, ptr %slot_a_1
+  %t13 = load i32, ptr %slot_b_2
+  %t14 = icmp sgt i32 %t12, %t13
+  br i1 %t14, label %if.then9, label %if.next10
+if.then9:
+  %t15 = load i32, ptr %slot_acc_3
+  %t16 = add i32 %t15, 1
+  store i32 %t16, ptr %slot_acc_3
+  br label %if.end8
+if.next10:
+  %t17 = load i32, ptr %slot_a_1
+  %t18 = load i32, ptr %slot_b_2
+  %t19 = icmp eq i32 %t17, %t18
+  br i1 %t19, label %if.then11, label %if.next12
+if.then11:
+  %t20 = load i32, ptr %slot_acc_3
+  %t21 = add i32 %t20, 2
+  store i32 %t21, ptr %slot_acc_3
+  br label %if.end8
+if.next12:
+  %t22 = load i32, ptr %slot_acc_3
+  %t23 = add i32 %t22, 3
   store i32 %t23, ptr %slot_acc_3
-  br label %if.end14
-if.next16:
-  %t25 = load i32, ptr %slot_a_1
-  %t26 = load i32, ptr %slot_b_2
-  %t27 = icmp eq i32 %t25, %t26
-  br i1 %t27, label %if.then19, label %if.next20
-if.then19:
-  %t28 = load i32, ptr %slot_acc_3
-  %t29 = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 %t28, i32 2)
-  %t30 = extractvalue { i32, i1 } %t29, 0
-  %t31 = extractvalue { i32, i1 } %t29, 1
-  br i1 %t31, label %chk.bad22, label %chk.ok21
-chk.bad22:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 75)
-  unreachable
-chk.ok21:
-  store i32 %t30, ptr %slot_acc_3
-  br label %if.end14
-if.next20:
-  %t32 = load i32, ptr %slot_acc_3
-  %t33 = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 %t32, i32 3)
-  %t34 = extractvalue { i32, i1 } %t33, 0
-  %t35 = extractvalue { i32, i1 } %t33, 1
-  br i1 %t35, label %chk.bad24, label %chk.ok23
-chk.bad24:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 77)
-  unreachable
-chk.ok23:
-  store i32 %t34, ptr %slot_acc_3
-  br label %if.end14
-if.end14:
-  %t36 = load i32, ptr %slot_a_1
-  %t37 = load i32, ptr %slot_b_2
-  %t38 = icmp eq i32 %t36, %t37
-  %t39 = xor i1 %t38, true
-  br i1 %t39, label %sc.r29, label %sc.l28
-sc.l28:
+  br label %if.end8
+if.end8:
+  %t24 = load i32, ptr %slot_a_1
+  %t25 = load i32, ptr %slot_b_2
+  %t26 = icmp eq i32 %t24, %t25
+  %t27 = xor i1 %t26, true
+  br i1 %t27, label %sc.r17, label %sc.l16
+sc.l16:
   store i1 0, ptr %slot___sc_5
-  br label %sc.end30
-sc.r29:
-  %t40 = load i32, ptr %slot_b_2
-  %t41 = icmp ne i32 %t40, 0
-  store i1 %t41, ptr %slot___sc_5
-  br label %sc.end30
-sc.end30:
-  %t42 = load i1, ptr %slot___sc_5
-  br i1 %t42, label %if.then26, label %if.next27
-if.then26:
-  %t43 = load i32, ptr %slot_acc_3
-  %t44 = call { i32, i1 } @llvm.ssub.with.overflow.i32(i32 %t43, i32 1)
-  %t45 = extractvalue { i32, i1 } %t44, 0
-  %t46 = extractvalue { i32, i1 } %t44, 1
-  br i1 %t46, label %chk.bad32, label %chk.ok31
-chk.bad32:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 80)
-  unreachable
-chk.ok31:
-  store i32 %t45, ptr %slot_acc_3
-  br label %if.end25
-if.next27:
-  br label %if.end25
-if.end25:
-  %t47 = load i32, ptr %slot_acc_3
-  ret i32 %t47
+  br label %sc.end18
+sc.r17:
+  %t28 = load i32, ptr %slot_b_2
+  %t29 = icmp ne i32 %t28, 0
+  store i1 %t29, ptr %slot___sc_5
+  br label %sc.end18
+sc.end18:
+  %t30 = load i1, ptr %slot___sc_5
+  br i1 %t30, label %if.then14, label %if.next15
+if.then14:
+  %t31 = load i32, ptr %slot_acc_3
+  %t32 = sub i32 %t31, 1
+  store i32 %t32, ptr %slot_acc_3
+  br label %if.end13
+if.next15:
+  br label %if.end13
+if.end13:
+  %t33 = load i32, ptr %slot_acc_3
+  ret i32 %t33
 }
 
 define void @aila_main__main() {
@@ -446,11 +362,10 @@ define void @aila_main__main() {
   %slot___lit_23 = alloca { i8, { i32, i32 } }, align 8
   %slot___sc_24 = alloca i1, align 8
   %slot___arr_25 = alloca [4 x i32], align 8
-  %slot___lit_26 = alloca { ptr, i64 }, align 8
-  %slot___head_27 = alloca { ptr, i64 }, align 8
-  %slot___head_28 = alloca { i1, i32, i32 }, align 8
-  %slot___head_29 = alloca i32, align 8
-  %slot___destr_30 = alloca { i32, i32 }, align 8
+  %slot___head_26 = alloca { ptr, i64 }, align 8
+  %slot___head_27 = alloca { i1, i32, i32 }, align 8
+  %slot___head_28 = alloca i32, align 8
+  %slot___destr_29 = alloca { i32, i32 }, align 8
   %t1 = getelementptr inbounds { i32, i32 }, ptr %slot___lit_22, i32 0, i32 0
   store i32 3, ptr %t1
   %t2 = getelementptr inbounds { i32, i32 }, ptr %slot___lit_22, i32 0, i32 1
@@ -460,298 +375,229 @@ define void @aila_main__main() {
   %t4 = load { i32, i32 }, ptr %slot_p_1
   %t5 = call i32 @aila_main__Pair__sum({ i32, i32 } %t4)
   %t6 = call i32 @aila_main__classify(i32 0)
-  %t7 = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 %t5, i32 %t6)
-  %t8 = extractvalue { i32, i1 } %t7, 0
-  %t9 = extractvalue { i32, i1 } %t7, 1
-  br i1 %t9, label %chk.bad2, label %chk.ok1
-chk.bad2:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 87)
-  unreachable
-chk.ok1:
-  %t10 = call i32 @aila_main__color_tag(i32 1)
-  %t11 = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 %t8, i32 %t10)
-  %t12 = extractvalue { i32, i1 } %t11, 0
-  %t13 = extractvalue { i32, i1 } %t11, 1
-  br i1 %t13, label %chk.bad4, label %chk.ok3
-chk.bad4:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 87)
-  unreachable
-chk.ok3:
-  %t14 = insertvalue { i8, { i32, i32 } } undef, i8 1, 0
-  store { i8, { i32, i32 } } %t14, ptr %slot___lit_23
-  %t15 = getelementptr inbounds { i8, { i32, i32 } }, ptr %slot___lit_23, i32 0, i32 1, i32 0
-  store i32 2, ptr %t15
-  %t16 = getelementptr inbounds { i8, { i32, i32 } }, ptr %slot___lit_23, i32 0, i32 1, i32 1
-  store i32 5, ptr %t16
-  %t17 = load { i8, { i32, i32 } }, ptr %slot___lit_23
-  %t18 = call i32 @aila_main__shape_area({ i8, { i32, i32 } } %t17)
-  %t19 = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 %t12, i32 %t18)
-  %t20 = extractvalue { i32, i1 } %t19, 0
-  %t21 = extractvalue { i32, i1 } %t19, 1
-  br i1 %t21, label %chk.bad6, label %chk.ok5
-chk.bad6:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 87)
-  unreachable
-chk.ok5:
-  store i32 %t20, ptr %slot_total_2
-  %t22 = load i32, ptr %slot_total_2
-  %t23 = trunc i32 %t22 to i8
-  %t24 = sext i8 %t23 to i32
-  store i32 %t24, ptr %slot_scaled_3
-  %t25 = load i32, ptr %slot_total_2
-  %t26 = icmp sgt i32 %t25, 10
-  br i1 %t26, label %sc.l7, label %sc.r8
-sc.l7:
+  %t7 = add i32 %t5, %t6
+  %t8 = call i32 @aila_main__color_tag(i32 1)
+  %t9 = add i32 %t7, %t8
+  %t10 = insertvalue { i8, { i32, i32 } } undef, i8 1, 0
+  store { i8, { i32, i32 } } %t10, ptr %slot___lit_23
+  %t11 = getelementptr inbounds { i8, { i32, i32 } }, ptr %slot___lit_23, i32 0, i32 1, i32 0
+  store i32 2, ptr %t11
+  %t12 = getelementptr inbounds { i8, { i32, i32 } }, ptr %slot___lit_23, i32 0, i32 1, i32 1
+  store i32 5, ptr %t12
+  %t13 = load { i8, { i32, i32 } }, ptr %slot___lit_23
+  %t14 = call i32 @aila_main__shape_area({ i8, { i32, i32 } } %t13)
+  %t15 = add i32 %t9, %t14
+  store i32 %t15, ptr %slot_total_2
+  %t16 = load i32, ptr %slot_total_2
+  %t17 = trunc i32 %t16 to i8
+  %t18 = sext i8 %t17 to i32
+  store i32 %t18, ptr %slot_scaled_3
+  %t19 = load i32, ptr %slot_total_2
+  %t20 = icmp sgt i32 %t19, 10
+  br i1 %t20, label %sc.l1, label %sc.r2
+sc.l1:
   store i1 1, ptr %slot___sc_24
-  br label %sc.end9
-sc.r8:
-  %t27 = load i32, ptr %slot_scaled_3
-  %t28 = icmp eq i32 %t27, 0
-  store i1 %t28, ptr %slot___sc_24
-  br label %sc.end9
-sc.end9:
-  %t29 = load i1, ptr %slot___sc_24
-  store i1 %t29, ptr %slot_flag_4
+  br label %sc.end3
+sc.r2:
+  %t21 = load i32, ptr %slot_scaled_3
+  %t22 = icmp eq i32 %t21, 0
+  store i1 %t22, ptr %slot___sc_24
+  br label %sc.end3
+sc.end3:
+  %t23 = load i1, ptr %slot___sc_24
+  store i1 %t23, ptr %slot_flag_4
   store i32 0, ptr %slot_acc_5
-  %t30 = load i1, ptr %slot_flag_4
-  br i1 %t30, label %if.then11, label %if.next12
-if.then11:
-  %t31 = load i32, ptr %slot_total_2
-  %t32 = call i32 @aila_main__mixed(i32 %t31, i32 7)
-  store i32 %t32, ptr %slot_acc_5
-  br label %if.end10
-if.next12:
-  br label %if.end10
-if.end10:
+  %t24 = load i1, ptr %slot_flag_4
+  br i1 %t24, label %if.then5, label %if.next6
+if.then5:
+  %t25 = load i32, ptr %slot_total_2
+  %t26 = call i32 @aila_main__mixed(i32 %t25, i32 7)
+  store i32 %t26, ptr %slot_acc_5
+  br label %if.end4
+if.next6:
+  br label %if.end4
+if.end4:
   store float 1.5, ptr %slot_f_6
   store double 2.25, ptr %slot_g_7
-  %t33 = load i32, ptr %slot_acc_5
-  %t34 = sext i32 %t33 to i64
-  store i64 %t34, ptr %slot_wide_8
-  %t35 = load i64, ptr %slot_wide_8
-  %t36 = trunc i64 %t35 to i16
-  store i16 %t36, ptr %slot_narrow_9
-  %t37 = getelementptr inbounds [4 x i32], ptr %slot___arr_25, i64 0, i64 0
-  store i32 1, ptr %t37
-  %t38 = getelementptr inbounds [4 x i32], ptr %slot___arr_25, i64 0, i64 1
-  store i32 2, ptr %t38
-  %t39 = getelementptr inbounds [4 x i32], ptr %slot___arr_25, i64 0, i64 2
-  store i32 3, ptr %t39
-  %t40 = getelementptr inbounds [4 x i32], ptr %slot___arr_25, i64 0, i64 3
-  store i32 4, ptr %t40
-  %t41 = load [4 x i32], ptr %slot___arr_25
-  store [4 x i32] %t41, ptr %slot_fixed_10
-  %t42 = getelementptr inbounds [4 x i32], ptr %slot_fixed_10, i64 0, i64 0
-  %t43 = load i16, ptr %slot_narrow_9
-  %t44 = sext i16 %t43 to i32
-  store i32 %t44, ptr %t42
+  %t27 = load i32, ptr %slot_acc_5
+  %t28 = sext i32 %t27 to i64
+  store i64 %t28, ptr %slot_wide_8
+  %t29 = load i64, ptr %slot_wide_8
+  %t30 = trunc i64 %t29 to i16
+  store i16 %t30, ptr %slot_narrow_9
+  %t31 = getelementptr inbounds [4 x i32], ptr %slot___arr_25, i64 0, i64 0
+  store i32 1, ptr %t31
+  %t32 = getelementptr inbounds [4 x i32], ptr %slot___arr_25, i64 0, i64 1
+  store i32 2, ptr %t32
+  %t33 = getelementptr inbounds [4 x i32], ptr %slot___arr_25, i64 0, i64 2
+  store i32 3, ptr %t33
+  %t34 = getelementptr inbounds [4 x i32], ptr %slot___arr_25, i64 0, i64 3
+  store i32 4, ptr %t34
+  %t35 = load [4 x i32], ptr %slot___arr_25
+  store [4 x i32] %t35, ptr %slot_fixed_10
+  %t36 = getelementptr inbounds [4 x i32], ptr %slot_fixed_10, i64 0, i64 0
+  %t37 = load i16, ptr %slot_narrow_9
+  %t38 = sext i16 %t37 to i32
+  store i32 %t38, ptr %t36
   store i64 4, ptr %slot_n_11
   store i64 8, ptr %slot_sz_12
   store i64 4, ptr %slot_al_13
-  %t45 = call ptr @aila_rt_region_enter(i64 0)
-  %t46 = call ptr @aila_rt_region_alloc(ptr %t45, i64 4, i64 1)
-  %t47 = getelementptr inbounds i8, ptr %t46, i64 0
-  store i8 7, ptr %t47
-  %t48 = getelementptr inbounds i8, ptr %t46, i64 1
-  store i8 7, ptr %t48
-  %t49 = getelementptr inbounds i8, ptr %t46, i64 2
-  store i8 7, ptr %t49
-  %t50 = getelementptr inbounds i8, ptr %t46, i64 3
-  store i8 7, ptr %t50
-  %t51 = insertvalue { ptr, i64 } undef, ptr %t46, 0
-  %t52 = insertvalue { ptr, i64 } %t51, i64 4, 1
-  store { ptr, i64 } %t52, ptr %slot_buf_14
-  %t53 = load { ptr, i64 }, ptr %slot_buf_14
-  %t54 = extractvalue { ptr, i64 } %t53, 0
-  %t55 = extractvalue { ptr, i64 } %t53, 1
-  %t56 = icmp uge i64 1, %t55
-  br i1 %t56, label %chk.bad14, label %chk.ok13
-chk.bad14:
-  call void @aila_rt_trap(ptr @.str.5, i64 19, ptr @.str.1, i64 107)
+  %t39 = call ptr @aila_rt_region_enter(i64 0)
+  %t40 = call ptr @aila_rt_region_alloc(ptr %t39, i64 4, i64 1)
+  %t41 = getelementptr inbounds i8, ptr %t40, i64 0
+  store i8 7, ptr %t41
+  %t42 = getelementptr inbounds i8, ptr %t40, i64 1
+  store i8 7, ptr %t42
+  %t43 = getelementptr inbounds i8, ptr %t40, i64 2
+  store i8 7, ptr %t43
+  %t44 = getelementptr inbounds i8, ptr %t40, i64 3
+  store i8 7, ptr %t44
+  %t45 = insertvalue { ptr, i64 } undef, ptr %t40, 0
+  %t46 = insertvalue { ptr, i64 } %t45, i64 4, 1
+  store { ptr, i64 } %t46, ptr %slot_buf_14
+  %t47 = load { ptr, i64 }, ptr %slot_buf_14
+  %t48 = extractvalue { ptr, i64 } %t47, 0
+  %t49 = extractvalue { ptr, i64 } %t47, 1
+  %t50 = icmp uge i64 1, %t49
+  br i1 %t50, label %chk.bad8, label %chk.ok7
+chk.bad8:
+  call void @aila_rt_trap(ptr @.str.4, i64 19, ptr @.str.1, i64 113)
   unreachable
-chk.ok13:
-  %t57 = getelementptr inbounds i8, ptr %t54, i64 1
-  store i8 9, ptr %t57
-  %t58 = load i32, ptr %slot_acc_5
-  %t59 = call ptr @aila_rt_region_alloc(ptr %t45, i64 4, i64 1)
-  %t60 = getelementptr inbounds i8, ptr %t59, i64 0
-  store i8 7, ptr %t60
-  %t61 = getelementptr inbounds i8, ptr %t59, i64 1
-  store i8 7, ptr %t61
-  %t62 = getelementptr inbounds i8, ptr %t59, i64 2
-  store i8 7, ptr %t62
-  %t63 = getelementptr inbounds i8, ptr %t59, i64 3
-  store i8 7, ptr %t63
-  %t64 = insertvalue { ptr, i64 } undef, ptr %t59, 0
-  %t65 = insertvalue { ptr, i64 } %t64, i64 4, 1
-  %t66 = call i32 @aila_main__sum_view({ ptr, i64 } %t65)
-  %t67 = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 %t58, i32 %t66)
-  %t68 = extractvalue { i32, i1 } %t67, 0
-  %t69 = extractvalue { i32, i1 } %t67, 1
-  br i1 %t69, label %chk.bad16, label %chk.ok15
-chk.bad16:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 108)
+chk.ok7:
+  %t51 = getelementptr inbounds i8, ptr %t48, i64 1
+  store i8 9, ptr %t51
+  %t52 = load i32, ptr %slot_acc_5
+  %t53 = call ptr @aila_rt_region_alloc(ptr %t39, i64 4, i64 1)
+  %t54 = getelementptr inbounds i8, ptr %t53, i64 0
+  store i8 7, ptr %t54
+  %t55 = getelementptr inbounds i8, ptr %t53, i64 1
+  store i8 7, ptr %t55
+  %t56 = getelementptr inbounds i8, ptr %t53, i64 2
+  store i8 7, ptr %t56
+  %t57 = getelementptr inbounds i8, ptr %t53, i64 3
+  store i8 7, ptr %t57
+  %t58 = insertvalue { ptr, i64 } undef, ptr %t53, 0
+  %t59 = insertvalue { ptr, i64 } %t58, i64 4, 1
+  %t60 = call i32 @aila_main__sum_view({ ptr, i64 } %t59)
+  %t61 = add i32 %t52, %t60
+  %t62 = load { ptr, i64 }, ptr %slot_buf_14
+  %t63 = extractvalue { ptr, i64 } %t62, 0
+  %t64 = extractvalue { ptr, i64 } %t62, 1
+  %t65 = icmp uge i64 0, %t64
+  br i1 %t65, label %chk.bad10, label %chk.ok9
+chk.bad10:
+  call void @aila_rt_trap(ptr @.str.4, i64 19, ptr @.str.1, i64 114)
   unreachable
-chk.ok15:
-  %t70 = load { ptr, i64 }, ptr %slot_buf_14
-  %t71 = extractvalue { ptr, i64 } %t70, 0
-  %t72 = extractvalue { ptr, i64 } %t70, 1
-  %t73 = icmp uge i64 0, %t72
-  br i1 %t73, label %chk.bad18, label %chk.ok17
-chk.bad18:
-  call void @aila_rt_trap(ptr @.str.5, i64 19, ptr @.str.1, i64 108)
+chk.ok9:
+  %t66 = getelementptr inbounds i8, ptr %t63, i64 0
+  %t67 = load i8, ptr %t66
+  %t68 = zext i8 %t67 to i32
+  %t69 = add i32 %t61, %t68
+  %t70 = load i64, ptr %slot_n_11
+  %t71 = trunc i64 %t70 to i32
+  %t72 = add i32 %t69, %t71
+  %t73 = load i64, ptr %slot_sz_12
+  %t74 = trunc i64 %t73 to i32
+  %t75 = add i32 %t72, %t74
+  %t76 = load i64, ptr %slot_al_13
+  %t77 = trunc i64 %t76 to i32
+  %t78 = add i32 %t75, %t77
+  store i32 %t78, ptr %slot_acc_5
+  call void @aila_rt_region_leave(ptr %t39)
+  %t79 = insertvalue { ptr, i64 } undef, ptr @.str.5, 0
+  %t80 = insertvalue { ptr, i64 } %t79, i64 4, 1
+  store { ptr, i64 } %t80, ptr %slot_msg_15
+  %t81 = load { ptr, i64 }, ptr %slot_msg_15
+  %t82 = call { ptr, i64 } @aila_main__wrap_text({ ptr, i64 } %t81)
+  store { ptr, i64 } %t82, ptr %slot_maybe_16
+  %t83 = load { ptr, i64 }, ptr %slot_maybe_16
+  store { ptr, i64 } %t83, ptr %slot___head_26
+  %t84 = load { ptr, i64 }, ptr %slot___head_26
+  %t85 = extractvalue { ptr, i64 } %t84, 0
+  %t86 = icmp ne ptr %t85, null
+  br i1 %t86, label %m.arm012, label %m.next14
+m.next14:
+  %t87 = xor i1 %t86, true
+  br i1 %t87, label %m.arm113, label %m.next15
+m.next15:
+  call void @aila_rt_trap(ptr @.str.0, i64 27, ptr @.str.1, i64 120)
   unreachable
-chk.ok17:
-  %t74 = getelementptr inbounds i8, ptr %t71, i64 0
-  %t75 = load i8, ptr %t74
-  %t76 = zext i8 %t75 to i32
-  %t77 = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 %t68, i32 %t76)
-  %t78 = extractvalue { i32, i1 } %t77, 0
-  %t79 = extractvalue { i32, i1 } %t77, 1
-  br i1 %t79, label %chk.bad20, label %chk.ok19
-chk.bad20:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 108)
-  unreachable
-chk.ok19:
-  %t80 = load i64, ptr %slot_n_11
-  %t81 = trunc i64 %t80 to i32
-  %t82 = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 %t78, i32 %t81)
-  %t83 = extractvalue { i32, i1 } %t82, 0
-  %t84 = extractvalue { i32, i1 } %t82, 1
-  br i1 %t84, label %chk.bad22, label %chk.ok21
-chk.bad22:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 108)
-  unreachable
-chk.ok21:
-  %t85 = load i64, ptr %slot_sz_12
-  %t86 = trunc i64 %t85 to i32
-  %t87 = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 %t83, i32 %t86)
-  %t88 = extractvalue { i32, i1 } %t87, 0
-  %t89 = extractvalue { i32, i1 } %t87, 1
-  br i1 %t89, label %chk.bad24, label %chk.ok23
-chk.bad24:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 108)
-  unreachable
-chk.ok23:
-  %t90 = load i64, ptr %slot_al_13
-  %t91 = trunc i64 %t90 to i32
-  %t92 = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 %t88, i32 %t91)
-  %t93 = extractvalue { i32, i1 } %t92, 0
-  %t94 = extractvalue { i32, i1 } %t92, 1
-  br i1 %t94, label %chk.bad26, label %chk.ok25
-chk.bad26:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 108)
-  unreachable
-chk.ok25:
+m.arm012:
+  %t88 = load { ptr, i64 }, ptr %slot___head_26
+  store { ptr, i64 } %t88, ptr %slot_v_17
+  %t89 = load i32, ptr %slot_acc_5
+  %t90 = load { ptr, i64 }, ptr %slot_v_17
+  %t91 = extractvalue { ptr, i64 } %t90, 1
+  %t92 = trunc i64 %t91 to i32
+  %t93 = add i32 %t89, %t92
   store i32 %t93, ptr %slot_acc_5
-  call void @aila_rt_region_leave(ptr %t45)
-  %t95 = insertvalue { ptr, i64 } undef, ptr @.str.6, 0
-  %t96 = insertvalue { ptr, i64 } %t95, i64 4, 1
-  store { ptr, i64 } %t96, ptr %slot_msg_15
-  %t97 = load { ptr, i64 }, ptr %slot_msg_15
-  store { ptr, i64 } %t97, ptr %slot_maybe_16
-  %t98 = load { ptr, i64 }, ptr %slot_maybe_16
-  store { ptr, i64 } %t98, ptr %slot___head_27
-  %t99 = load { ptr, i64 }, ptr %slot___head_27
-  %t100 = extractvalue { ptr, i64 } %t99, 0
-  %t101 = icmp ne ptr %t100, null
-  br i1 %t101, label %m.arm028, label %m.next30
-m.next30:
-  %t102 = xor i1 %t101, true
-  br i1 %t102, label %m.arm129, label %m.next31
-m.next31:
-  call void @aila_rt_trap(ptr @.str.2, i64 27, ptr @.str.1, i64 113)
-  unreachable
-m.arm028:
-  %t103 = load { ptr, i64 }, ptr %slot___head_27
-  store { ptr, i64 } %t103, ptr %slot_v_17
-  %t104 = load i32, ptr %slot_acc_5
-  %t105 = load { ptr, i64 }, ptr %slot_v_17
-  %t106 = extractvalue { ptr, i64 } %t105, 1
-  %t107 = trunc i64 %t106 to i32
-  %t108 = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 %t104, i32 %t107)
-  %t109 = extractvalue { i32, i1 } %t108, 0
-  %t110 = extractvalue { i32, i1 } %t108, 1
-  br i1 %t110, label %chk.bad33, label %chk.ok32
-chk.bad33:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 114)
-  unreachable
-chk.ok32:
-  store i32 %t109, ptr %slot_acc_5
-  br label %m.end27
-m.arm129:
+  br label %m.end11
+m.arm113:
   store i32 0, ptr %slot_acc_5
-  br label %m.end27
-m.end27:
-  %t111 = load i32, ptr %slot_acc_5
-  %t112 = call { i1, i32, i32 } @aila_main__twice(i32 %t111)
-  store { i1, i32, i32 } %t112, ptr %slot_res_18
-  %t113 = load { i1, i32, i32 }, ptr %slot_res_18
-  store { i1, i32, i32 } %t113, ptr %slot___head_28
-  %t114 = load { i1, i32, i32 }, ptr %slot___head_28
-  %t115 = extractvalue { i1, i32, i32 } %t114, 0
-  br i1 %t115, label %m.arm035, label %m.next37
-m.next37:
-  %t116 = xor i1 %t115, true
-  br i1 %t116, label %m.arm136, label %m.next38
-m.next38:
-  call void @aila_rt_trap(ptr @.str.2, i64 27, ptr @.str.1, i64 119)
+  br label %m.end11
+m.end11:
+  %t94 = load i32, ptr %slot_acc_5
+  %t95 = call { i1, i32, i32 } @aila_main__twice(i32 %t94)
+  store { i1, i32, i32 } %t95, ptr %slot_res_18
+  %t96 = load { i1, i32, i32 }, ptr %slot_res_18
+  store { i1, i32, i32 } %t96, ptr %slot___head_27
+  %t97 = load { i1, i32, i32 }, ptr %slot___head_27
+  %t98 = extractvalue { i1, i32, i32 } %t97, 0
+  br i1 %t98, label %m.arm017, label %m.next19
+m.next19:
+  %t99 = xor i1 %t98, true
+  br i1 %t99, label %m.arm118, label %m.next20
+m.next20:
+  call void @aila_rt_trap(ptr @.str.0, i64 27, ptr @.str.1, i64 126)
   unreachable
-m.arm035:
-  %t117 = load { i1, i32, i32 }, ptr %slot___head_28
-  %t118 = extractvalue { i1, i32, i32 } %t117, 1
-  store i32 %t118, ptr %slot_v_19
-  %t119 = load i32, ptr %slot_v_19
-  store i32 %t119, ptr %slot_acc_5
-  br label %m.end34
-m.arm136:
-  %t120 = load { i1, i32, i32 }, ptr %slot___head_28
-  %t121 = extractvalue { i1, i32, i32 } %t120, 2
-  store i32 %t121, ptr %slot_e_20
-  %t122 = load i32, ptr %slot_e_20
-  store i32 %t122, ptr %slot___head_29
-  %t123 = load i32, ptr %slot___head_29
-  %t124 = icmp eq i32 %t123, 3
-  br i1 %t124, label %m.arm040, label %m.next42
-m.next42:
-  br label %m.arm141
-m.arm040:
-  %t125 = sub i32 0, 1
-  store i32 %t125, ptr %slot_acc_5
-  br label %m.end39
-m.arm141:
-  %t126 = sub i32 0, 2
-  store i32 %t126, ptr %slot_acc_5
-  br label %m.end39
-m.end39:
-  br label %m.end34
-m.end34:
-  %t127 = load float, ptr %slot_f_6
-  %t128 = load double, ptr %slot_g_7
-  %t129 = fptrunc double %t128 to float
-  %t130 = fadd float %t127, %t129
-  store float %t130, ptr %slot_q_21
-  %t131 = load float, ptr %slot_q_21
-  %t132 = load i32, ptr %slot_acc_5
-  %t133 = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 %t132, i32 1)
-  %t134 = extractvalue { i32, i1 } %t133, 0
-  %t135 = extractvalue { i32, i1 } %t133, 1
-  br i1 %t135, label %chk.bad44, label %chk.ok43
-chk.bad44:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 131)
-  unreachable
-chk.ok43:
-  %t136 = load i32, ptr %slot_total_2
-  %t137 = insertvalue { i32, i32 } undef, i32 %t134, 0
-  %t138 = insertvalue { i32, i32 } %t137, i32 %t136, 1
-  store { i32, i32 } %t138, ptr %slot___destr_30
-  %t139 = getelementptr inbounds { i32, i32 }, ptr %slot___destr_30, i32 0, i32 0
-  %t140 = load i32, ptr %t139
-  store i32 %t140, ptr %slot_acc_5
+m.arm017:
+  %t100 = load { i1, i32, i32 }, ptr %slot___head_27
+  %t101 = extractvalue { i1, i32, i32 } %t100, 1
+  store i32 %t101, ptr %slot_v_19
+  %t102 = load i32, ptr %slot_v_19
+  store i32 %t102, ptr %slot_acc_5
+  br label %m.end16
+m.arm118:
+  %t103 = load { i1, i32, i32 }, ptr %slot___head_27
+  %t104 = extractvalue { i1, i32, i32 } %t103, 2
+  store i32 %t104, ptr %slot_e_20
+  %t105 = load i32, ptr %slot_e_20
+  store i32 %t105, ptr %slot___head_28
+  %t106 = load i32, ptr %slot___head_28
+  %t107 = icmp eq i32 %t106, 3
+  br i1 %t107, label %m.arm022, label %m.next24
+m.next24:
+  br label %m.arm123
+m.arm022:
+  %t108 = sub i64 0, 1
+  store i32 %t108, ptr %slot_acc_5
+  br label %m.end21
+m.arm123:
+  %t109 = sub i64 0, 2
+  store i32 %t109, ptr %slot_acc_5
+  br label %m.end21
+m.end21:
+  br label %m.end16
+m.end16:
+  %t110 = load float, ptr %slot_f_6
+  %t111 = load double, ptr %slot_g_7
+  %t112 = fptrunc double %t111 to float
+  %t113 = fadd float %t110, %t112
+  store float %t113, ptr %slot_q_21
+  %t114 = load float, ptr %slot_q_21
+  %t115 = load i32, ptr %slot_acc_5
+  %t116 = add i32 %t115, 1
+  %t117 = load i32, ptr %slot_total_2
+  %t118 = insertvalue { i32, i32 } undef, i32 %t116, 0
+  %t119 = insertvalue { i32, i32 } %t118, i32 %t117, 1
+  store { i32, i32 } %t119, ptr %slot___destr_29
+  %t120 = getelementptr inbounds { i32, i32 }, ptr %slot___destr_29, i32 0, i32 0
+  %t121 = load i32, ptr %t120
+  store i32 %t121, ptr %slot_acc_5
   ret void
 }
 
-define i32 @main() {
+define i32 @main(i32 %argc, ptr %argv) {
 entry:
   call void @aila_main__main()
   ret i32 0

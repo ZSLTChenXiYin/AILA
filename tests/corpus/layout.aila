@@ -15,14 +15,14 @@ struct Scalars {
     l: C32,
 };
 
-#[packed]
+#compile.packed
 struct Packed {
     a: I8,
     b: I32,
     c: I16,
 };
 
-#[align(16)]
+#compile.align(16)
 struct Aligned {
     a: I8,
     b: I32,
@@ -55,7 +55,7 @@ struct FnHolder {
     close: (U8, U16) -> U16,
 };
 
-enum Color { Red, Green, Blue };
+#runtime.error enum Color { Red, Green, Blue };
 
 enum Narrow: U8 { A, B };
 

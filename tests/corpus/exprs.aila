@@ -10,15 +10,15 @@ func exprs(a: I32, b: I32, f: F32, buf: [U8], raw: [Unsafe]) @region[r] -> I32 {
     let x: I32 = a + b * 2 - a / 3 % 2;
     let y: I32 = a << 2 >> 1 & 0xFF | 1 ^ 2;
     let z: Bool = a < b && b != 0 || !(a == b);
-    let w: I32 = a as I64 trunc I32;
-    let n: USize = len buf;
+    let w: I32 = #compile.as(I32, #compile.as(I64, a));
+    let n: USize = #comprun.len(buf);
     let first: U8 = buf[0];
     let cp: C32 = 'A';
     let esc: Text = "tab\tnl\nquote\"back\\u\u{4e2d}";
     let p: [U8] = copy buf @[r];
     let q: [U8] = copy raw @[r];
-    let s: USize = #size(Packet) + #align(Packet);
-    let t: I32? = ?(a + b);
+    let s: USize = #compile.sizeof(Packet) + #compile.alignof(Packet);
+    let t: (I32, Bool) = #runtime.checked_add(a, b);
     let u: [U8] = [0; 4]@r;
     let arr: [U8; 4] = [1, 2, 3, 4];
     let lit: Packet = Packet { kind: 1, payload: [0; 4] };
@@ -31,7 +31,7 @@ func exprs(a: I32, b: I32, f: F32, buf: [U8], raw: [Unsafe]) @region[r] -> I32 {
         1 => { out 2; }
         _ => 3,
     };
-    let big: I32 = ?(a * b + 1) as I32;
+    let big: I32 = #compile.as(I32, #compile.as(I64, a) * #compile.as(I64, b) + 1);
     _ = take(a, b)@[r];
     b = b + 1;
     b += 1;

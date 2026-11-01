@@ -1,9 +1,10 @@
-// corpus: 声明层全覆盖（壳 / 块 / 属性 / 方法 / 关联函数）
+// corpus: 声明层全覆盖（壳 / 块 / 层指令 / 方法 / 关联函数）
 import _.util.math;
 
 const MAX_BATCH: I32 = 64;
 
-#[packed, align(4)]
+#compile.packed
+#compile.align(4)
 struct Packet {
     kind: U8,
     size: U16,
@@ -33,22 +34,22 @@ module hot {
     public func detect(img: [U8]) @region[work] -> I32 {
         region work {
             let buf: [U8] = [0; 4]@work;
-            return buf[0] as I32;
+            return #compile.as(I32, buf[0]);
         }
     }
 
     func Color.is_green(self) -> Bool {
         return match self {
-            Color.Green => true,
+            .Green => true,
             _ => false,
         };
     }
 
     func Shape.area(self) -> F32 {
         return match self {
-            Shape.Circle { r } => r * r,
-            Shape.Rect { w, h } => w * h,
-            Shape.Point => 0.0,
+            .Circle { r } => r * r,
+            .Rect { w, h } => w * h,
+            .Point => 0.0,
         };
     }
 

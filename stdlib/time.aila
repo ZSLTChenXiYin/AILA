@@ -1,0 +1,22 @@
+// AILA 标准库 · std.time（层 1：宿主 / 嵌入式通用）
+//
+// 单调毫秒钟与睡眠（designs/0003 §4.2）。OS/芯片边界只有两条 #compile.c 原语：
+//   - 宿主：QueryPerformanceCounter / clock_gettime(CLOCK_MONOTONIC) + Sleep / nanosleep
+//   - 嵌入式：Xtensa ccount 累积（相邻调用间隔须 < 半周期，runtime 侧注释注明）
+// 更高层的计时 / 换算（秒、吞吐率）由调用方在本模块函数之上组合。
+
+// 单调毫秒：宿主 QPC / MONOTONIC；嵌入式 ccount 累积（自启动）
+#compile.c func aila_rt_time_ms() -> U64;
+
+// 睡眠 n 毫秒：宿主真睡眠；嵌入式忙等
+#compile.c func aila_rt_sleep_ms(n: U64);
+
+// mono_ms 自启动以来的单调毫秒数（不随系统时间跳变；仅用于测量时长）
+public func mono_ms() -> U64 {
+    return aila_rt_time_ms();
+}
+
+// sleep_ms 睡 n 毫秒
+public func sleep_ms(n: U64) {
+    aila_rt_sleep_ms(n);
+}

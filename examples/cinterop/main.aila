@@ -11,18 +11,13 @@ import ch _.cpacks.mathkit;
 func main() {
     // bindgen 保留 C 原名；返回值是 C 错误码，AILA 侧自己判码（designs/0001 §11.6）
     let s: I32 = mathkit.mathkit_add(20, 22);
-    io.print_text("mathkit_add(20, 22) = ");
-    io.print_i32_nl(s);
+    io.printf("mathkit_add(20, 22) = %d\n", io.FmtVal.I { v: #compile.as(I64, s) });
 
     let c: I32 = mathkit.mathkit_clamp(999, 0, 100);
-    io.print_text("mathkit_clamp(999, 0, 100) = ");
-    io.print_i32_nl(c);
+    io.printf("mathkit_clamp(999, 0, 100) = %d\n", io.FmtVal.I { v: #compile.as(I64, c) });
 
     let h: U32 = mathkit.mathkit_hash(1, 2);
-    io.print_text("mathkit_hash(1, 2) = ");
-    io.print_u32(h);
-    io.print_nl();
+    io.printf("mathkit_hash(1, 2) = %u\n", io.FmtVal.U { v: #compile.as(U64, h) });
 
-    io.print_text("MATHKIT_MAX = ");
-    io.print_i32_nl(mathkit.MATHKIT_MAX);
+    io.printf("MATHKIT_MAX = %d\n", io.FmtVal.I { v: #compile.as(I64, mathkit.MATHKIT_MAX) });
 }

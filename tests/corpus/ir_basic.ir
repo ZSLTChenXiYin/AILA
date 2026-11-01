@@ -2,10 +2,6 @@
 ; target: x86_64-w64-windows-gnu
 target triple = "x86_64-w64-windows-gnu"
 
-@.str.0 = private unnamed_addr constant [17 x i8] c"integer overflow\00", align 1
-@.str.1 = private unnamed_addr constant [10 x i8] c"main.aila\00", align 1
-
-declare void @aila_rt_trap(ptr, i64, ptr, i64)
 
 define i32 @aila_main__add(i32 %p_a, i32 %p_b) {
   %slot_a_1 = alloca i32, align 8
@@ -14,15 +10,8 @@ define i32 @aila_main__add(i32 %p_a, i32 %p_b) {
   store i32 %p_b, ptr %slot_b_2
   %t1 = load i32, ptr %slot_a_1
   %t2 = load i32, ptr %slot_b_2
-  %t3 = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 %t1, i32 %t2)
-  %t4 = extractvalue { i32, i1 } %t3, 0
-  %t5 = extractvalue { i32, i1 } %t3, 1
-  br i1 %t5, label %chk.bad2, label %chk.ok1
-chk.bad2:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 3)
-  unreachable
-chk.ok1:
-  ret i32 %t4
+  %t3 = add i32 %t1, %t2
+  ret i32 %t3
 }
 
 define i32 @aila_main__sub(i32 %p_a, i32 %p_b) {
@@ -32,15 +21,8 @@ define i32 @aila_main__sub(i32 %p_a, i32 %p_b) {
   store i32 %p_b, ptr %slot_b_2
   %t1 = load i32, ptr %slot_a_1
   %t2 = load i32, ptr %slot_b_2
-  %t3 = call { i32, i1 } @llvm.ssub.with.overflow.i32(i32 %t1, i32 %t2)
-  %t4 = extractvalue { i32, i1 } %t3, 0
-  %t5 = extractvalue { i32, i1 } %t3, 1
-  br i1 %t5, label %chk.bad2, label %chk.ok1
-chk.bad2:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 7)
-  unreachable
-chk.ok1:
-  ret i32 %t4
+  %t3 = sub i32 %t1, %t2
+  ret i32 %t3
 }
 
 define i32 @aila_main__mul(i32 %p_a, i32 %p_b) {
@@ -50,15 +32,8 @@ define i32 @aila_main__mul(i32 %p_a, i32 %p_b) {
   store i32 %p_b, ptr %slot_b_2
   %t1 = load i32, ptr %slot_a_1
   %t2 = load i32, ptr %slot_b_2
-  %t3 = call { i32, i1 } @llvm.smul.with.overflow.i32(i32 %t1, i32 %t2)
-  %t4 = extractvalue { i32, i1 } %t3, 0
-  %t5 = extractvalue { i32, i1 } %t3, 1
-  br i1 %t5, label %chk.bad2, label %chk.ok1
-chk.bad2:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 11)
-  unreachable
-chk.ok1:
-  ret i32 %t4
+  %t3 = mul i32 %t1, %t2
+  ret i32 %t3
 }
 
 define i1 @aila_main__cmp(i32 %p_a, i32 %p_b) {
@@ -117,19 +92,12 @@ if.next3:
   br label %if.end1
 if.end1:
   %t8 = load i32, ptr %slot_z_3
-  %t9 = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 %t8, i32 1)
-  %t10 = extractvalue { i32, i1 } %t9, 0
-  %t11 = extractvalue { i32, i1 } %t9, 1
-  br i1 %t11, label %chk.bad5, label %chk.ok4
-chk.bad5:
-  call void @aila_rt_trap(ptr @.str.0, i64 16, ptr @.str.1, i64 33)
-  unreachable
-chk.ok4:
-  store i32 %t10, ptr %slot_z_3
+  %t9 = add i32 %t8, 1
+  store i32 %t9, ptr %slot_z_3
   ret void
 }
 
-define i32 @main() {
+define i32 @main(i32 %argc, ptr %argv) {
 entry:
   call void @aila_main__main()
   ret i32 0

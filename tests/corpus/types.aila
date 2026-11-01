@@ -50,4 +50,4 @@ struct Holder {
     t: Handle,
 };
 
-enum Color { Red, Green, Blue };
+#runtime.error enum Color { Red, Green, Blue };
