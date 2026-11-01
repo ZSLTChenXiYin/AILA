@@ -11,6 +11,10 @@ import (
 // valuePos=false 是纯分派（语句位置），分支不得产出值。
 func (c *Checker) checkMatch(m *ast.Match, valuePos bool, expected types.Type) types.Type {
 	headT := c.checkExpr(m.Head, nil)
+	// `#compile.match`：判别式先定剪枝（被剪的臂仍会在下面的循环里类型检查）。
+	if m.CompileTime {
+		c.pruneCompileMatch(m)
+	}
 	ctx := c.ctx
 
 	kind := "int"
@@ -21,10 +25,20 @@ func (c *Checker) checkMatch(m *ast.Match, valuePos bool, expected types.Type) t
 			kind = "enum"
 			enum = en
 		}
+	case types.ErrorSpace:
+		// v2：保留错误空间超集作判别对象——成员判别复用变体模式
+		// （全局聚合成员集合，designs/0004 §3.3 / §4.1）
+		kind = "enum"
+		enum = t.Info
 	case types.Optional:
 		kind = "optional"
 	case types.Result:
 		kind = "result"
+	case types.CoroState:
+		// 三态判别和是 codegen 的内部表示（designs/0004 §6 v2）：用户侧再也
+		// 拿不到它——`resume h` 的值形态退役，select 事件只绑定完成态。
+		c.err("E3201", ast.SpanOf(m.Head), "该类型不能作为 match 判别对象",
+			"协程完成态在 select 事件里就已经是 `T ! E` / `T`", "写 `select { case r = resume h => match r { ... } }`")
 	case types.Prim:
 		if t.K == "bool" || t.K == "text" || t.K == "f32" || t.K == "f64" {
 			c.err("E3201", ast.SpanOf(m.Head), "该类型不能作为 match 判别对象",
@@ -46,7 +60,8 @@ func (c *Checker) checkMatch(m *ast.Match, valuePos bool, expected types.Type) t
 
 		pat := arm.Pattern
 		switch p := pat.(type) {
-		case *ast.Wildcard:			if wildcardAt >= 0 {
+		case *ast.Wildcard:
+			if wildcardAt >= 0 {
 				c.err("E3401", ast.SpanOf(p), "`_` 分支重复", "这里", "")
 			}
 			wildcardAt = idx
@@ -54,6 +69,74 @@ func (c *Checker) checkMatch(m *ast.Match, valuePos bool, expected types.Type) t
 			if idx != len(m.Arms)-1 {
 				c.err("E3401", ast.SpanOf(p), "`_` 必须是最后一个分支", "其后不得再有分支（死分支禁止）", "")
 			}
+		case *ast.TypePattern:
+			// v2 类型模式（designs/0004 §4.1）：`let 名: 类型 =>` 按类型分派。
+			// 分派键（ArmRef.Builtin）沿用内部标记 "Ok"/"Err"/"Some"/"None"——
+			// 它们是 codegen 的分派键，不是用户可写的变体名（designs/0004 §7
+			// 已把 `Ok { v }` / `Some { v }` 等旧拼法退役）；绑定类型取
+			// **通道载荷类型**（槽类型），模式标注只作归属约束。
+			pt := c.table.Resolve(p.Type, c.bag)
+			switch kind {
+			case "result":
+				r, _ := headT.(types.Result)
+				var side string
+				var bindT types.Type
+				if sameType(pt, r.Ok) {
+					side, bindT = "Ok", r.Ok
+				} else if types.IsErrorSpace(pt) || sameType(pt, r.Err) {
+					// 错误模式须整态覆盖错误通道：`Error` 超集恒覆盖；
+					// 具体集须与通道一致（子集运行时判定 v0 不做）
+					side, bindT = "Err", r.Err
+				} else {
+					c.err("E3201", ast.SpanOf(p),
+						"类型模式 `"+p.Name+": "+types.TypeName(pt)+"` 与判别对象不符", "这里",
+						"成功模式写 `"+types.TypeName(r.Ok)+"`；错误模式写 `"+types.TypeName(r.Err)+"` 或 `Error`")
+					break
+				}
+				if seen[side] {
+					c.err("E3401", ast.SpanOf(p), "该侧已有分支（成功/错误各至多一个类型模式）", "这里", "")
+					break
+				}
+				seen[side] = true
+				c.noteArm(arm, &ArmRef{Builtin: side})
+				bsym := &Symbol{Name: p.Name, Type: bindT, Kind: "local"}
+				ctx.Scope.Declare(bsym)
+				c.locals = append(c.locals, bsym)
+				c.noteArmBinding(arm, p.Name, bindT, bsym)
+			case "optional":
+				opt, _ := headT.(types.Optional)
+				if !sameType(pt, opt.Inner) {
+					c.err("E3201", ast.SpanOf(p),
+						"类型模式 `"+p.Name+": "+types.TypeName(pt)+"` 与判别对象不符", "这里",
+						"非空模式写 `"+types.TypeName(opt.Inner)+"`")
+					break
+				}
+				if seen["Some"] {
+					c.err("E3401", ast.SpanOf(p), "非空侧已有分支", "这里", "")
+					break
+				}
+				seen["Some"] = true
+				c.noteArm(arm, &ArmRef{Builtin: "Some"})
+				bsym := &Symbol{Name: p.Name, Type: opt.Inner, Kind: "local"}
+				ctx.Scope.Declare(bsym)
+				c.locals = append(c.locals, bsym)
+				c.noteArmBinding(arm, p.Name, opt.Inner, bsym)
+			default:
+				c.err("E3201", ast.SpanOf(p), "该判别对象不支持类型模式", "这里",
+					"类型模式用于 `T ! E` 与 `T?`")
+			}
+		case *ast.NonePattern:
+			// None 字面量模式（designs/0004 §5）：可空视图的「无」分支
+			if kind != "optional" {
+				c.err("E3201", ast.SpanOf(p), "None 模式只用于可空视图 `T?`", "这里", "")
+				break
+			}
+			if seen["None"] {
+				c.err("E3401", ast.SpanOf(p), "None 分支重复", "这里", "")
+				break
+			}
+			seen["None"] = true
+			c.noteArm(arm, &ArmRef{Builtin: "None"})
 		case *ast.VariantPattern:
 			name := p.Path[len(p.Path)-1]
 			if kind == "enum" && enum != nil {
@@ -87,64 +170,19 @@ func (c *Checker) checkMatch(m *ast.Match, valuePos bool, expected types.Type) t
 					}
 				}
 			} else if kind == "optional" || kind == "result" {
-				want := map[string][]string{
-					"optional": {"Some", "None"},
-					"result":   {"Ok", "Err"},
-				}[kind]
-				okName := false
-				for _, w := range want {
-					if w == name {
-						okName = true
-					}
-				}
-				if !okName {
-					c.err("E3001", ast.SpanOf(p), "该判别对象没有分支 `"+name+"`", "这里", "")
-					break
-				}
-				if seen[name] {
-					c.err("E3401", ast.SpanOf(p), "分支 `"+name+"` 重复", "这里", "")
-				}
-				seen[name] = true
-				var payloadT types.Type
-				if kind == "optional" {
-					payloadT = headT.(types.Optional).Inner
-					if name == "None" {
-						payloadT = nil
-					}
-				} else {
-					r := headT.(types.Result)
-					if name == "Ok" {
-						payloadT = r.Ok
-					} else {
-						payloadT = r.Err
-					}
-				}
-				c.noteArm(arm, &ArmRef{Builtin: name})
-				if payloadT != nil {
-					for _, fp := range p.Fields_ {
-						if fp.Binding != "" {
-							bsym := &Symbol{Name: fp.Binding, Type: payloadT, Kind: "local"}
-							ctx.Scope.Declare(bsym)
-							c.locals = append(c.locals, bsym)
-						c.locals = append(c.locals, bsym)
-							c.noteArmBinding(arm, "v", payloadT, bsym)
-						}
-					}
-				}
+				// v2 收口：`Some { v }` / `None` 变体模式、`Ok { v }` / `Err { e }`
+				// 变体模式全部退役（designs/0004 §7）——非空 / 成功 / 错误侧一律
+				// 写类型模式，可空的「无」写 `None` 字面量模式。
+				c.err("E3001", ast.SpanOf(p), "该判别对象没有分支 `"+name+"`", "这里",
+					"可空视图写 `let v: 类型` / `None`；`T ! E` 写 `let v: 类型` / `let e: 错误集`")
 			}
 		case *ast.PathPattern:
 			name := p.Path[len(p.Path)-1]
 			if kind == "optional" || kind == "result" {
-				okName := name == "Some" || name == "None" || name == "Ok" || name == "Err"
-				if !okName {
-					c.err("E3001", ast.SpanOf(p), "该判别对象没有分支 `"+name+"`", "这里", "")
-					break
-				}
-				if seen[name] {
-					c.err("E3401", ast.SpanOf(p), "分支 `"+name+"` 重复", "这里", "")
-				}
-				seen[name] = true
-				c.noteArm(arm, &ArmRef{Builtin: name})
+				// 裸名分支 `Some` / `Ok` / `Err` 同属退役拼法（`None` 已被
+				// parsePattern 提前收成 NonePattern，不进这里）。
+				c.err("E3001", ast.SpanOf(p), "该判别对象没有分支 `"+name+"`", "这里",
+					"可空视图写 `let v: 类型` / `None`；`T ! E` 写 `let v: 类型` / `let e: 错误集`")
 			} else if kind == "enum" {
 				if enum != nil {
 					if v, ok := enum.Variant(name); ok {
@@ -282,36 +320,40 @@ func (c *Checker) checkMatch(m *ast.Match, valuePos bool, expected types.Type) t
 	}
 
 	// 完备性
-	switch kind {
-	case "enum":
-		if wildcardAt < 0 && enum != nil {
-			var missing []string
-			for _, v := range enum.Variants {
-				if !seen[v.Name] {
-					missing = append(missing, v.Name)
+	// `#compile.match` 在判别式编译期已知时不要求穷尽（designs/0006 §1.3 规则 4）：
+	// 值已定，强制穷尽只会逼人写 `_ =>`；被剪的臂仍已在上面做过类型检查。
+	if !(m.CompileTime && m.PruneArm >= 0) {
+		switch kind {
+		case "enum":
+			if wildcardAt < 0 && enum != nil {
+				var missing []string
+				for _, v := range enum.Variants {
+					if !seen[v.Name] {
+						missing = append(missing, v.Name)
+					}
+				}
+				if len(missing) > 0 {
+					c.err("E3401", m.Span, "match 不完备：`"+enum.Name+"` 有变体没有分支",
+						"封闭值域由编译器背书查漏", "补齐缺失变体，或在最后加 `_ => ...`")
 				}
 			}
-			if len(missing) > 0 {
-				c.err("E3401", m.Span, "match 不完备：`"+enum.Name+"` 有变体没有分支",
-					"封闭值域由编译器背书查漏", "补齐缺失变体，或在最后加 `_ => ...`")
-			}
-		}
-	case "optional", "result":
-		if wildcardAt < 0 {
-			need := []string{"Some", "None"}
-			if kind == "result" {
-				need = []string{"Ok", "Err"}
-			}
-			for _, n := range need {
-				if !seen[n] {
-					c.err("E3401", m.Span, "match 不完备：缺少 `"+n+"` 分支", "封闭值域必须覆盖全部分支", "")
+		case "optional", "result":
+			if wildcardAt < 0 {
+				need := []string{"Some", "None"}
+				if kind == "result" {
+					need = []string{"Ok", "Err"}
+				}
+				for _, n := range need {
+					if !seen[n] {
+						c.err("E3401", m.Span, "match 不完备：缺少 `"+n+"` 分支", "封闭值域必须覆盖全部分支", "")
+					}
 				}
 			}
-		}
-	case "int":
-		if wildcardAt < 0 {
-			c.err("E3403", m.Span, "整数族 match 必须带 `_` 兜底", "整数域不可穷举",
-				"在最后一个分支加 `_ => ...`")
+		case "int":
+			if wildcardAt < 0 {
+				c.err("E3403", m.Span, "整数族 match 必须带 `_` 兜底", "整数域不可穷举",
+					"在最后一个分支加 `_ => ...`")
+			}
 		}
 	}
 	c.MatchResults[m] = result

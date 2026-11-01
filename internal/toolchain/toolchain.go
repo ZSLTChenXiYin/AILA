@@ -22,7 +22,10 @@ type Check struct {
 }
 
 // IRToObject 把 IR 文本降为目标文件（llc 或 clang）。
-func IRToObject(irText, outPath string, triple string, tool resolve.Tool) error {
+// triple / cpu 显式传给后端：esp-clang 会在无 -target 时把 module triple
+// 覆盖成默认目标（riscv32-esp），不显式传就会静默编错架构。
+// extra 追加后端标志（SDK 模式的 -mattr=+long-calls 等，由 chip.json 数据提供）。
+func IRToObject(irText, outPath string, triple string, cpu string, tool resolve.Tool, extra ...string) error {
 	if !tool.OK() {
 		return fmt.Errorf("没有可用的 LLVM 后端：%s", tool.Note)
 	}
@@ -31,10 +34,22 @@ func IRToObject(irText, outPath string, triple string, tool resolve.Tool) error 
 	}
 	var args []string
 	if strings.HasPrefix(tool.Name, "llc") {
-		args = []string{"-filetype=obj", "-O0", "-o", outPath, "-"}
+		args = []string{"-filetype=obj", "-O0"}
 	} else {
-		args = []string{"-x", "ir", "-c", "-O0", "-o", outPath, "-"}
+		args = []string{"-x", "ir", "-c", "-O0"}
 	}
+	if triple != "" {
+		if strings.HasPrefix(tool.Name, "llc") {
+			args = append(args, "-mtriple="+triple)
+		} else {
+			args = append(args, "-target", triple)
+		}
+	}
+	if cpu != "" {
+		args = append(args, "-mcpu="+cpu)
+	}
+	args = append(args, extra...)
+	args = append(args, "-o", outPath, "-")
 	cmd := exec.Command(tool.Path, args...)
 	cmd.Stdin = strings.NewReader(irText)
 	var stderr bytes.Buffer
@@ -45,8 +60,19 @@ func IRToObject(irText, outPath string, triple string, tool resolve.Tool) error 
 	return nil
 }
 
+// firstLine 取给人看的错误摘要：优先含 "error" 的行——llc/clang 会把
+// 「feature 不认识（ignoring）」这类**警告**打在真正的错误前面，只取首行会
+// 把用户引向无关的地方。
 func firstLine(s string) string {
-	line := strings.TrimSpace(strings.SplitN(strings.TrimSpace(s), "\n", 2)[0])
+	for _, line := range strings.Split(s, "\n") {
+		if strings.Contains(line, "error") {
+			return clipLine(strings.TrimSpace(line))
+		}
+	}
+	return clipLine(strings.TrimSpace(strings.SplitN(strings.TrimSpace(s), "\n", 2)[0]))
+}
+
+func clipLine(line string) string {
 	if line == "" {
 		return "无输出"
 	}
@@ -93,7 +119,7 @@ func Link(objs []string, outPath string, cc resolve.Tool, extra []string) error 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("链接失败：%s", firstLine(stderr.String()))
+		return fmt.Errorf("链接失败：%s", stderr.String())
 	}
 	return nil
 }
@@ -101,7 +127,7 @@ func Link(objs []string, outPath string, cc resolve.Tool, extra []string) error 
 // SmokeTest 把最小 IR → .o → 链接 → 运行，验证整条后端链路。
 func SmokeTest(cc, llvm resolve.Tool) (bool, string, string) {
 	if !llvm.OK() {
-		return false, "LLVM 后端不可用：" + llvm.Describe(), "装随包工具链：`aila toolchain install <release.zip>`"
+		return false, "LLVM 后端不可用：" + llvm.Describe(), "装随包工具链：`aila toolchain install <family>`"
 	}
 	if !cc.OK() {
 		return false, "C 编译器/链接器不可用：" + cc.Describe(), "装随包工具链，或装 clang/gcc"
@@ -115,7 +141,7 @@ func SmokeTest(cc, llvm resolve.Tool) (bool, string, string) {
 	exe := filepath.Join(dir, "smoke"+home.ExeSuffix())
 	triple := resolve.HostTriple()
 	ir := fmt.Sprintf("target triple = \"%s\"\n\ndefine i32 @main() {\nentry:\n  ret i32 7\n}\n", triple)
-	if err := IRToObject(ir, obj, triple, llvm); err != nil {
+	if err := IRToObject(ir, obj, triple, "", llvm); err != nil {
 		return false, "IR → .o 失败：" + err.Error(), "见 docs/specs/0003 §2"
 	}
 	if err := Link([]string{obj}, exe, cc, nil); err != nil {
@@ -138,29 +164,34 @@ func Doctor(ailaVersion, cliCC, cliLLVM string) []Check {
 		{Name: "AILA_HOME", Level: "ok", Detail: home.Root()},
 		{Name: "aila（Go 版）", Level: "ok", Detail: ailaVersion},
 	}
-	tools := resolve.ResolveAll(cliCC, cliLLVM)
+	tools := resolve.ResolveAll("", cliCC, cliLLVM)
 	irTool, ccTool, clangTool := tools[resolve.RoleIR2Obj], tools[resolve.RoleCC], tools[resolve.RoleClang]
 
-	triple := resolve.HostTripleGuess()
-	bundle := home.BundleDir(triple)
-	if st, err := os.Stat(bundle); err == nil && st.IsDir() {
-		level := "ok"
-		detail := bundle
-		if v := home.BundleLLVMVersion(triple); v != "" {
-			detail += "（LLVM " + v + "）"
+	clangs := home.InstalledClangs()
+	gccs := home.InstalledGCCs()
+	if len(clangs)+len(gccs) > 0 {
+		parts := []string{}
+		for _, c := range clangs {
+			parts = append(parts, c.Family+" "+c.Version)
 		}
-		if irTool.Source != resolve.SourceBundled {
+		for _, g := range gccs {
+			parts = append(parts, "gcc/"+g.Triple+" "+g.Version)
+		}
+		level := "ok"
+		detail := home.ToolchainsRoot() + "（" + strings.Join(parts, "、") + "）"
+		if irTool.Source != resolve.SourceBundled || ccTool.Source != resolve.SourceBundled {
 			level = "warn"
 		}
 		checks = append(checks, Check{Name: "随包工具链", Level: level, Detail: detail,
-			Fix: "随包目录在，但解析没用上它——检查 toolchain/<triple>/bin/ 是否完整"})
+			Fix: "toolchains/ 有安装但解析没用上它——跑 `aila toolchain info` 看解析细节"})
 	} else {
-		checks = append(checks, Check{Name: "随包工具链", Level: "warn", Detail: "未安装（" + bundle + "）",
-			Fix: "下载 release 后 `aila toolchain install <zip>`"})
+		checks = append(checks, Check{Name: "随包工具链", Level: "warn",
+			Detail: "未安装（" + home.ToolchainsRoot() + "）",
+			Fix:    "`aila toolchain install <family>`（联网）或 `aila toolchain install <zip>`（离线）"})
 	}
 
 	irLevel := "ok"
-	irFix := "装随包工具链：`aila toolchain install <release.zip>`"
+	irFix := "装随包工具链：`aila toolchain install <family>`"
 	if !irTool.OK() {
 		irLevel = "fail"
 	}

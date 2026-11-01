@@ -18,7 +18,6 @@
 param(
     [string]$Tag = "",
     [ValidateSet("ucrt", "msvcrt")] [string]$Runtime = "ucrt",
-    [string]$Triple = "x86_64-w64-windows-gnu",
     [string]$Mirror = "",
     [string]$Sha256 = "",
     [switch]$KeepWork
@@ -27,8 +26,8 @@ $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $PSScriptRoot
 $Work = Join-Path $Root "ci-work"
-$Toolchain = Join-Path $Root "toolchain"
-$Dest = Join-Path $Toolchain $Triple
+# rfcs/0006 注册表布局：toolchains/clang/<LLVM 版本>/（版本在解包后确定）
+$Toolchains = Join-Path $Root "toolchains"
 
 function Get-LatestTag {
     $api = "https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest"
@@ -69,6 +68,12 @@ $Src = Get-ChildItem $Extract -Directory | Select-Object -First 1
 if (-not $Src) { throw "解包后找不到 llvm-mingw 根目录" }
 $S = $Src.FullName
 Write-Host "   源：$S"
+
+# LLVM 版本决定安装目录名（toolchains/clang/<ver>/）
+$llvmVer = (& (Join-Path $S "bin\clang.exe") --version | Select-String -Pattern "clang version" | Select-Object -First 1)
+if (-not $llvmVer) { throw "取不到 clang 版本号（$S\bin\clang.exe --version 失败）" }
+$ver = ($llvmVer.ToString() -replace '.*clang version ([0-9][0-9.]*).*', '$1')
+$Dest = Join-Path $Toolchains (Join-Path "clang" $ver)
 
 Write-Host "== 裁剪到 $Dest =="
 if (Test-Path $Dest) { Remove-Item $Dest -Recurse -Force }
@@ -112,11 +117,27 @@ $sys = Join-Path $Dest "x86_64-w64-mingw32"
 New-Item -ItemType Directory -Force -Path $sys | Out-Null
 Copy-Item (Join-Path $S "x86_64-w64-mingw32\lib") (Join-Path $sys "lib") -Recurse
 
-# ---- 5) 许可证与版本（VERSION 首段必须是 LLVM 版本：doctor 按它判版本带） ----
+# ---- 5) 许可证与版本（VERSION 首段必须是 LLVM 版本：aila 按它判版本带；无 BOM） ----
 if (Test-Path (Join-Path $S "LICENSE.TXT")) { Copy-Item (Join-Path $S "LICENSE.TXT") $Dest }
-$llvmVer = (& (Join-Path $Dest "bin\clang.exe") --version | Select-String -Pattern "clang version" | Select-Object -First 1)
-$ver = ($llvmVer.ToString() -replace '.*clang version ([0-9][0-9.]*).*', '$1')
-Set-Content -Path (Join-Path $Dest "VERSION") -Value "$ver (llvm-mingw $Tag, $Runtime, trimmed)" -Encoding utf8
+[System.IO.File]::WriteAllText((Join-Path $Dest "VERSION"), "$ver (llvm-mingw $Tag, $Runtime, trimmed)",
+    (New-Object System.Text.UTF8Encoding($false)))
+
+# ---- 6) 把本平台条目合并进 toolchains/toolchains.json 的 available 段 ----
+$registry = Join-Path $Toolchains "toolchains.json"
+$url = "https://github.com/mstorsjo/llvm-mingw/releases/download/$Tag/llvm-mingw-$Tag-$Runtime-x86_64.zip"
+if ($Mirror) { $url = $Mirror.TrimEnd("/") + "/" + $url }
+$sizeMB = [math]::Round((Get-Item $Zip).Length / 1MB)
+if (Test-Path $registry) {
+    $doc = Get-Content $registry -Raw -Encoding UTF8 | ConvertFrom-Json
+    $keep = @($doc.available | Where-Object { $_.family -ne "clang" -or $_.url -ne $url })
+    $entry = [pscustomobject]@{ family = "clang"; version = $ver; url = $url; sha256 = $Sha256; size = "$sizeMB MB" }
+    $doc.available = @($keep + @($entry))
+    $doc | ConvertTo-Json -Depth 10 | Out-Null
+    [System.IO.File]::WriteAllText($registry, ($doc | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding($false)))
+    Write-Host "   available 条目已合并：toolchains/toolchains.json"
+} else {
+    Write-Warning "没有 $registry，跳过 available 合并"
+}
 
 if (-not $KeepWork) { Remove-Item $Extract -Recurse -Force -ErrorAction SilentlyContinue }
 

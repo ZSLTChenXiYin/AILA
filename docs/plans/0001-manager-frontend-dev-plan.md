@@ -280,7 +280,7 @@ M1 冻结条件（**四条全绿才算完**）：
 | 项 | 现状 | 影响 | 建议 |
 |---|---|---|---|
 | ~~**Windows 发布包的 ABI 供给**~~ | ✅ 已解决（§19）：脚本换成 llvm-mingw，随包自带 MinGW 运行时与 lld | — | 实测「干净 PATH + 与仓库无关目录」下六个示例全部可编译运行 |
-| 协程 / 通道 / 线程代码生成 | 语义检查到位，codegen 报 `E9002` | 这三个特性还编不出目标文件 | M2+ 批次 |
+| ~~协程 / 通道 / 线程代码生成~~ | ✅ 已落地（2026-10 并发批次）：协程染色 + `coroutine@`/`resume`、chan 全链、`thread` 宿主全链、`std.atomics`；范例 `examples/concurrency_demo` 进快照 | — | 嵌入式 target 当前仅协程可用（芯片 runtime 未提供线程原语）；热替换 MLO 见下行 |
 | 热替换 MLO 与分派表 | 未开始 | `hot module` 仍走普通链接 | M3 |
 | 借用区间（NLL）精确检查 / 区域配额静态证明 | 未开始，`aila check` 以 `W9001` 明示未校验 | 不静默通过，但也没有保护 | M2+ |
 | `aila bindgen` 单独命令 | 报「尚未实现」；绑定目前由 `import ch`/`import cc` 在构建流水线里自动生成 | 想单独产出绑定要进 `build/.cache/bindgen/` 取 | 需要时补一个命令（`internal/bindgen` 已就绪） |

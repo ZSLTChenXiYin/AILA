@@ -13,7 +13,7 @@ var stdin io.Reader = os.Stdin
 
 // 构建相关开关（check / build / run 共用）。
 var (
-	buildBoard    string
+	buildTriple   string
 	buildOpt      int
 	buildLLVM     string
 	buildCC       string
@@ -23,6 +23,8 @@ var (
 	buildDepsUpd  bool
 	buildEmitBnd  bool
 	buildVendor   bool
+	buildGC       bool
+	buildSizeDlt  bool
 )
 
 // jsonMarshalIndent 统一缩进 JSON（2 空格）。
@@ -32,7 +34,7 @@ func jsonMarshalIndent(v any) ([]byte, error) {
 
 // addBuildFlags 给命令挂上构建开关。
 func addBuildFlags(cmd *cobra.Command) {
-	cmd.Flags().StringVar(&buildBoard, "board", "", "目标 board（临时覆盖清单）")
+	cmd.Flags().StringVar(&buildTriple, "triple", "", "目标三元组（临时覆盖清单，如 xtensa-esp8266-elf）")
 	cmd.Flags().IntVar(&buildOpt, "opt", 0, "优化级别（0-3，临时覆盖清单）")
 	cmd.Flags().StringVar(&buildLLVM, "llvm", "", "LLVM 后端选择（auto / bundled / system:...）")
 	cmd.Flags().StringVar(&buildCC, "cc", "", "C 编译器 / 链接器选择（auto / bundled / system:...）")
@@ -42,4 +44,8 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&buildEmitBnd, "emit-bindings", false, "把生成的 C 绑定 `.ail` 复制到产物目录")
 	cmd.Flags().BoolVar(&buildDepsUpd, "deps-update", false, "重新解析跨项目依赖并重写 aila.lock")
 	cmd.Flags().BoolVar(&buildVendor, "vendor", false, "把依赖复制到 vendor/（离线构建）")
+	cmd.Flags().BoolVar(&buildGC, "gc-sections", false,
+		"函数/数据分段 + 链接期 --gc-sections：未被引用的模块代码不进产物（配合 #compile.match 选驱动）")
+	cmd.Flags().BoolVar(&buildSizeDlt, "emit-size-delta", false,
+		"构建后报告产物与每个模块目标文件的大小（量化换驱动 / 关功能的体积差）")
 }

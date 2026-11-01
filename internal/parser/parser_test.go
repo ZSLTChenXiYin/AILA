@@ -102,6 +102,141 @@ func TestCorpusParseDiags(t *testing.T) {
 	}
 }
 
+// TestSyntaxV2Parsing 锁定 designs/0004 §2/§3/§4 的 v2 语法解析形态：
+// 层指令 / 层 API 调用 / 错误 enum / leading-dot 与类型模式。
+func TestSyntaxV2Parsing(t *testing.T) {
+	src := `#compile.c func ext_len(s: Text) -> USize;
+
+#comprun.error enum Error {
+    Nack, Timeout,
+};
+
+struct Dev { id: U8, };
+
+enum Msg {
+    Data { v: I32 },
+    Eof,
+};
+
+module {
+    func probe(d: Dev) -> U8 ! Error {
+        return 0;
+    }
+
+    func main() {
+        let n = #compile.sizeof(Dev);
+        let buf: [U8; 4] = [0; 4];
+        let l = #comprun.len(buf);
+        let x = #runtime.as(I64, n);
+        match probe(d0) {
+            let v: U8 => { _ = v; },
+            let e: Error => { _ = e; },
+        }
+        match m {
+            .Data { v } => { _ = v; },
+            .Eof => {},
+            _ => {},
+        }
+    }
+}
+`
+	mod, bag := Parse("v2.aila", src)
+	if bag.HasErrors() {
+		t.Fatalf("v2 语法不应有解析诊断：\n%s", bag.Render(false))
+	}
+	var extFn *ast.FuncDecl
+	var errEnum *ast.EnumDecl
+	var mainFn *ast.FuncDecl
+	for _, d := range mod.Shell {
+		if f, ok := d.(*ast.FuncDecl); ok {
+			extFn = f
+		}
+		if e, ok := d.(*ast.EnumDecl); ok && e.Name == "Error" {
+			errEnum = e
+		}
+	}
+	for _, d := range mod.Block {
+		if f, ok := d.(*ast.FuncDecl); ok && f.Name == "main" {
+			mainFn = f
+		}
+	}
+	// ① 壳内层指令 `#compile.c` → Attr{Name:"c", ViaLayer:true}
+	if extFn == nil {
+		t.Fatal("壳内没有解析出 ext_len 函数")
+	}
+	if len(extFn.Attrs.Attrs) != 1 || extFn.Attrs.Attrs[0].Name != "c" || !extFn.Attrs.Attrs[0].ViaLayer {
+		t.Fatalf("层指令应落为 Attr{Name:c, ViaLayer:true}，实得 %+v", extFn.Attrs.Attrs)
+	}
+	// ② `#comprun.error enum Error` → EnumDecl.ErrLayer
+	if errEnum == nil || errEnum.Name != "Error" || errEnum.ErrLayer != "comprun" {
+		t.Fatalf("错误 enum 解析不符：%+v", errEnum)
+	}
+	if mainFn == nil {
+		t.Fatal("没有解析出 main")
+	}
+	// ③ 层 API 调用节点（定向提取：main 体里的 let 初始化与 match 臂）
+	var layerCalls []*ast.LayerCall
+	var typePats []*ast.TypePattern
+	var dotVariants, dotPaths int
+	if mainFn.Body == nil {
+		t.Fatal("main 没有函数体")
+	}
+	for _, st := range mainFn.Body.Stmts {
+		switch x := st.(type) {
+		case *ast.LetDecl:
+			if lc, ok := x.Init.(*ast.LayerCall); ok {
+				layerCalls = append(layerCalls, lc)
+			}
+		case *ast.Match:
+			for _, arm := range x.Arms {
+				switch pat := arm.Pattern.(type) {
+				case *ast.TypePattern:
+					typePats = append(typePats, pat)
+				case *ast.VariantPattern:
+					if len(pat.Path) > 0 && pat.Path[0] == "Data" {
+						dotVariants++
+					}
+				case *ast.PathPattern:
+					if len(pat.Path) == 1 && pat.Path[0] == "Eof" {
+						dotPaths++
+					}
+				}
+			}
+		}
+	}
+	if len(layerCalls) != 3 {
+		t.Fatalf("应有 3 个 LayerCall，实得 %d", len(layerCalls))
+	}
+	want := [][3]string{{"compile", "sizeof", ""}, {"comprun", "len", ""}, {"runtime", "as", ""}}
+	for i, w := range want {
+		if layerCalls[i].Layer != w[0] || layerCalls[i].Name != w[1] {
+			t.Fatalf("LayerCall[%d] = %s.%s，期望 %s.%s", i, layerCalls[i].Layer, layerCalls[i].Name, w[0], w[1])
+		}
+	}
+	if len(layerCalls[0].Args) != 1 || layerCalls[0].Args[0].Kind() != "TypeRef" {
+		t.Fatalf("sizeof 参数应是类型，实得 %+v", layerCalls[0].Args)
+	}
+	if len(layerCalls[2].Args) != 2 || layerCalls[2].Args[0].Kind() != "TypeRef" {
+		t.Fatalf("as 应是 (类型, 值) 两参，实得 %+v", layerCalls[2].Args)
+	}
+	// ④ 模式
+	if len(typePats) != 2 || typePats[0].Name != "v" || typePats[1].Name != "e" {
+		t.Fatalf("类型模式解析不符：%+v", typePats)
+	}
+	if dotVariants != 1 || dotPaths != 1 {
+		t.Fatalf("leading-dot 模式解析不符：VariantPattern=%d PathPattern=%d", dotVariants, dotPaths)
+	}
+}
+
+// TestSyntaxV2BadLayer 锁定 `#` 后非法层名的解析诊断。
+func TestSyntaxV2BadLayer(t *testing.T) {
+	src := "module {\n    func main() {\n        let n = #foo.sizeof(I32);\n    }\n}\n"
+	_, bag := Parse("bad.aila", src)
+	if !bag.HasErrors() {
+		t.Fatal("非法层名应报诊断")
+	}
+}
+
 // firstDiffAt 返回两个字符串的第一个差异位置及其上下文。
 func firstDiffAt(got, want string) string {
 	gr, wr := []rune(got), []rune(want)

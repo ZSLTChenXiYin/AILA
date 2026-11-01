@@ -84,7 +84,7 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: 构建 aila（`npm run check` 里的 LSP 冒烟要用真二进制）
         working-directory: .
-        run: go build -o bin/aila ./cmd/aila
+        run: go build -o .local/bin/aila ./cmd/aila
       - name: 编译 + 文法冒烟 + 高亮覆盖 + LSP 冒烟
         run: npm run check
       - name: 打包 vsix

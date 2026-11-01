@@ -34,21 +34,35 @@ type If struct {
 	Then  *Block
 	Elifs []Pair
 	Els   *Block
+
+	// CompileTime 表示这是 `#compile.if`（designs/0006 §1）：条件必须是编译期常量，
+	// 非选中分支只在代码生成阶段省略——解析、类型检查、区域/能力分析照常覆盖全部分支。
+	CompileTime bool
+	// Prune 是 sema 的剪枝结论（仅 CompileTime 为真时有效）：
+	//   -1 = 未剪（非编译期或未求值）
+	//    0 = 选中 Then
+	//  1+i = 选中 Elifs[i]
+	//  1+len(Elifs) = 选中 Els
+	Prune int
 }
 
 func (n *If) Kind() string { return "If" }
 func (n *If) Fields() []F {
-	return []F{N("cond", optNode(n.Cond)), N("then", optNode(n.Then)),
+	fields := []F{N("cond", optNode(n.Cond)), N("then", optNode(n.Then)),
 		N("elifs", n.Elifs), N("els", optNode(n.Els))}
+	if n.CompileTime {
+		fields = append(fields, N("compile_time", true), N("prune", n.Prune))
+	}
+	return fields
 }
 
 // ForC 是三段式 / 条件 / 无限循环。
 type ForC struct {
-	Span  diag.Span
-	Init  *LetDecl
-	Cond  Node
-	Step  Node
-	Body  *Block
+	Span diag.Span
+	Init *LetDecl
+	Cond Node
+	Step Node
+	Body *Block
 }
 
 func (n *ForC) Kind() string { return "ForC" }
@@ -120,15 +134,6 @@ type Unsafe struct {
 func (n *Unsafe) Kind() string { return "Unsafe" }
 func (n *Unsafe) Fields() []F  { return []F{N("body", optNode(n.Body))} }
 
-// Trap 是 trap 语句。
-type Trap struct {
-	Span diag.Span
-	Msg  Node
-}
-
-func (n *Trap) Kind() string { return "Trap" }
-func (n *Trap) Fields() []F  { return []F{N("message", optNode(n.Msg))} }
-
 // Yield 是挂起点。
 type Yield struct {
 	Span diag.Span
@@ -136,18 +141,6 @@ type Yield struct {
 
 func (n *Yield) Kind() string { return "Yield" }
 func (n *Yield) Fields() []F  { return nil }
-
-// ThreadStart 是 `thread: 栈大小 调用();`。
-type ThreadStart struct {
-	Span      diag.Span
-	StackSize Node
-	Call      Node
-}
-
-func (n *ThreadStart) Kind() string { return "ThreadStart" }
-func (n *ThreadStart) Fields() []F {
-	return []F{N("stack_size", optNode(n.StackSize)), N("call", optNode(n.Call))}
-}
 
 // Break 是 break。
 type Break struct {
@@ -197,6 +190,49 @@ type DestructAssign struct {
 func (n *DestructAssign) Kind() string { return "DestructAssign" }
 func (n *DestructAssign) Fields() []F {
 	return []F{N("names", n.Names), N("value", optNode(n.Value))}
+}
+
+// ChanSend 是 `ch <- v;` 发送语句（designs/0001 §10.6）：满则挂起。
+type ChanSend struct {
+	Span  diag.Span
+	Chan  Node
+	Value Node
+}
+
+func (n *ChanSend) Kind() string { return "ChanSend" }
+func (n *ChanSend) Fields() []F {
+	return []F{N("chan", optNode(n.Chan)), N("value", optNode(n.Value))}
+}
+
+// SelectCase 是 select 的单个 case（designs/0004 §6）：Bind 为显式绑定名
+// （`case r = resume h` 的 r；"" = 无显式绑定），Event 是就绪事件
+// （*Recv 或 *Resume），Body 是就绪处理块。
+type SelectCase struct {
+	Span  diag.Span
+	Bind  string
+	Event Node
+	Body  *Block
+}
+
+func (n *SelectCase) Kind() string { return "SelectCase" }
+func (n *SelectCase) Fields() []F {
+	return []F{N("bind", n.Bind), N("event", optNode(n.Event)), N("body", optNode(n.Body))}
+}
+
+// Select 是并发等待的统一结构（designs/0004 §6）：
+// 声明序 try 链展开，首个就绪事件执行其块，全不就绪挂起重试。
+type Select struct {
+	Span  diag.Span
+	Cases []*SelectCase
+}
+
+func (n *Select) Kind() string { return "Select" }
+func (n *Select) Fields() []F {
+	cs := make([]any, 0, len(n.Cases))
+	for _, c := range n.Cases {
+		cs = append(cs, c)
+	}
+	return []F{N("cases", cs)}
 }
 
 // ExprStmt 是表达式语句。
@@ -277,8 +313,8 @@ func (n *GroupPattern) Fields() []F  { return []F{N("names", n.Names)} }
 
 // VariantPattern 是变体模式。
 type VariantPattern struct {
-	Span   diag.Span
-	Path   []string
+	Span    diag.Span
+	Path    []string
 	Fields_ []*FieldPat
 }
 

@@ -13,6 +13,7 @@ import (
 	"aila/internal/ast"
 	"aila/internal/bindgen"
 	"aila/internal/diag"
+	"aila/internal/home"
 	"aila/internal/manifest"
 	"aila/internal/project"
 	"aila/internal/resolve"
@@ -78,11 +79,8 @@ func importTargetModule(imp *ast.Import) string {
 	return "" // 依赖包根（如 `mylib.foo`）目前不索引，留到依赖批次
 }
 
-// importBindingName 返回 import 在当前文件里绑定的名字（`as` 优先，否则最后一段）。
+// importBindingName 返回 import 在当前文件里绑定的名字（路径最后一段）。
 func importBindingName(imp *ast.Import) string {
-	if imp.Alias != "" {
-		return imp.Alias
-	}
 	if len(imp.Path) > 0 {
 		return imp.Path[len(imp.Path)-1]
 	}
@@ -126,7 +124,7 @@ func (w *Workspace) cBindingFor(root string, prj *project.Project, man *manifest
 		return b
 	}
 
-	cacheDir := filepath.Join(root, "build", ".cache", "bindgen-lsp")
+	cacheDir := filepath.Join(home.BuildDirFor(root), ".cache", "bindgen-lsp")
 	ailPath := filepath.Join(cacheDir, name+".ail")
 	keyPath := filepath.Join(cacheDir, name+".key")
 	if text, ok := readCachedBinding(keyPath, ailPath, key); ok {
@@ -136,7 +134,7 @@ func (w *Workspace) cBindingFor(root string, prj *project.Project, man *manifest
 	}
 
 	bag := &diag.Bag{}
-	target := bindgen.Target{Board: man.Board, Triple: triple, PtrSize: man.PtrSize()}
+	target := bindgen.Target{Triple: triple, PtrSize: man.PtrSize()}
 	br := bindgen.Run(name, dir, target, bag, "auto")
 	if br == nil || bag.HasErrors() {
 		b := &cBinding{Key: key, Cpack: name, Name: "_.cpacks." + name, Problems: bag.Items}
@@ -174,7 +172,7 @@ func cpackStamp(dir string) string {
 			return nil
 		}
 		if d.IsDir() {
-			if d.Name() == "build" {
+			if d.Name() == "build" || d.Name() == ".local" {
 				return fs.SkipDir
 			}
 			return nil

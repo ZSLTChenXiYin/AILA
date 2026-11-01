@@ -43,31 +43,73 @@ func TestShareRootInRepo(t *testing.T) {
 	}
 }
 
-func TestBundleHelpers(t *testing.T) {
+func TestToolchainsHelpers(t *testing.T) {
 	tmp := t.TempDir()
 	Override(tmp)
 	defer Override("")
-	triple := "x86_64-unknown-linux-gnu"
-	bin := BundleBin(triple)
-	if err := os.MkdirAll(bin, 0o755); err != nil {
+	// 安装根是 .local/toolchains（本地产物）；随包 toolchains/ 也要一起扫。
+	installRoot := filepath.Join(tmp, ".local", "toolchains")
+	bundleRoot := filepath.Join(tmp, "toolchains")
+	// 通版 clang 家族：放在随包只读根，验证「也认随包」
+	clangBin := filepath.Join(bundleRoot, "clang", "19.1.8", "bin")
+	if err := os.MkdirAll(clangBin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	name := "clang" + ExeSuffix()
-	if err := os.WriteFile(filepath.Join(bin, name), []byte("x"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(clangBin, "clang"+ExeSuffix()), []byte("x"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(BundleDir(triple), "VERSION"), []byte("19.1.8\n"), 0o644); err != nil {
+	// 厂商 fork 家族：放在本地安装根
+	espBin := filepath.Join(installRoot, "esp-clang", "22.1.4", "bin")
+	if err := os.MkdirAll(espBin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	bins := BundleBins(triple)
-	if _, ok := bins["clang"]; !ok {
-		t.Fatalf("BundleBins 没找到 clang：%v", bins)
+	if err := os.WriteFile(filepath.Join(espBin, "llc"+ExeSuffix()), []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if v := BundleLLVMVersion(triple); v != "19.1.8" {
-		t.Fatalf("VERSION=%q", v)
+	// gcc 系
+	gccBin := filepath.Join(installRoot, "gcc", "xtensa-lx106-elf", "8.4.0", "bin")
+	if err := os.MkdirAll(gccBin, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if got := InstalledTriples(); len(got) != 1 || got[0] != triple {
-		t.Fatalf("InstalledTriples=%v", got)
+	if err := os.WriteFile(filepath.Join(gccBin, "xtensa-lx106-elf-gcc"+ExeSuffix()), []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// toolchains.json 是文件不是目录，家族扫描必须跳过它
+	if err := os.WriteFile(filepath.Join(bundleRoot, "toolchains.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	clangs := InstalledClangs()
+	if len(clangs) != 2 {
+		t.Fatalf("InstalledClangs 应有 2 个安装：%+v", clangs)
+	}
+	fams := map[string]string{}
+	for _, c := range clangs {
+		fams[c.Family] = c.Version
+	}
+	if fams["clang"] != "19.1.8" || fams["esp-clang"] != "22.1.4" {
+		t.Fatalf("家族版本异常：%v", fams)
+	}
+	gccs := InstalledGCCs()
+	if len(gccs) != 1 || gccs[0].Triple != "xtensa-lx106-elf" || gccs[0].Version != "8.4.0" {
+		t.Fatalf("InstalledGCCs=%+v", gccs)
+	}
+	// 顺序是「先本地安装根，再随包」：本地安装的就是排在前面那个
+	var esp *ClangInstall
+	for i := range clangs {
+		if clangs[i].Family == "esp-clang" {
+			esp = &clangs[i]
+		}
+	}
+	if esp == nil {
+		t.Fatalf("没扫到 esp-clang：%+v", clangs)
+	}
+	if clangs[0].Family != "esp-clang" {
+		t.Fatalf("本地安装根应排在随包前面：%+v", clangs)
+	}
+	bins := Bins(esp.Dir)
+	if _, ok := bins["llc"]; !ok {
+		t.Fatalf("Bins 没找到 llc：%v", bins)
 	}
 }
 

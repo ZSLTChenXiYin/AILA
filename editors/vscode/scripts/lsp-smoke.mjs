@@ -14,11 +14,14 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, "..", "..", "..");
 
-// 1) 找 aila 可执行文件：优先 bin/aila(.exe)，其次 PATH 里的 aila
+// 1) 找 aila 可执行文件：优先产物目录 .local/bin/aila(.exe)，其次旧位置，最后 PATH
 function findAila() {
-  const cands = process.platform === "win32"
-    ? [join(repo, "bin", "aila.exe"), join(repo, "aila.exe")]
-    : [join(repo, "bin", "aila"), join(repo, "aila")];
+  const exe = process.platform === "win32" ? "aila.exe" : "aila";
+  const cands = [
+    join(repo, ".local", "bin", exe),
+    join(repo, "bin", exe),
+    join(repo, exe),
+  ];
   for (const c of cands) if (existsSync(c)) return c;
   return "aila";
 }
@@ -200,9 +203,9 @@ try {
   const ws = await request("workspace/symbol", { query: "parse" });
   check((ws.result ?? []).length >= 1, "workspace/symbol：按前缀搜到符号");
 
-  // 跳转到类型定义：`ParseErr.Truncated` 里的 `ParseErr` → enum 声明
+  // 跳转到类型定义：类型模式 `let e: ParseErr =>` 里的 `ParseErr` → enum 声明
   const enumAt = lineOf(srcText, "enum ParseErr {");
-  const enumUse = lineOf(srcText, "ParseErr.Truncated { got, need }");
+  const enumUse = lineOf(srcText, "ParseErr =>");
   if (!enumAt || !enumUse) throw new Error("样例里找不到 ParseErr 的用法");
   const td = await request("textDocument/typeDefinition", {
     textDocument: { uri: srcURI },
@@ -232,14 +235,14 @@ try {
     "documentLink：目标是文件 URI");
 
   // 补全：`io.` 之后应列出 std.io 的公开函数
-  const ioAt = lineOf(srcText, "io.print_text(");
-  if (!ioAt) throw new Error("样例里找不到 io.print_text 调用点");
+  const ioAt = lineOf(srcText, "io.println(");
+  if (!ioAt) throw new Error("样例里找不到 io.println 调用点");
   const comp = await request("textDocument/completion", {
     textDocument: { uri: srcURI },
     position: { line: ioAt.line, character: ioAt.character + 3 },
   });
   const labels = (comp.result?.items ?? []).map((i) => i.label);
-  check(labels.includes("print_text"), "completion：`io.` 之后列出 print_text", labels.slice(0, 12).join(","));
+  check(labels.includes("println"), "completion：`io.` 之后列出 println", labels.slice(0, 12).join(","));
   check((comp.result?.items ?? []).length > 5, "completion：候选不止一条");
 
   // 补全：普通位置的局部变量与关键字

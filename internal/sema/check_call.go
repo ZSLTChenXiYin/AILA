@@ -95,25 +95,49 @@ func (c *Checker) checkCall(x *ast.Call, expected types.Type) types.Type {
 			var cur types.Type
 			if fr.sym != nil {
 				cur = fr.sym.Type
+				var holder types.Named // 末段字段的持有者（合成 FieldAccess 用）
+				var fidx int
 				for _, fname := range fr.fields {
 					if named, ok := cur.(types.Named); ok {
 						if info, ok2 := named.Info.(*types.StructInfo); ok2 {
-							for _, f := range info.Fields {
+							for i, f := range info.Fields {
 								if f.Name == fname {
+									holder = named
+									fidx = i
 									cur = f.Type
+									break
 								}
 							}
 						}
 					}
 				}
+				last := calleePath.Names[len(calleePath.Names)-1]
 				if named, ok := cur.(types.Named); ok {
-					sig = c.findMethod(named, calleePath.Names[len(calleePath.Names)-1])
+					sig = c.findMethod(named, last)
 					if sig == nil {
 						c.err("E3001", calleePath.Span, "方法未找到", "这里", "")
 					}
 					recv = &ast.Path{Span: calleePath.Span, Names: calleePath.Names[:len(calleePath.Names)-1]}
 					c.PathSyms[recv.(*ast.Path)] = fr.sym
 					c.CallRecv[x] = recv
+				} else if len(fr.fields) > 0 && fr.fields[len(fr.fields)-1] == last {
+					// 末段命中的是字段而非方法：函数指针字段 → 间接调用
+					// （vtable 形态，designs/0002 §2）；接收者不进实参表。
+					if fp, isFn := cur.(types.FnPtr); isFn {
+						sig = fnptrSigOf(fp)
+						c.CallKinds[x] = "fnptr"
+						// 合成等价的字段访问节点：codegen 从它取函数指针值。
+						if info, ok := holder.Info.(*types.StructInfo); ok {
+							base := &ast.Path{Span: calleePath.Span, Names: calleePath.Names[:len(calleePath.Names)-1]}
+							c.PathSyms[base] = fr.sym
+							fa := &ast.FieldAccess{Span: calleePath.Span, Base: base, Name: last}
+							c.noteField(fa, holder, info, fidx, fp)
+							c.CallCallee[x] = fa
+						}
+					} else {
+						c.err("E3001", calleePath.Span, "字段 `"+last+"` 不可调用", "这里",
+							"只有函数指针字段可以像函数一样调用")
+					}
 				}
 			}
 		default:
@@ -142,6 +166,16 @@ func (c *Checker) checkCall(x *ast.Call, expected types.Type) types.Type {
 		return types.I32
 	}
 	c.CallSigs[x] = sig
+	c.recordCallEdge(sig)
+	if sig.IsCoroutine && !c.CoroCalls[x] {
+		// 协程函数只能经 `coroutine@` 启动（designs/0001 §10.2）：
+		// 直接调用会绕过句柄生命周期，launch 点豁免（CoroCalls 已标记）。
+		c.err("E5006", ast.SpanOf(x),
+			"`coroutine func` 不能直接调用",
+			"可暂停函数的启动点只有 `coroutine@区域 调用@[区域]`",
+			"写成 `let h = coroutine@区域 "+sig.FullName()+"(...)@[区域];`")
+		return sigReturn(sig)
+	}
 	if _, isFn := c.CallKinds[x]; !isFn {
 		if sig.IsExtern {
 			c.CallKinds[x] = "extern"
@@ -156,12 +190,31 @@ func (c *Checker) checkCall(x *ast.Call, expected types.Type) types.Type {
 	if len(params) > 0 && params[0].Name == "self" {
 		params = params[1:]
 	}
-	if len(x.Args) != len(params) {
+	// AILA 原生变参：末位 rest 是视图参数，不按位置匹配；多出的实参逐个 unify 元素类型
+	// （designs/0002 §6）。无名 `...`（C 变参）保持 extern 直传语义。
+	nativeVariadic := sig.VariadicElem != nil && len(params) > 0
+	fixedN := len(params)
+	if nativeVariadic {
+		fixedN--
+	}
+	if nativeVariadic {
+		if len(x.Args) < fixedN {
+			c.err("E3201", x.Span, "`"+sig.FullName()+"` 至少需要 "+itoa(fixedN)+" 个实参",
+				"变参 `"+params[fixedN].Name+"` 可以为空", "")
+		}
+	} else if len(x.Args) != len(params) {
 		if !(sig.Variadic && len(x.Args) >= len(params)) {
 			c.err("E3201", x.Span, "`"+sig.FullName()+"` 需要与声明数量相等的实参", "AILA 无默认参数、无具名实参", "")
 		}
 	}
 	for i, arg := range x.Args {
+		// 原生变参：固定参数按位匹配，之后的实参全部 unify 到元素类型
+		// （不按 len(params) 截断——params 里的 rest 是视图参数，没有对应位置实参）
+		if nativeVariadic && i >= fixedN {
+			at := c.checkExpr(arg, sig.VariadicElem)
+			c.unify(sig.VariadicElem, at, ast.SpanOf(arg), "变参实参 `"+params[fixedN].Name+"`")
+			continue
+		}
 		if i >= len(params) {
 			break
 		}
@@ -204,22 +257,53 @@ func (c *Checker) checkMethodCall(x *ast.MethodCall, expected types.Type) types.
 		return types.I32
 	}
 	sig := c.findMethod(named, x.Name)
+	isFnptrField := false
 	if sig == nil {
-		c.err("E3001", x.Span, "类型 `"+named.Info.TypeInfoName()+"` 没有方法 `"+x.Name+"`", "这里",
-			"方法用 `func 类型.方法名(self, ...)` 在 `module` 块内声明")
-		return types.I32
+		// 没有同名方法时回退：字段是函数指针 → 间接调用（vtable 形态，
+		// designs/0002 §2）。接收者不进实参表，函数指针字段本身就是被调者。
+		if fsig, fa, ok2 := c.fnptrFieldCall(named, x); ok2 {
+			sig = fsig
+			c.CallSigs[x] = sig
+			c.CallKinds[x] = "fnptr"
+			c.CallCallee[x] = fa
+			isFnptrField = true
+		} else {
+			c.err("E3001", x.Span, "类型 `"+named.Info.TypeInfoName()+"` 没有方法 `"+x.Name+"`", "这里",
+				"方法用 `func 类型.方法名(self, ...)` 在 `module` 块内声明")
+			return types.I32
+		}
 	}
 	c.CallSigs[x] = sig
-	c.CallKinds[x] = "method"
-	c.CallRecv[x] = x.Recv
+	c.recordCallEdge(sig)
+	if !isFnptrField {
+		c.CallKinds[x] = "method"
+		c.CallRecv[x] = x.Recv
+	}
 	params := sig.Params
 	if len(params) > 0 && params[0].Name == "self" {
 		params = params[1:]
 	}
-	if len(x.Args) != len(params) {
+	nativeVariadic := sig.VariadicElem != nil && len(params) > 0
+	fixedN := len(params)
+	if nativeVariadic {
+		fixedN--
+	}
+	if nativeVariadic {
+		if len(x.Args) < fixedN {
+			c.err("E3201", x.Span, "`"+sig.FullName()+"` 至少需要 "+itoa(fixedN)+" 个实参",
+				"变参 `"+params[fixedN].Name+"` 可以为空", "")
+		}
+	} else if len(x.Args) != len(params) {
 		c.err("E3201", x.Span, "`"+sig.FullName()+"` 需要与声明数量相等的实参", "这里", "")
 	}
 	for i, arg := range x.Args {
+		// 原生变参：固定参数按位匹配，之后的实参全部 unify 到元素类型
+		// （不按 len(params) 截断——params 里的 rest 是视图参数，没有对应位置实参）
+		if nativeVariadic && i >= fixedN {
+			at := c.checkExpr(arg, sig.VariadicElem)
+			c.unify(sig.VariadicElem, at, ast.SpanOf(arg), "变参实参 `"+params[fixedN].Name+"`")
+			continue
+		}
 		if i >= len(params) {
 			break
 		}
@@ -239,6 +323,42 @@ func (c *Checker) checkMethodCall(x *ast.MethodCall, expected types.Type) types.
 		}
 	}
 	return sigReturn(sig)
+}
+
+// fnptrSigOf 把函数指针类型包成间接调用用的合成签名（实参名 a0..an）。
+func fnptrSigOf(fp types.FnPtr) *FuncSig {
+	params := make([]Param, 0, len(fp.Params))
+	for i, pt := range fp.Params {
+		params = append(params, Param{Name: "a" + itoa(i), Type: pt})
+	}
+	ret := fp.Ret
+	if ret == nil {
+		ret = types.Void{}
+	}
+	return &FuncSig{Name: "<fnptr>", Params: params, Ret: ret, Err: fp.Err}
+}
+
+// fnptrFieldCall 处理「字段是函数指针」的方法调用形态（`w.write(args)`，designs/0002 §2）：
+// 找到同名字段且其类型为 FnPtr 时，合成间接调用签名，并生成等价的字段访问
+// 节点（记入 FieldRefs）——codegen 用它取函数指针值。
+func (c *Checker) fnptrFieldCall(named types.Named, x *ast.MethodCall) (*FuncSig, *ast.FieldAccess, bool) {
+	info, ok := named.Info.(*types.StructInfo)
+	if !ok {
+		return nil, nil, false
+	}
+	for i, f := range info.Fields {
+		if f.Name != x.Name {
+			continue
+		}
+		fp, isFn := f.Type.(types.FnPtr)
+		if !isFn {
+			return nil, nil, false
+		}
+		fa := &ast.FieldAccess{Span: x.Span, Base: x.Recv, Name: x.Name}
+		c.noteField(fa, named, info, i, f.Type)
+		return fnptrSigOf(fp), fa, true
+	}
+	return nil, nil, false
 }
 
 // --------------------------------------------------------------------------- //
@@ -360,7 +480,7 @@ func (c *Checker) checkBinary(x *ast.Binary, expected types.Type) types.Type {
 	return opT
 }
 
-func isUntypedInt(t types.Type) bool { _, ok := t.(types.UntypedInt); return ok }
+func isUntypedInt(t types.Type) bool   { _, ok := t.(types.UntypedInt); return ok }
 func isUntypedFloat(t types.Type) bool { _, ok := t.(types.UntypedFloat); return ok }
 
 func isCmp(op string) bool {
@@ -395,9 +515,24 @@ func (c *Checker) checkUnary(x *ast.Unary, expected types.Type) types.Type {
 	default:
 		exp = expected
 	}
+	// 取负 / 按位反会改变字面量的值域（-2^63 合法而 2^63 不合法）：
+	// 操作数先脱离上下文定型，由取负结果再对目标做检查
+	if x.Op == "-" || x.Op == "~" {
+		exp = nil
+	}
 	t := c.checkExpr(x.Operand, exp)
 	if x.Op == "-" {
 		if ui, ok := t.(types.UntypedInt); ok {
+			if ui.BitPattern {
+				// 位型字面量取负：按无符号幅值取负（-2^63 恰为 I64.MIN）
+				mag := uint64(ui.Value)
+				if mag > 1<<63 {
+					c.err("E3201", x.Span, "字面量超出目标类型值域",
+						"取负后没有任何整数类型装得下", "")
+					return types.I32
+				}
+				return types.UntypedInt{Value: -int64(mag)}
+			}
 			return types.UntypedInt{Value: -ui.Value}
 		}
 		if !types.IsFloat(t) && !types.IsInteger(t) {
@@ -416,58 +551,6 @@ func (c *Checker) checkUnary(x *ast.Unary, expected types.Type) types.Type {
 	return t
 }
 
-func (c *Checker) checkCast(x *ast.Cast) types.Type {
-	src := c.checkExpr(x.Operand, nil)
-	if _, ok := src.(types.UntypedInt); ok {
-		src = types.I32
-	}
-	dst := c.table.Resolve(x.Target, c.bag)
-	if _, ok := dst.(types.Prim); !ok || isText(dst) {
-		c.err("E3201", x.Span, "转换目标必须是标量类型", "视图 / Text 的类型变换走 `view` 声明", "")
-		return dst
-	}
-	lossless := castLossless(src, dst)
-	if x.KindV == "as" {
-		if !lossless {
-			c.err("E3202", x.Span, "`as` 不能做有损 / 跨域转换",
-				"`as` 只做位型无损解释（同宽互释 / 拓宽）",
-				"有损方向用 `trunc`；钳制 / 失败返回走 `std.math.saturate_*` / `try_*`")
-		}
-	}
-	c.CastTypes[x] = [2]types.Type{src, dst}
-	return dst
-}
-
-func isText(t types.Type) bool {
-	p, ok := t.(types.Prim)
-	return ok && p.K == "text"
-}
-
-func castLossless(src, dst types.Type) bool {
-	sb := types.IntWidth(src, 8)
-	db := types.IntWidth(dst, 8)
-	if sb == 0 || db == 0 {
-		return false
-	}
-	sf, df := types.IsFloat(src), types.IsFloat(dst)
-	if sf && df {
-		return db >= sb
-	}
-	if sf != df {
-		return false
-	}
-	if sb == db {
-		return true
-	}
-	if db < sb {
-		return false
-	}
-	if types.IsSigned(src) && !types.IsSigned(dst) {
-		return false
-	}
-	return true
-}
-
 func (c *Checker) checkTryPropagate(x *ast.TryPropagate) types.Type {
 	inner := c.checkExpr(x.Operand, nil)
 	sig := c.ctx.Sig
@@ -475,18 +558,19 @@ func (c *Checker) checkTryPropagate(x *ast.TryPropagate) types.Type {
 	case types.Result:
 		if sig.Err == nil {
 			c.err("E3201", x.Span, "`?` 需要函数返回 `T ! E` 才能上抛", "这里", "")
-		} else if !sameType(sig.Err, t.Err) {
-			c.err("E3201", x.Span, "`?` 上抛的错误类型不匹配", "零隐式转换", "")
+		} else if !sameType(sig.Err, t.Err) && !types.IsErrorSpace(sig.Err) {
+			c.err("E3201", x.Span, "`?` 上抛的错误类型不匹配", "零隐式转换",
+				"保留错误空间 `Error` 是全部错误集的超集，可接收任意错误上抛")
 		}
 		c.TryModes[x] = "result"
-		c.noteTry(x, "result", t.Ok)
+		c.noteTry(x, "result", t.Ok, t.Err)
 		return t.Ok
 	case types.Optional:
 		if _, ok := sig.Ret.(types.Optional); !ok {
 			c.err("E3201", x.Span, "`?` 需要函数返回 `T?` 才能上抛 None", "这里", "")
 		}
 		c.TryModes[x] = "optional"
-		c.noteTry(x, "optional", t.Inner)
+		c.noteTry(x, "optional", t.Inner, nil)
 		return t.Inner
 	}
 	c.err("E3201", x.Span, "`?` 只能作用于 `T ! E` 或 `T?`", "这里", "")
@@ -597,6 +681,11 @@ func (c *Checker) checkArrayLitInner(x *ast.ArrayLit, expected types.Type) types
 }
 
 func (c *Checker) checkStructLit(x *ast.StructLit, expected types.Type) types.Type {
+	// leading-dot 构造 `.名 { 字段 }`（designs/0004 §3.4）：成员名由期待类型的
+	// 变体集合静态解析——错误空间超集 / 具体错误集 enum / Result 的错误通道。
+	if x.LeadingDot {
+		return c.checkLeadingDotLit(x, expected)
+	}
 	names := x.TypePath
 	if len(names) == 1 {
 		if t, ok := c.table.Lookup(names[0]); ok {
@@ -637,9 +726,6 @@ func (c *Checker) checkStructLit(x *ast.StructLit, expected types.Type) types.Ty
 				}
 				return named
 			}
-		}
-		if names[0] == "Some" || names[0] == "Ok" || names[0] == "Err" {
-			return c.checkBuiltinLit(x, names[0], expected)
 		}
 		c.err("E3001", x.Span, "未知类型 `"+names[0]+"`", "构造必须类型前缀", "")
 		return types.I32
@@ -727,75 +813,58 @@ func (c *Checker) checkStructLit(x *ast.StructLit, expected types.Type) types.Ty
 	return types.I32
 }
 
-func (c *Checker) checkBuiltinLit(x *ast.StructLit, which string, expected types.Type) types.Type {
-	get := func(name string) ast.Node {
-		for _, pair := range x.FieldPairs {
-			if pair.A.(string) == name {
-				if n, ok := pair.B.(ast.Node); ok {
-					return n
-				}
-			}
-		}
-		return nil
+// checkLeadingDotLit 检查 leading-dot 错误成员构造 `.名 { 字段 }`
+// （designs/0004 §3.4）。期待类型决定成员集合：
+//   - ErrorSpace：全局错误空间（`#error enum Error` 分片聚合）
+//   - Named{EnumInfo}：错误集 enum（P2 宽容期未 `#error` 标注亦放行，P7 收紧）
+//   - Result{Ok, Err}：按 Err 通道解析，产出整个 Result
+func (c *Checker) checkLeadingDotLit(x *ast.StructLit, expected types.Type) types.Type {
+	if expected == nil {
+		c.err("E3201", x.Span, "leading-dot 构造需要期待类型",
+			"`.成员` 的成员集合由上下文类型静态解析",
+			"写在返回位置（`return .Nack;`）、带标注绑定（`let e: Error = .Nack;`）或实参位置")
+		return types.I32
 	}
-	switch which {
-	case "Some":
-		var inner types.Type
-		if opt, ok := expected.(types.Optional); ok {
-			inner = opt.Inner
+	switch e := expected.(type) {
+	case types.ErrorSpace:
+		return c.checkLeadingDotIn(x, e.Info, expected)
+	case types.Result:
+		var en *types.EnumInfo
+		switch et := e.Err.(type) {
+		case types.ErrorSpace:
+			en = et.Info
+		case types.Named:
+			en, _ = et.Info.(*types.EnumInfo)
 		}
-		v := get("v")
-		if v == nil {
-			c.err("E3201", x.Span, "`Some` 必须写载荷 `{ v: 值 }`", "构造显式（铁律 10）", "")
-			inner = types.I32
-		} else {
-			t := c.checkExpr(v, inner)
-			if inner != nil {
-				c.unify(inner, t, ast.SpanOf(v), "`Some` 载荷")
-			} else {
-				inner = t
-			}
+		return c.checkLeadingDotIn(x, en, expected)
+	case types.Named:
+		en, ok := e.Info.(*types.EnumInfo)
+		if !ok {
+			c.err("E3001", x.Span, "类型 `"+e.Info.TypeInfoName()+"` 没有变体成员，不能 leading-dot 构造", "这里", "")
+			return e
 		}
-		c.BuiltinLits[x] = "Some"
-		c.noteLit(x, &LitRef{Builtin: "Some", Payload: inner})
-		return types.Optional{Inner: inner}
-	case "Ok":
-		var ok types.Type
-		var errT types.Type = types.Named{Info: &types.EnumInfo{Name: "Err"}}
-		if r, isRes := expected.(types.Result); isRes {
-			ok, errT = r.Ok, r.Err
-		}
-		v := get("v")
-		if v != nil {
-			t := c.checkExpr(v, ok)
-			if ok != nil {
-				c.unify(ok, t, ast.SpanOf(v), "`Ok` 载荷")
-			} else {
-				ok = t
-			}
-		}
-		c.BuiltinLits[x] = "Ok"
-		c.noteLit(x, &LitRef{Builtin: "Ok", Payload: ok})
-		return types.Result{Ok: ok, Err: errT}
-	default: // Err
-		var okT types.Type = types.I32
-		var errT types.Type
-		if r, isRes := expected.(types.Result); isRes {
-			okT, errT = r.Ok, r.Err
-		}
-		v := get("e")
-		if v != nil {
-			t := c.checkExpr(v, errT)
-			if errT != nil {
-				c.unify(errT, t, ast.SpanOf(v), "`Err` 载荷")
-			} else {
-				errT = t
-			}
-		}
-		c.BuiltinLits[x] = "Err"
-		c.noteLit(x, &LitRef{Builtin: "Err", Payload: errT})
-		return types.Result{Ok: okT, Err: errT}
+		return c.checkLeadingDotIn(x, en, e)
 	}
+	c.err("E3201", x.Span, "类型 `"+typeName(expected)+"` 不能 leading-dot 构造", "这里",
+		"leading-dot 构造只用于错误成员")
+	return expected
+}
+
+// checkLeadingDotIn 在 en 的变体集合里解析 leading-dot 成员并走 enum 构造管道
+// （checkEnumVariant：VariantLits + LitRef + 载荷检查，codegen 零特例）。
+func (c *Checker) checkLeadingDotIn(x *ast.StructLit, en *types.EnumInfo, out types.Type) types.Type {
+	if en == nil {
+		c.err("E3201", x.Span, "该期待类型的错误通道不是 enum，不能 leading-dot 构造", "这里", "")
+		return out
+	}
+	v, ok := en.Variant(x.TypePath[0])
+	if !ok {
+		c.err("E3001", x.Span, "错误集 `"+en.Name+"` 没有成员 `"+x.TypePath[0]+"`", "这里",
+			"成员在 `#error enum "+en.Name+" { ... }` 中声明")
+		return out
+	}
+	c.checkEnumVariant(x, types.Named{Info: en}, en, v)
+	return out
 }
 
 // checkAlloc 记录元素类型后转交真正的检查。
@@ -876,6 +945,7 @@ func itoa(n int) string {
 	}
 	return string(b)
 }
+
 // checkStructFields 校验 `类型 { 字段: 值, ... }` 并对字段表达式做类型检查。
 //
 // 供「本包 struct」与「跨包 struct」两条路径共用（字段一律写全，铁律 10）。

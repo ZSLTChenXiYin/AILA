@@ -138,9 +138,15 @@ func firstDiff(got, want []any) string {
 }
 
 func TestKeywordsAndWords(t *testing.T) {
-	for _, kw := range []string{"func", "let", "return", "match", "out", "copy", "trunc"} {
+	for _, kw := range []string{"func", "let", "return", "match", "out", "copy", "resume"} {
 		if !Keywords[kw] {
 			t.Fatalf("%s 应是关键字", kw)
+		}
+	}
+	// v2 退役关键字（designs/0004 §7）：as / trunc / len / trap 不再是保留字
+	for _, kw := range []string{"as", "trunc", "len", "trap"} {
+		if Keywords[kw] {
+			t.Fatalf("%s 已随 v2 退役，不应是关键字", kw)
 		}
 	}
 	for _, w := range []string{"I32", "Text", "chan", "send", "recv", "coro", "Unsafe"} {

@@ -12,7 +12,7 @@ func cimportProject(t *testing.T, mainSrc string) (*Workspace, string) {
 	t.Helper()
 	dir := t.TempDir()
 	mustWrite(t, dir+"/aila.toml",
-		"[package]\nname = \"demo\"\nversion = \"0.1.0\"\nentry = \"_.main\"\n\n[target]\nboard = \"host\"\n")
+		"[package]\nname = \"demo\"\nversion = \"0.1.0\"\nentry = \"_.main\"\n")
 	mustWrite(t, dir+"/main.aila", mainSrc)
 	mustWrite(t, dir+"/cpacks/mathkit/include/mathkit.h", strings.Join([]string{
 		"#ifndef MATHKIT_H",

@@ -1,8 +1,15 @@
 # AILA 语言设计规范
 
-> **编号**：0001 · **类型**：权威设计规范 · **状态**：v0 语法设计定稿
+> **编号**：0001 · **类型**：权威设计规范 · **状态**：v0 语法设计定稿（v2 语法收敛修订中）
 > 本文是 AILA 语言**唯一权威设计文档**，自包含：全部语法与语义规则、以及每条规则背后的动机与代价，均以本文为准；交叉引用一律为文内锚点链接。
 > **取代关系**：早期逐项讨论记录已不再维护、不参与引用；若与本文冲突，一律以本文为准。任何规则的增删改，必须在本文留下"为什么"（动机或弃选理由），不得只留结论。
+
+> **v2 修订注记（2026-10-30，designs/0004 全量落地）**：语法 v2 对本文四处机制做了收敛裁决，冲突处以 designs/0004 为准——
+> 1. **属性机制（[4.3](#s4-3)）**：`#[...]` 方括号属性退役，声明级标注统一为层指令 `#compile.c` / `#compile.packed` / `#compile.align(N)` / `#compile.inline`（指令也是 API，[0004 §2.3](0004-syntax-v2.md)）；
+> 2. **错误处理（第 8 章）**：Ok/Err 保留变体退役——`return 值;` 自动装载成功态、`return .成员;` 错误成员直接构造、match 用类型模式 `let v: T` / `let e: E` 分派；`T ! E` 的 E 必须是 `#error` 标注错误集；`Error` 是保留超集名；
+> 3. **可空（[3.7](#s3-7)）**：`T?` 收窄为可空视图（句柄类 niche 表示不变）；值类型可空退役；`Some {}` 退役、`None` 降为视图字面量；
+> 4. **并发（第 10 章）与词汇（[1.4](#s1-4)、第 6 章）**：`thread f();` / `coroutine@r f(...)` / `chan@r T(n)` 退役，统一 `#runtime.spawn` / `#runtime.coro` / `#runtime.chan`；关键字 `as`/`trunc`/`len`/`trap` 退役，转换走 `#compile.as(T, x)`、长度走 `#comprun.len(x)`、trap 走 `#runtime.trap("…")`、布局查询走 `#compile.sizeof/alignof`；运算符 `+ - *` 回归回绕语义，溢出检查走 `#runtime.checked_add/sub/mul`；`import … as` 别名退役。
+> 下文各章保留 v0 原文作为动机与推导记录，语义以本注记 + [0004](0004-syntax-v2.md) 为准。
 
 ## 阅读指南
 
@@ -125,7 +132,7 @@ AILA 是**跨平台通用嵌入式语言**，以单片机（ESP32-S3 优先）�
 |---|---|---|---|
 | `@` | **内存与效果运行语义域** | 分配点后缀（`f()@[r]` / `f()@static`）、`region` 块、`@mut[x]` / `@move[m]` 子句、`chan@work`、协程帧区域 `coroutine@帧区域` | 变量声明前缀（`@static var` 不存在）、声明级属性（那是 `#[...]`） |
 | `#` | **编译期域** | 属性 `#[...]`、编译期查询 `#size(T)` / `#align(T)` | 运行期语义（编译期域内不得出现运行期动作） |
-| 无前缀 | 普通语言文本 | 关键字、标识符、字面量、内置变体名 | — |
+| 无前缀 | 普通语言文本 | 关键字、标识符、字面量（含 `None`） | — |
 
 ### 词汇归类（四条，封闭）
 
@@ -134,7 +141,7 @@ AILA 是**跨平台通用嵌入式语言**，以单片机（ESP32-S3 优先）�
 | 类别 | 成员 | 说明 |
 |---|---|---|
 | 关键字 / 运算符 | 声明：`func` `let` `var` `const` `type` `struct` `enum` `state` `view` `module` `hot` `import` `public`；流程：`return` `if` `else` `for` `in` `match` `region` `defer` `unsafe` `coroutine` `yield` `out` `trap`；定形一元操作：`move` `len` `copy` `resume`；中缀转换：`as` `trunc`；符号：`?` `!` `<-` `.` `[]` | 唯一权威清单 = [6.4](#s6-4) 正清单；定形规则见 [6.9](#s6-9) |
-| 内置 enum 变体名 | `None` / `Some`（`T?`）、`Ok` / `Err`（`T ! E`）、`Suspended` / `Done`（resume 三态） | 内置 enum 的变体名，属类型系统词汇，不是函数、不可寻址（[3.7](#s3-7)、[8.2](#s8-2)、[10.5](#s10-5)） |
+| 内置 enum 变体名 | **已全部退役**（designs/0004 §7 / §6 v2）：`None` 降为可空视图字面量；`Some` / `Ok` / `Err` 彻底删除（构造与模式均报 `E3001`）；`Suspended` / `Done` 随 `resume h` 的值形态一起退役——协程等待只走 select 的等完成事件（`resume` 当表达式写报 `E5010`）。六个名字现在都是普通标识符 | 内置 enum 的变体名不再是「保留名」，也不再有「内建模式」这一类词汇；`None` 的可用位置由语法位固定（[3.7](#s3-7)、[10.5](#s10-5)） |
 | 内置类型拼法（白名单封闭） | 基元类型（[3.1](#s3-1)）、`[T]` / `[T; N]` / `[Unsafe]` / `Text`（[3.2](#s3-2)、[5.1](#s5-1)）、`T?`、`T ! E`、`chan T` / `send chan T` / `recv chan T`（[10.6](#s10-6)）、`coro [T ! E]`（[10.4](#s10-4)）、函数指针签名（[3.9](#s3-9)） | 全部编译器硬编码、用户不可定义、不可实例化出新形态（[第 3 章](#ch3) 导语） |
 | 区域域预置名 | `@static`、`default` / `psram` / `rtc` 等 kind 预置域 | 只出现在 `@` 域位置（分配点 / `region` 声明），不是可寻址变量（[5.8](#s5-8)、[5.9](#s5-9)） |
 
@@ -668,6 +675,8 @@ Shape 的 Circle 值：            Shape 的 Point 值：
 
 ## <a id="s3-7"></a>3.7 可空类型 T?
 
+> **v2 修订（designs/0004 §5）**：本节的 `Some { v }` 包装 / `Ok { v }` 拼法已退役——`T?` 只承载视图可空（`ptr == 0` 即 `None`，零 tag），`None` 是视图字面量；返回位置 `return 值;` 自动装载非空态；值类型可空退役（可选值场景用用户 enum 表达）。
+
 可空要解决的根本问题：**句柄类变量需要一个空值**。标量（`U8` / `F32` / `Bool`…）没有空值需求（C 的 `int`、Go 的 `int` 都没有 NULL），不可空。
 
 ```aila
@@ -907,6 +916,8 @@ if c { x = 1; } else { x = 2; }
 
 ## <a id="s4-3"></a>4.3 属性机制
 
+> **v2 修订（designs/0004 §2.3）**：`#[...]` 方括号属性退役，声明级标注统一为层指令——`#compile.c func …;` / `#compile.packed` / `#compile.align(N)` / `#compile.inline`；错误空间声明走 `#runtime.error` / `#comprun.error enum …`。下文的方括号形态保留为动机记录。
+
 拼法与符号域已定界（[1.4 两符号三域](#s1-4)：`#` = 编译期域，`@` = 内存与效果域永不通用化）。
 
 ### 机制细则
@@ -1092,6 +1103,8 @@ func normalize(x: I32) -> I32 { ... }                            // 无 @ 段 = 
 | move 类型（含 `[T]` 句柄字段） | 只读借用 |
 
 方法 self 传递形态并入本表（[4.4](#s4-4) 规则 5）：默认只读借用、写权 `@mut[self]`、消耗 `@move[m]`。
+
+**实现约定（大聚合体按只读指针传）**：纯数据 struct 一旦超过 16 字节，跨函数**按只读指针**传（语义仍是拷贝，只是免掉寄存器搬运）；`@mut[x]` 的同型参数同样按指针传，因此大聚合体的写会落回调用方内存。原因在 16 寄存器目标上是硬约束：xtensa call0 的 esp-llvm 后端在大聚合体按值传递 / 构造时直接报 `Cannot scavenge register`（-O0..-O3 都一样，见 [designs/0006 §4.1](0006-display-stack.md)）。推论：需要被多个下游写的大状态（脏区、文本网格）更适合做成**句柄 + 区域内存**（`struct Damage { raw: [U32] }`，同 [5.4](#s5-4) 的 `Matrix { data: [F32] }`）——句柄两个机器字，写操作经 `raw` 切片落地，任何目标上都不进寄存器压力区。
 
 `region` 不作为普通参数类型：区域经签名 `@region[r]` 声明、调用点 `@[...]` 传递；句柄可传不等于寿命可变（[5.5](#s5-5)）。
 
@@ -2211,11 +2224,54 @@ func write_record(rec: Rec) -> Stat ! FsErr {
 |---|---|
 | 函数级粒度（Go 式） | 块级更细，与 if / for / region 块自然组合 |
 
+## <a id="s7-8"></a>7.8 编译期剪枝：`#compile.if` / `#compile.match`
+
+**定位**：语句级指令，条件是**编译期常量表达式**（const-expr）。命中分支照常生成代码，其余分支**只在代码生成阶段被省略**——此前的解析、解析名、类型检查、区域 / 能力分析、告警全部照做（死分支永不腐烂）。动机与完整论证见 [designs/0006 §1](0006-display-stack.md)。
+
+```aila
+const MODE: U8 = 2;
+
+func demo() {
+    let fast: Bool = (MODE == 2);            // 函数内 let 绑 const-expr 也算已知
+    #compile.if fast { use_fast(); } else { use_generic(); }
+
+    #compile.match MODE {
+        1 => low_power(),
+        2 => full_speed(),                   // 只有这一支生成代码
+        _ => {},
+    }
+}
+```
+
+| 决策点 | 规则 |
+|---|---|
+| const-expr 闭集 | 字面量 / `const` 名（本模块或 import 进来的）/ `#size(T)`·`#align(T)` / `#comprun.len(字面量数组)` / 函数内一次性 `let` 绑 const-expr / 仅由上述构成的纯运算（算术、比较、位、布尔、无损 `#compile.as`） |
+| 求不出常量 | **报错不降级**：`E3210`（if 条件）、`E3211`（match 判别式）、`E3212`（判别值无臂命中）、`E3213`（模式非常量）。静默降级成运行期 `if` 是最危险的失真 |
+| 剪枝不动 ABI | 模块接口指纹、区域与 `@mut` 能力、逃逸检查、未使用告警全部按**未剪枝** AST 判定——同一模块在任何剪枝结果下 ABI 相同（热替换可验证） |
+| match 不要求穷尽 | 判别值已定，强制穷尽只会逼人写 `_ =>`；被剪臂仍完整类型检查 |
+| 只依赖源码常量 | 无 manifest `[cfg]`、无 `-D` → 构建可复现、指纹不变 |
+| 可观测 | `aila build --emit-json` 的 `aila-build.json` 含 `compile_time_prunes`（模块 / 行号 / 判定值 / 命中分支） |
+
+**正当使用场景（防滥用）**：同模块内的 `if` + 常量本来就可能被优化器折叠，所以 `#compile.if` 只有三种正当场景：① **跨模块常量**（铁律 7 禁止跨模块内联，优化器折不了）；② `-O0` / debug 构建也要剪；③ 剪掉后**连依赖都不需要**（cpack 符号、字库表、整段驱动代码）。设备选择就是第 ①+③ 类：
+
+```aila
+const DISPLAY: U8 = 1;
+func main() {
+    #compile.match DISPLAY { 1 => ssd1306_run(), 2 => st7735_run(), _ => {} }
+}
+```
+
+未选中的驱动既没有调用点（剪枝），也没有符号（`aila build --gc-sections` 丢掉无人引用的函数段）——这是 AILA 版的 Kconfig，但**配置属于源码，不属于构建系统**。
+
+**明确不做**：文本级 `#if` / 宏（先删文本再解析 = 死代码里的语法 / 类型错误永远发现不了）、`@const` 形参（`@` 族是内存与效果语义域，且按值特化与「模块 = 热替换最小单位」冲突）、manifest `[cfg]` 段、运行期设备注册表（跨模块持函数指针，违 [3.9](#s3-9) 与 B6）。
+
 ---
 
 # <a id="ch8"></a>第 8 章 错误处理
 
 本章定义错误处理三通道：**可恢复（`T ! E`）+ 可空简化（`T?`）+ 不可恢复（trap）**。设计红线（铁律 5）：**错误传播 = 编译期控制流（`?` 展开为提前 return），语言永不引入栈展开**。
+
+> **v2 修订（designs/0004 §3）**：`T ! E` 的拼法与 niche 布局保留；E 必须是 `#error` 标注错误集（成员进全局统一编号空间，`Error` 是保留超集名）；Ok/Err 保留变体退役——构造走返回位置自动装载（`return 值;` / `return .成员;`），分派走 match 类型模式；`trap "…";` 语句退役，显式 trap 走 `#runtime.trap("…");`。
 
 ## <a id="s8-1"></a>8.1 三通道模型
 
@@ -2310,6 +2366,8 @@ match parse(buf) {
 **接收合法性澄清**：`Result 裸名不作类型引用入口` ≠ 不能用 let 接收——`let r = read_file(path);`（推断）与 `let r: [U8] ! IoErr = read_file(path);`（标注直接写 `T ! E` 本名）均合法；被编译错误堵死的只有**裸调用不接返回值**（丢弃 = 静默丢值硬延伸；显式丢弃 `_ =` 豁免口见 [6.5](#s6-5)）。let 接住后未使用（unused binding）属另一检查维度，v0 作 warning 挂编译器批次，与「丢弃 = 编译错误」不同级。
 
 **Ok / Err = 内置 enum 变体名**：与 `None` / `Some` 同族四件套，非关键字（[1.4](#s1-4)）；match 模式 + 构造表达式两用（`let r = Ok { v: x };` 合法）；内置判别和无类型名可挂，裸名即全名。
+
+> **v2 修订（designs/0004 §3 / §7）**：本段已作废。`Ok` / `Err` / `Some` 三个变体名连同其构造与模式拼法全部退役，构造走返回位置自动装载（`return 值;` / `return .成员;`），分派走 match 类型模式（`let v: T` / `let e: E`）；`None` 降为可空视图字面量。三个名字现在只是普通标识符，不再有任何内置含义，编译器对其构造与模式形态一律报 `E3001`。
 
 ### `?` 语义细则
 
@@ -2541,6 +2599,10 @@ match parse(buf) {
 
 本章定义并发：**协程（语言自实现）+ 线程（OS 封装）双轨**。区域 bump 指针的并发竞争在协程侧天然消解（单线程内切换，同一时刻只有一个执行流在跑）；线程侧共享内存规则见 [10.7](#s10-7)。
 
+> **落地状态（2026-10 并发批次）**：本章全量落地——协程 / chan / thread（宿主）/ std.atomics 均可编译运行，验收范例 `examples/concurrency_demo` 进 IR / 端到端快照。嵌入式 target 当前可用协程 + std.atomics：`thread` 语法层完整（嵌入式须显式给栈，E5005），但芯片 runtime 尚未提供线程原语（链接期缺 `aila_rt_thread_spawn`），裸机并发正道 = 协程。
+>
+> **v2 修订（designs/0004 §2.4 / §6）**：启动形态 API 化——`thread f();` → `#runtime.spawn(f, args)`（E5005 随 `thread: 栈` 一并退役，嵌入式栈深控制留待 spawn 增补参数）、`coroutine@r f(x)` → `#runtime.coro(f, x)`、`chan@r T(n)` → `#runtime.chan(T, n)`（区域推断取词法最内层 region）；`std.atomics` 绑定样板删除、原子原语直调 `#runtime.atomic_*`；`Suspended`/`Done` 从 match 变体退役（单路 resume 的内建模式拼法保留），多路等待走 `select`（就绪事件 try 链展开）；运算符 `+ - *` 回归回绕语义，确定性溢出检查走 `#runtime.checked_add/sub/mul`。
+
 ## <a id="s10-1"></a>10.1 双轨架构
 
 | 决策点 | 规则 |
@@ -2561,6 +2623,8 @@ match parse(buf) {
 | 启动形态 | `coroutine@帧区域 函数调用@[函数区域]`——协程帧是语言级隐式分配，**@ 必须显式**（铁律 1 推论）；函数内存区域完全复用既有调用点 `@[...]` 实参通道，零新规则 |
 | 双区域寿命规则 | **进入协程的一切区域（帧区域 + 函数区域），寿命必须覆盖句柄活跃期**——句柄为句柄类型走既有逃逸三检查位；区域实参存进帧跨挂起存活，供给区域先于句柄死亡 = 编译错误（「跨并发捕获」检查位的协程版，零新机制） |
 | 帧 × 配额 | 协程帧 = 区域里的一块普通分配：配额记账、区域退出整块回收照常（[5.6](#s5-6)） |
+
+落地注记（2026-10）：启动语义是 **eager**——`coroutine@` 启动点即驱动协程运行至首个挂起点才交回句柄（LLVM coro 天然语义，零额外调度指令）；调用侧首个 `resume` 从第二个挂起点（或终结态）继续，等价于「launch 消费首个 yield」。
 
 ```aila
 coroutine func read_all(id: U8) @region[buf] -> Data ! IoErr {
@@ -2624,6 +2688,15 @@ let h = coroutine@work read_all(3)@[buf];   // 帧进 work，函数内存进 buf
 | resume × 区域 | resume 不分配内存、无 `@[...]` 通道——协程体内分配走帧里存的区域实参（启动点给足） |
 | 写权 | `resume` 是关键字写操作，写权由关键字语义自带（帧在启动时已被独占），**不要求句柄为 var 绑定**（[5.2](#s5-2) 调用点细则） |
 
+> **v2 修订（designs/0004 §6 / §7）**：本节标「返回形态」与「内置变体名」两行已作废——
+> `resume h` 不再有独立表达式形态（`E5010`），协程等待一律走 `select` 的就绪事件；
+> 于是「三态」只留在编译器内部（控制块 state），用户侧的绑定值只有完成态两态：
+> `coroutine func f() -> T ! E` 绑 `T ! E`、`-> T` 绑 `T`、无返回值不绑定。
+> `Suspended` / `Done` 两个内建模式随三态一起退役，`Ok { v }` / `Err { e }` 变体模式
+> 改类型模式（`let v: T` / `let e: E`）见上面的 §8 修订。「零新类型名」与「丢值禁令」不变。
+> 下面的 `for { match resume h { Suspended => ..., ... } }` 轮询写法是 v1 形态，
+> 现在写成 `select { case r = resume h => { match r { let v: T => .., let e: E => .. } } }`。
+
 ```aila
 coroutine func poll_sensor(id: U8) @region[buf] -> Reading ! IoErr {
     let raw = i2c_read(id)@[buf]?;   // 协程内 ? 传播照常
@@ -2631,19 +2704,25 @@ coroutine func poll_sensor(id: U8) @region[buf] -> Reading ! IoErr {
     return parse(raw)@[buf]?;        // 完成
 }
 
+// v2 写法（designs/0004 §6 P10）：启动走层 API，等待走 select 的等完成事件
 func scheduler() {
-    region work: 4096 {
-        let h = coroutine@work poll_sensor(3)@[work];
-        for {
-            match resume h {
-                Suspended => { other_jobs(); },   // 让出期间干别的
-                Ok { v }  => { handle(v); break; },
-                Err { e } => { report(e); break; },
-            }
+    region work {
+        let h = #runtime.coro(poll_sensor, 3);   // 帧落最内层 region
+        select {
+            case r = resume h => {               // 完成时才就绪
+                match r {
+                    let v: Reading => { handle(v); },
+                    let e: IoErr   => { report(e); },
+                }
+            },
         }
     }   // work 退出：帧 + 协程分配整块回收
 }
 ```
+
+> v1 的 `for { match resume h { Suspended => { other_jobs(); }, Ok { v } => .., Err { e } => .. } }`
+> 写法已退役：轮询推进被 select 内部吸收（探测即推进一次，未完成就当不就绪），
+> `Suspended` / `Done` 与 `Ok { v }` / `Err { e }` 都不再可写。
 
 ## <a id="s10-6"></a>10.6 Channel
 

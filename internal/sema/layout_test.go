@@ -73,6 +73,10 @@ func TestLayoutMatchesReference(t *testing.T) {
 		t.Fatalf("快照不是合法 JSON：%v", err)
 	}
 
+	// 错误空间编号是进程级全局状态：本测试不经过 build.Load，必须自己重置
+	// 基线，否则 enum tag 会随本包其它测试的注册顺序漂移（-shuffle 下复现）。
+	types.ResetErrorSpace()
+
 	mod, bag := parser.Parse("layout.aila", string(src))
 	if bag.HasErrors() {
 		t.Fatalf("解析失败：%s", bag.Render(false))

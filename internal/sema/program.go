@@ -165,9 +165,6 @@ func (p *Program) resolveImport(pkg string, imp *ast.Import) (string, bool) {
 
 // importBinding 计算导入后的绑定名（默认取路径末段）。
 func importBinding(imp *ast.Import) string {
-	if imp.Alias != "" {
-		return imp.Alias
-	}
 	if len(imp.Path) > 0 {
 		return imp.Path[len(imp.Path)-1]
 	}

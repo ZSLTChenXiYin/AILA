@@ -1,6 +1,8 @@
 package sema
 
 import (
+	"strings"
+
 	"aila/internal/ast"
 	"aila/internal/types"
 )
@@ -28,6 +30,33 @@ func (c *Checker) checkFunc(fn *ast.FuncDecl) {
 		InCoroutine: sig.IsCoroutine, InThread: sig.IsThread,
 		Ret: sig.Ret, Err: sig.Err, RetGroup: sig.RetGroup,
 	}
+	ctx.Decl = fn
+	c.FuncDecls[sig] = fn
+	if sig.IsThread {
+		// 区域单线程归属（designs/0001 §10.7）：区域实参供给 thread = 编译错误
+		// （bump 指针两头推进必撞）。线程内存自给：体内自开 region / @static。
+		if len(sig.Regions) > 0 {
+			c.err("E5002", ast.SpanOf(fn), "线程入口不能有 `@"+strings.Join(sig.Regions, "@")+"` 区域参数",
+				"区域归创建执行流独占，跨线程共享区域必竞争",
+				"线程内存自给：体内自开 `region` 块或用 `@static`")
+		}
+		// @mut[self] 方法不能当线程入口：self 指针归创建执行流的栈帧，
+		// 线程侧拿不到合法槽位地址（就地写跨执行流 = 别名不可证）。
+		if len(sig.Params) > 0 && sig.Params[0].Name == "self" && containsStr(sig.Muts, "self") {
+			c.err("E5002", ast.SpanOf(fn), "线程入口不能是 `@mut[self]` 方法",
+				"self 槽位地址归创建执行流，跨线程就地写别名不可证",
+				"改为自由函数按值收 self（或收 chan 消息驱动状态）")
+		}
+		// 线程入口参数白名单（designs/0001 §10.7）：值语义类型 / chan 任一端 /
+		// [Unsafe] 豁免位。视图 / Text / 含函数指针字段的 struct 一律拒绝。
+		for _, p := range sig.Params {
+			if !threadParamOK(p.Type) {
+				c.err("E5002", ast.SpanOf(fn), "线程入口参数 `"+p.Name+"` 类型越界（类型 `"+typeName(p.Type)+"`）",
+					"别名不可证（AILA 无借用检查），跨执行流只许值语义 / chan 端 / [Unsafe]",
+					"改传纯数据 struct / enum，或用通道 / [Unsafe] + atomics")
+			}
+		}
+	}
 	for _, r := range sig.Regions {
 		ctx.Regions[r] = true
 	}
@@ -46,6 +75,7 @@ func (c *Checker) checkFunc(fn *ast.FuncDecl) {
 	c.ctx = prev
 	c.Locals[fn] = c.locals
 	c.locals = prevLocals
+	c.WroteGlobals[fn] = ctx.WroteGlobal // E5003：线程调用链分析的证据
 
 	// 有值函数：所有路径必须 return（发散路径豁免）
 	if _, isVoid := sig.Ret.(types.Void); !isVoid && sig.Err == nil && sig.RetGroup == nil {
@@ -66,7 +96,7 @@ func (c *Checker) blockDiverges(b *ast.Block) bool {
 
 func (c *Checker) stmtDiverges(s ast.Node) bool {
 	switch x := s.(type) {
-	case *ast.Return, *ast.Trap:
+	case *ast.Return:
 		return true
 	case *ast.Block:
 		return c.blockDiverges(x)
@@ -132,6 +162,10 @@ func (c *Checker) checkStmt(s ast.Node) {
 		c.checkBlock(x, true)
 	case *ast.LetDecl:
 		c.checkBinding(x)
+	case *ast.LetGroup:
+		c.checkLetGroup(x)
+	case *ast.ChanSend:
+		c.checkChanSend(x)
 	case *ast.ViewDecl:
 		c.checkView(x)
 	case *ast.Return:
@@ -151,6 +185,9 @@ func (c *Checker) checkStmt(s ast.Node) {
 		}
 		if x.Els != nil {
 			c.checkBlock(x.Els, true)
+		}
+		if x.CompileTime {
+			c.pruneCompileIf(x)
 		}
 	case *ast.ForC:
 		prev := ctx.Scope
@@ -173,6 +210,8 @@ func (c *Checker) checkStmt(s ast.Node) {
 		c.checkForIn(x)
 	case *ast.Match:
 		c.checkMatch(x, false, nil)
+	case *ast.Select:
+		c.checkSelect(x)
 	case *ast.Region:
 		c.checkRegion(x)
 	case *ast.Defer:
@@ -185,9 +224,6 @@ func (c *Checker) checkStmt(s ast.Node) {
 		ctx.UnsafeDepth++
 		c.checkBlock(x.Body, true)
 		ctx.UnsafeDepth--
-	case *ast.Trap:
-		t := c.checkExpr(x.Msg, types.Text)
-		c.unify(types.Text, t, ast.SpanOf(x), "trap 消息")
 	case *ast.Yield:
 		if !ctx.InCoroutine {
 			c.err("E5001", x.Span, "`yield` 只能出现在 `coroutine func` 内", "挂起是协程专属语义", "")
@@ -195,12 +231,6 @@ func (c *Checker) checkStmt(s ast.Node) {
 		if len(ctx.Lexical) > 0 {
 			c.err("E5004", x.Span, "`region` 块内禁止挂起", "挂起会无限期推迟区域退出回收", "")
 		}
-	case *ast.ThreadStart:
-		if x.StackSize != nil {
-			st := c.checkExpr(x.StackSize, types.USize)
-			c.requireInteger(st, ast.SpanOf(x), "线程栈大小")
-		}
-		c.checkExpr(x.Call, nil)
 	case *ast.Break:
 		if c.loopDepth == 0 {
 			c.err("E2001", x.Span, "`break` 只能出现在循环体内", "这里", "")

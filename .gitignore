@@ -1,22 +1,32 @@
 # Go
-/bin/
 *.exe
 *.test
 
-# AILA 构建产物（只忽略产物目录，**不能**误伤 internal/build 这类源码包）
+# —— 工作产物一律进 .local/（代码与产物分开）——
+#   .local/bin/            管理器二进制
+#   .local/build/<工程>/   编译产物（.ll / .o / 可执行体 / 缓存）
+#   .local/toolchains/     装好的工具链（clang / gcc / sdk）+ installed.json
+# 随包只读的清单 toolchains/toolchains.json 与其它源码仍然进库。
+/.local/
+
+# 旧布局残留（已迁到 .local；留着忽略免得历史目录又被 add 回来）
 /build/
 examples/*/build/
+/toolchain/
+/toolchains/*/
 tests/tmp*/
 *.o
+# examples/os_demo 运行时会写这个文件（演示用的读写样例）
+os_demo_tmp.txt
 
-# `.ll` 在 tests/corpus 下是**契约快照**（要进版本库），这里只忽略构建目录里的
+# `.ll` 在 tests/corpus 下是**契约快照**（要进版本库），这里只忽略产物目录里的
 build/**/*.ll
+.local/**/*.ll
 # .ail 是 bindgen 产物：除 tests/corpus 里的契约快照外一律不进库
 *.ail
 !tests/corpus/**/*.ail
 
-# 随包工具链与打包中间物（由 ci/fetch-llvm.* 生成，发布时随 release 分发）
-/toolchain/
+# 打包中间物（发布时随 release 分发）
 /dist/
 /ci-work/
 /cache/
@@ -31,3 +41,6 @@ Thumbs.db
 editors/vscode/node_modules/
 editors/vscode/out/
 *.vsix
+
+# 编辑器（Trae IDE）本地目录，不入库
+/.trae/

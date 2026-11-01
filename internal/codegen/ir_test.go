@@ -47,7 +47,7 @@ func buildIR(t *testing.T, name string) string {
 		t.Fatalf("%s 语义检查失败：\n%s", name, bag.Render(false))
 	}
 	layout := types.NewLayout(8)
-	lw := New(mod, "_.main", table, sigs, check, layout, hostTriple, "_.main")
+	lw := New(mod, "_.main", table, sigs, check, layout, hostTriple, "_.main", false)
 	return lw.Generate()
 }
 
@@ -86,5 +86,73 @@ func TestIRParity(t *testing.T) {
 			}
 			t.Fatalf("IR 与快照长度不同：实得 %d 行，快照 %d 行", len(gl), len(wl))
 		})
+	}
+}
+
+// TestGlobalArrayInit 守护模块级数据表的全局初值：
+// 定长数组字面量必须编进 `global` 的聚合初值，而不是退化成 zeroinitializer
+// （字库/命令表这类表被清零时，程序跑起来是「不报错但全空」——最难查的那种）。
+func TestGlobalArrayInit(t *testing.T) {
+	src := `let TABLE: [U8; 4] = [1, 2, 3, 4];
+
+func pick(i: USize) -> U8 {
+    return TABLE[i];
+}
+
+func main() {
+    _ = pick(0);
+}
+`
+	mod, bag := parser.Parse("t.aila", src)
+	if bag.HasErrors() {
+		t.Fatalf("解析失败：%s", bag.Render(false))
+	}
+	table := sema.BuildTable(mod, bag)
+	sigs := sema.BuildSigs(mod, table, bag)
+	check := sema.Check(mod, table, sigs, bag)
+	if bag.HasErrors() {
+		t.Fatalf("语义检查失败：%s", bag.Render(false))
+	}
+	ir := New(mod, "_.main", table, sigs, check, types.NewLayout(8), hostTriple, "_.main", false).Generate()
+	if !strings.Contains(ir, "[i8 1, i8 2, i8 3, i8 4]") {
+		t.Fatalf("定长数组的初值没进 global：\n%s", ir)
+	}
+	if strings.Contains(ir, "zeroinitializer") && strings.Contains(ir, "TABLE") {
+		t.Fatalf("全局数组退化成 zeroinitializer：\n%s", ir)
+	}
+}
+
+// TestPtrSizeFollowsTarget 守护目标指针宽度：xtensa（32 位）上 USize 必须是 i32。
+// New() 曾把 ptrSize 写死 8，嵌入式目标的 USize/指针全按 64 位出 IR（ABI 直接错）。
+func TestPtrSizeFollowsTarget(t *testing.T) {
+	src := `func take(n: USize) -> USize {
+    return n;
+}
+
+func main() {
+    _ = take(1);
+}
+`
+	mod, bag := parser.Parse("t.aila", src)
+	if bag.HasErrors() {
+		t.Fatalf("解析失败：%s", bag.Render(false))
+	}
+	table := sema.BuildTable(mod, bag)
+	sigs := sema.BuildSigs(mod, table, bag)
+	check := sema.Check(mod, table, sigs, bag)
+	if bag.HasErrors() {
+		t.Fatalf("语义检查失败：%s", bag.Render(false))
+	}
+	// 32 位目标：布局 ptrSize=4 → USize = i32
+	ir32 := New(mod, "_.main", table, sigs, check, types.NewLayout(4),
+		"xtensa-esp8266-elf", "_.main", false).Generate()
+	if !strings.Contains(ir32, "define i32 @aila_main__take(i32 %p_n)") {
+		t.Fatalf("32 位目标的 USize 应该是 i32：\n%s", ir32)
+	}
+	// 64 位宿主：仍是 i64（不能为了嵌入式把宿主一起改坏）
+	ir64 := New(mod, "_.main", table, sigs, check, types.NewLayout(8),
+		hostTriple, "_.main", false).Generate()
+	if !strings.Contains(ir64, "define i64 @aila_main__take(i64 %p_n)") {
+		t.Fatalf("64 位宿主的 USize 应该是 i64：\n%s", ir64)
 	}
 }

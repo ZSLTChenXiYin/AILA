@@ -15,7 +15,7 @@ func writePkg(t *testing.T, dir, name, version, body string) {
 	if err := os.MkdirAll(dir, 0o777); err != nil {
 		t.Fatal(err)
 	}
-	man := "[package]\nname = \"" + name + "\"\nversion = \"" + version + "\"\nentry = \"_.main\"\n\n[target]\nboard = \"host\"\n"
+	man := "[package]\nname = \"" + name + "\"\nversion = \"" + version + "\"\nentry = \"_.main\"\n"
 	if err := os.WriteFile(filepath.Join(dir, "aila.toml"), []byte(man), 0o666); err != nil {
 		t.Fatal(err)
 	}

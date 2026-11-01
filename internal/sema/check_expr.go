@@ -31,11 +31,14 @@ func (c *Checker) checkExpr(e ast.Node, expected types.Type) types.Type {
 func (c *Checker) checkExprInner(e ast.Node, expected types.Type) types.Type {
 	switch x := e.(type) {
 	case *ast.IntLit:
+		// ≥ 2^63 的字面量由 lexer 以位型记录（Raw < 0），随类型一路携带
+		// BitPattern 标志，落点检查在 unify。
+		ui := types.UntypedInt{Value: x.Raw, BitPattern: x.Raw < 0}
 		if expected != nil && (types.IsInteger(expected) || isC32(expected)) {
-			c.unify(expected, types.UntypedInt{Value: x.Raw}, x.Span, "字面量定型")
+			c.unify(expected, ui, x.Span, "字面量定型")
 			return expected
 		}
-		return types.UntypedInt{Value: x.Raw}
+		return ui
 	case *ast.FloatLit:
 		if expected != nil && types.IsFloat(expected) {
 			return expected
@@ -86,19 +89,8 @@ func (c *Checker) checkExprInner(e ast.Node, expected types.Type) types.Type {
 		return c.checkBinary(x, expected)
 	case *ast.Unary:
 		return c.checkUnary(x, expected)
-	case *ast.Cast:
-		return c.checkCast(x)
 	case *ast.TryPropagate:
 		return c.checkTryPropagate(x)
-	case *ast.TryDetect:
-		inner := c.checkExpr(x.Operand, nil)
-		if !types.IsInteger(inner) && !types.IsFloat(inner) {
-			c.err("E3201", x.Span, "`?(...)` 只用于算术陷阱检测", "这里", "")
-		}
-		if _, ok := inner.(types.UntypedInt); ok {
-			inner = types.I32
-		}
-		return types.Optional{Inner: inner}
 	case *ast.Move:
 		t := c.checkExpr(x.Operand, nil)
 		if p, ok := x.Operand.(*ast.Path); ok {
@@ -107,13 +99,6 @@ func (c *Checker) checkExprInner(e ast.Node, expected types.Type) types.Type {
 			}
 		}
 		return t
-	case *ast.Len:
-		t := c.checkExpr(x.Operand, nil)
-		if !isLenCapable(t) {
-			c.err("E3201", x.Span, "该类型没有长度", "`len` 只作用于视图家族与定长数组", "")
-		}
-		c.noteLen(x, t)
-		return types.USize
 	case *ast.Copy:
 		t := c.checkExpr(x.Operand, nil)
 		if len(x.RegionArgs) != 1 {
@@ -126,11 +111,14 @@ func (c *Checker) checkExprInner(e ast.Node, expected types.Type) types.Type {
 		}
 		return t
 	case *ast.Resume:
+		// `resume h` 的值形态已退役（designs/0004 §6 v2）：协程等待一律走 select 的
+		// `case 名 = resume h`——「还要继续等」不再作为用户可 match 的第三态出现。
 		t := c.checkExpr(x.Operand, nil)
-		if co, ok := t.(types.Coro); ok {
-			return co.Ok
+		if _, ok := t.(types.Coro); !ok {
+			c.err("E3201", x.Span, "`resume` 需要协程句柄", "这里", "")
 		}
-		c.err("E3201", x.Span, "`resume` 需要协程句柄", "这里", "")
+		c.err("E5010", x.Span, "`resume` 只能作为 select 事件", "协程等待一律走 select（单 case select = 单路等待）",
+			"写成 `select { case r = resume h => { ... } }`；绑定值就是完成态（`let v: T` / `let e: E`）")
 		return types.I32
 	case *ast.Recv:
 		t := c.checkExpr(x.Chan, nil)
@@ -145,60 +133,12 @@ func (c *Checker) checkExprInner(e ast.Node, expected types.Type) types.Type {
 		return ch.Elem
 	case *ast.Alloc:
 		return c.checkAlloc(x, expected)
-	case *ast.ChanCreate:
-		elem := c.table.Resolve(x.Elem, c.bag)
-		c.checkRegionArg(x.Region, x.Span)
-		capT := c.checkExpr(x.Cap, types.USize)
-		c.requireInteger(capT, ast.SpanOf(x), "通道容量")
-		return types.Group{Items: []types.Type{
-			types.Chan{Elem: elem, Dir: "send"}, types.Chan{Elem: elem, Dir: "recv"}}}
-	case *ast.CoroCreate:
-		c.checkRegionArg(x.FrameRegion, x.Span)
-		c.checkExpr(x.Call, nil)
-		return types.Coro{}
-	case *ast.SizeOf:
-		t := c.table.Resolve(x.Target, c.bag)
-		if !isLayoutCapable(t) {
-			c.err("E3602", x.Span, "`#size` 不接受该类型",
-				"布局查询只接受标量 / struct / enum / `[T; N]`", "")
-		}
-		return types.USize
-	case *ast.AlignOf:
-		t := c.table.Resolve(x.Target, c.bag)
-		if !isLayoutCapable(t) {
-			c.err("E3602", x.Span, "`#align` 不接受该类型",
-				"布局查询只接受标量 / struct / enum / `[T; N]`", "")
-		}
-		return types.USize
 	case *ast.Match:
 		return c.checkMatch(x, true, expected)
+	case *ast.LayerCall:
+		return c.checkLayerCall(x)
 	}
 	return types.I32
-}
-
-func isLenCapable(t types.Type) bool {
-	switch x := t.(type) {
-	case types.View, types.Fixed, types.UnsafeView:
-		return true
-	case types.Prim:
-		return x.K == "text"
-	}
-	return false
-}
-
-func isLayoutCapable(t types.Type) bool {
-	switch x := t.(type) {
-	case types.Named:
-		if s, ok := x.Info.(*types.StructInfo); ok && s.Opaque {
-			return false
-		}
-		return true
-	case types.Fixed:
-		return true
-	case types.Prim:
-		return x.K != "text"
-	}
-	return false
 }
 
 // --------------------------------------------------------------------------- //
@@ -403,4 +343,3 @@ func (c *Checker) checkPath(p *ast.Path, expected types.Type) types.Type {
 		"当前作用域 / 已定义类型与函数里都找不到", "")
 	return types.I32
 }
-

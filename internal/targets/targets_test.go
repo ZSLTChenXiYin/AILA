@@ -2,36 +2,41 @@ package targets
 
 import "testing"
 
-func TestBoards(t *testing.T) {
-	names, err := Names()
-	if err != nil {
-		t.Fatal(err)
+func TestParseEmbeddedTriples(t *testing.T) {
+	cases := []struct {
+		triple   string
+		arch     string
+		cpu      string
+		embedded bool
+	}{
+		{"xtensa-esp8266-elf", "xtensa", "esp8266", true},
+		{"xtensa-esp32s3-elf", "xtensa", "esp32s3", true},
+		{"riscv32-unknown-elf", "riscv32", "", true},
+		{"aarch64-unknown-none", "aarch64", "", true},
+		{"arm-none-eabi", "arm", "", true},
+		{"x86_64-w64-windows-gnu", "x86_64", "", false},
+		{"x86_64-unknown-linux-gnu", "x86_64", "", false},
+		{"aarch64-apple-darwin", "aarch64", "", false},
 	}
-	if len(names) < 4 {
-		t.Fatalf("board 数量异常：%v", names)
-	}
-	b, ok := Find("esp32s3")
-	if !ok {
-		t.Fatal("esp32s3 未登记")
-	}
-	if !b.Embedded || b.Arch != "xtensa" {
-		t.Fatalf("esp32s3 字段异常：%+v", b)
-	}
-	if b.Triple == nil || *b.Triple != "xtensa-esp32s3-elf" {
-		t.Fatalf("esp32s3 triple 异常：%v", b.Triple)
-	}
-	if b.Domains["psram"] != "external-ram" {
-		t.Fatalf("esp32s3 域异常：%v", b.Domains)
+	for _, c := range cases {
+		got := Parse(c.triple)
+		if got.Arch != c.arch || got.CPUDerived() != c.cpu || got.Embedded != c.embedded {
+			t.Fatalf("%s → arch=%s cpu=%s embedded=%v，期望 %s/%s/%v",
+				c.triple, got.Arch, got.CPUDerived(), got.Embedded, c.arch, c.cpu, c.embedded)
+		}
 	}
 }
 
-func TestHostBoardHasNoTriple(t *testing.T) {
-	b, ok := Find("host")
-	if !ok {
-		t.Fatal("host 未登记")
+func TestValidTriple(t *testing.T) {
+	for _, ok := range []string{"xtensa-esp8266-elf", "x86_64-w64-windows-gnu", "arm-none-eabi"} {
+		if !Valid(ok) {
+			t.Fatalf("%s 应合法", ok)
+		}
 	}
-	if b.Triple != nil {
-		t.Fatalf("host 的 triple 应为 null（跟宿主走）：%v", *b.Triple)
+	for _, bad := range []string{"", "host", "esp8266", "xtensa--elf", "xtensa-esp8266-"} {
+		if Valid(bad) {
+			t.Fatalf("%q 应不合法", bad)
+		}
 	}
 }
 
@@ -40,8 +45,7 @@ func TestVersionBandAndKinds(t *testing.T) {
 	if lo == "" || hi == "" {
 		t.Fatal("版本带为空")
 	}
-	kinds := DomainKinds()
-	if len(kinds) == 0 {
+	if len(DomainKinds()) == 0 {
 		t.Fatal("domain kind 为空")
 	}
 }

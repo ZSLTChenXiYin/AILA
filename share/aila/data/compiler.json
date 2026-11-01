@@ -1,0 +1,13 @@
+{
+  "_comment": "全局配置（docs/rfcs/0006 §6）；board 表已退场，目标以 triple 为主键",
+  "version_band": [
+    "18",
+    "23"
+  ],
+  "domain_kinds": [
+    "internal-ram",
+    "external-ram",
+    "rtc-slow",
+    "default"
+  ]
+}

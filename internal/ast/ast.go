@@ -38,16 +38,55 @@ func N(name string, v any) F { return F{Name: name, Value: v} }
 // --------------------------------------------------------------------------- //
 
 // Attr 是声明属性 `#[...]`。
+//
+// v2（designs/0004 §2.3）：声明位层指令 `#compile.c` / `#compile.inline` 等
+// 与属性共用本节点（ViaLayer 标记来源），下游语义管道不变；`#[...]` 方括号
+// 形态在 v2 迁移完成后退役。
 type Attr struct {
-	Span  diag.Span
-	Name  string
-	Args  []Node
+	Span     diag.Span
+	Name     string
+	Args     []Node
+	ViaLayer bool // 来自 `#层.指令` 形态（而非 `#[...]`）
 }
 
-func (n *Attr) Kind() string  { return "Attr" }
+func (n *Attr) Kind() string { return "Attr" }
 func (n *Attr) Fields() []F {
-	return []F{N("name", n.Name), N("args", n.Args)}
+	return []F{N("name", n.Name), N("args", n.Args), N("via_layer", n.ViaLayer)}
 }
+
+// LayerCall 是层 API 调用 `#compile.sizeof(T)` / `#runtime.spawn(f, x)`
+// （designs/0004 §2.1：单一 `#层.API` 形态）。
+type LayerCall struct {
+	Span  diag.Span
+	Layer string // compile / comprun / runtime（语言级保留层名）
+	Name  string // 层内 API 名
+	Args  []Node // 参数；类型参数以 *TypeRef 出现（as/sizeof 等）
+}
+
+func (n *LayerCall) Kind() string { return "LayerCall" }
+func (n *LayerCall) Fields() []F {
+	return []F{N("layer", n.Layer), N("name", n.Name), N("args", n.Args)}
+}
+
+// TypePattern 是 match 类型模式 `let 名: 类型 =>`（designs/0004 §4.1）。
+type TypePattern struct {
+	Span diag.Span
+	Name string
+	Type *TypeRef
+}
+
+func (n *TypePattern) Kind() string { return "TypePattern" }
+func (n *TypePattern) Fields() []F {
+	return []F{N("name", n.Name), N("type", optNode(n.Type))}
+}
+
+// NonePattern 是可空视图字面量模式 `None`（designs/0004 §5）。
+type NonePattern struct {
+	Span diag.Span
+}
+
+func (n *NonePattern) Kind() string { return "NonePattern" }
+func (n *NonePattern) Fields() []F  { return nil }
 
 // Import 是 import 语句。
 type Import struct {
@@ -55,27 +94,26 @@ type Import struct {
 	Root  string
 	Path  []string
 	KindV string
-	Alias string
 }
 
 func (n *Import) Kind() string { return "Import" }
 func (n *Import) Fields() []F {
-	return []F{N("root", n.Root), N("path", n.Path), N("kind", n.KindV), N("alias", n.Alias)}
+	return []F{N("root", n.Root), N("path", n.Path), N("kind", n.KindV)}
 }
 
 // TypeRef 是语法层的类型引用。
 type TypeRef struct {
-	Span  diag.Span
-	KindV string // prim / name / view / fixed / unsafe / optional / result / chan / coro / fnptr / group
-	Name  string
-	Inner *TypeRef
-	Elem  *TypeRef
-	Size  Node
-	Items []*TypeRef
-	Dir   string
+	Span   diag.Span
+	KindV  string // prim / name / view / fixed / unsafe / optional / result / chan / coro / fnptr / group
+	Name   string
+	Inner  *TypeRef
+	Elem   *TypeRef
+	Size   Node
+	Items  []*TypeRef
+	Dir    string
 	Params []*TypeRef
-	Ret   *TypeRef
-	Err   *TypeRef
+	Ret    *TypeRef
+	Err    *TypeRef
 }
 
 func (n *TypeRef) Kind() string { return "TypeRef" }
@@ -94,8 +132,8 @@ type Field struct {
 	Type *TypeRef
 }
 
-func (n *Field) Kind() string  { return "Field" }
-func (n *Field) Fields() []F   { return []F{N("name", n.Name), N("type", optNode(n.Type))} }
+func (n *Field) Kind() string { return "Field" }
+func (n *Field) Fields() []F  { return []F{N("name", n.Name), N("type", optNode(n.Type))} }
 
 // Variant 是 enum 变体。
 type Variant struct {
@@ -110,17 +148,19 @@ func (n *Variant) Fields() []F {
 	return []F{N("name", n.Name), N("discriminant", optNode(n.Discriminant)), N("payload", fields(n.Payload))}
 }
 
-// Param 是函数参数。
+// Param 是函数参数。IsVariadic 标记 AILA 原生变参 `name: ...T`
+// （此时 Type 是解析器合成的 `[T]` 视图类型，designs/0002 §6）。
 type Param struct {
-	Span   diag.Span
-	Name   string
-	Type   *TypeRef
-	IsSelf bool
+	Span       diag.Span
+	Name       string
+	Type       *TypeRef
+	IsSelf     bool
+	IsVariadic bool
 }
 
 func (n *Param) Kind() string { return "Param" }
 func (n *Param) Fields() []F {
-	return []F{N("name", n.Name), N("type", optNode(n.Type)), N("is_self", n.IsSelf)}
+	return []F{N("name", n.Name), N("type", optNode(n.Type)), N("is_self", n.IsSelf), N("is_variadic", n.IsVariadic)}
 }
 
 // Effect 是 @ 子句。
@@ -149,7 +189,7 @@ type Attrs struct {
 type StructDecl struct {
 	Span diag.Span
 	Attrs
-	Name   string
+	Name    string
 	Fields_ []*Field
 }
 
@@ -159,18 +199,23 @@ func (n *StructDecl) Fields() []F {
 }
 
 // EnumDecl 是 enum 声明。
+//
+// v2（designs/0004 §3.1）：`#compile.error` / `#comprun.error` /
+// `#runtime.error` 前缀声明错误类型（参与 `!` 错误通道）；ErrLayer 为空 =
+// 普通 enum。Error 是保留 enum 名（全部错误集的超集兜底）。
 type EnumDecl struct {
 	Span diag.Span
 	Attrs
 	Name     string
 	Base     *TypeRef
 	Variants []*Variant
+	ErrLayer string // "" = 普通enum；compile / comprun / runtime = 错误enum的构造层
 }
 
 func (n *EnumDecl) Kind() string { return "EnumDecl" }
 func (n *EnumDecl) Fields() []F {
 	return append(attrsFields(n.Attrs), N("name", n.Name), N("base", optNode(n.Base)),
-		N("variants", variants(n.Variants)))
+		N("variants", variants(n.Variants)), N("err_layer", n.ErrLayer))
 }
 
 // TypeAlias 是 type 别名。
@@ -226,6 +271,18 @@ func (n *LetDecl) Kind() string { return "LetDecl" }
 func (n *LetDecl) Fields() []F {
 	return append(attrsFields(n.Attrs), N("kind", n.KindV), N("name", n.Name),
 		N("type", optNode(n.Type)), N("init", optNode(n.Init)), N("has_init", n.HasInit))
+}
+
+// LetGroup 是 `let (a, b) = expr;` 多值解构绑定（designs/0001 §10.6 通道双端）。
+type LetGroup struct {
+	Span  diag.Span
+	Names []string
+	Init  Node
+}
+
+func (n *LetGroup) Kind() string { return "LetGroup" }
+func (n *LetGroup) Fields() []F {
+	return []F{N("names", n.Names), N("init", optNode(n.Init))}
 }
 
 // ViewDecl 是 `view` 声明。

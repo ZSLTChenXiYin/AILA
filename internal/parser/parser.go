@@ -22,7 +22,7 @@ var primTypes = map[string]string{
 
 var cmpOps = []string{"==", "!=", "<", "<=", ">", ">="}
 var compoundOps = []string{"+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="}
-var formingUnary = map[string]bool{"move": true, "len": true, "copy": true, "resume": true}
+var formingUnary = map[string]bool{"move": true, "copy": true, "resume": true}
 
 // 二元运算优先级（档 4..12；档 0-3 是原子/后缀/前缀/转换）。
 var binLevels = [][]string{
@@ -166,7 +166,7 @@ func (p *Parser) parseFile() *ast.Module {
 	}
 	seenBlock := false
 	for !p.atKind(lexer.KindEOF) {
-		attrs := p.parseAttrs()
+		attrs, errLayer := p.parseAttrs()
 		if p.atKw("module") {
 			if seenBlock {
 				p.errAt(p.cur(), "E2010", "一个文件只能有一个 `module` 块", "这里", "")
@@ -183,7 +183,8 @@ func (p *Parser) parseFile() *ast.Module {
 			mod.IsLightweight = false
 			p.expectPunct("{", "模块块开始")
 			for !p.atPunct("}") && !p.atKind(lexer.KindEOF) {
-				if d := p.parseDecl(false, p.parseAttrs()); d != nil {
+				blockAttrs, blockErrLayer := p.parseAttrs()
+				if d := p.parseDecl(false, blockAttrs, blockErrLayer); d != nil {
 					mod.Block = append(mod.Block, d)
 				}
 			}
@@ -196,7 +197,7 @@ func (p *Parser) parseFile() *ast.Module {
 				"把这条声明移进 `module { ... }` 块内")
 		}
 		hasModuleLater := p.hasModuleBlockLater()
-		decl := p.parseDecl(hasModuleLater, attrs)
+		decl := p.parseDecl(hasModuleLater, attrs, errLayer)
 		if decl == nil {
 			continue
 		}
@@ -286,52 +287,52 @@ func (p *Parser) parseImport() *ast.Import {
 		seg := p.expectKind(lexer.KindIdent, "模块名")
 		path = append(path, seg.Text)
 	}
-	alias := ""
-	if _, ok := p.eatKw("as"); ok {
-		alias = p.expectKind(lexer.KindIdent, "别名").Text
-	}
 	p.expectPunct(";", "import 语句结束")
-	return &ast.Import{Span: p.spanOf(start), Root: root, Path: path, KindV: kind, Alias: alias}
+	return &ast.Import{Span: p.spanOf(start), Root: root, Path: path, KindV: kind}
 }
 
 // --------------------------------------------------------------------------- //
 // 属性
 // --------------------------------------------------------------------------- //
 
-func (p *Parser) parseAttrs() []*ast.Attr {
+func (p *Parser) parseAttrs() ([]*ast.Attr, string) {
 	var attrs []*ast.Attr
+	errLayer := ""
 	for p.atPunct("#") {
-		start := p.spanOf(p.adv())
-		p.expectPunct("[", "属性列表")
-		for !p.atPunct("]") && !p.atKind(lexer.KindEOF) {
-			nameTok := p.cur()
-			if nameTok.Kind != lexer.KindIdent {
-				p.errAt(nameTok, "E2001", "属性名必须是标识符", "这里", "")
+		// 层指令 `#compile.c` / `#comprun.error` / ...（designs/0004 §2.3：
+		// 指令也是 API，与调用位同一 `#层.名` 形态）。
+		start := p.spanOf(p.adv()) // #
+		layerTok := p.cur()
+		if layerTok.Kind != lexer.KindIdent || !layerNames[layerTok.Text] {
+			p.errAt(layerTok, "E2001",
+				"`#` 之后必须是层名（compile / comprun / runtime）",
+				"这里", "")
+			if !p.atKind(lexer.KindEOF) {
 				p.adv()
-				break
 			}
-			p.adv()
-			var args []ast.Node
-			if _, ok := p.eatPunct("("); ok {
-				for !p.atPunct(")") && !p.atKind(lexer.KindEOF) {
-					args = append(args, p.parseExpr())
-					if _, ok := p.eatPunct(","); !ok {
-						break
-					}
+			continue
+		}
+		p.adv()
+		p.expectPunct(".", "层指令点号")
+		nameTok := p.expectKind(lexer.KindIdent, "层指令名")
+		var args []ast.Node
+		if _, ok := p.eatPunct("("); ok {
+			for !p.atPunct(")") && !p.atKind(lexer.KindEOF) {
+				args = append(args, p.parseExpr())
+				if _, ok := p.eatPunct(","); !ok {
+					break
 				}
-				p.expectPunct(")", "")
 			}
-			attrs = append(attrs, &ast.Attr{Span: p.spanTo(start, p.spanOf(nameTok)), Name: nameTok.Text, Args: args})
-			if _, ok := p.eatPunct(","); !ok {
-				break
-			}
+			p.expectPunct(")", "")
 		}
-		end := p.expectPunct("]", "属性列表结束")
-		if len(attrs) > 0 {
-			attrs[len(attrs)-1].Span = p.spanTo(start, p.spanOf(end))
+		end := p.spanOf(p.cur())
+		if nameTok.Text == "error" {
+			errLayer = layerTok.Text
+			continue
 		}
+		attrs = append(attrs, &ast.Attr{Span: p.spanTo(start, end), Name: nameTok.Text, Args: args, ViaLayer: true})
 	}
-	return attrs
+	return attrs, errLayer
 }
 
 // --------------------------------------------------------------------------- //
@@ -347,7 +348,7 @@ func hasCAttr(attrs []*ast.Attr) bool {
 	return false
 }
 
-func (p *Parser) parseDecl(shell bool, attrs []*ast.Attr) ast.Node {
+func (p *Parser) parseDecl(shell bool, attrs []*ast.Attr, errLayer string) ast.Node {
 	_, isPublic := p.eatKw("public")
 	tok := p.cur()
 	var decl ast.Node
@@ -355,7 +356,7 @@ func (p *Parser) parseDecl(shell bool, attrs []*ast.Attr) ast.Node {
 	case tok.Kind == lexer.Kind("struct"):
 		decl = p.parseStruct()
 	case tok.Kind == lexer.Kind("enum"):
-		decl = p.parseEnum()
+		decl = p.parseEnum(errLayer)
 	case tok.Kind == lexer.Kind("type"):
 		decl = p.parseTypeAlias()
 	case tok.Kind == lexer.Kind("func"), tok.Kind == lexer.Kind("coroutine"), tok.Kind == lexer.Kind("thread"):
@@ -441,7 +442,7 @@ func (p *Parser) parseStruct() ast.Node {
 	return &ast.StructDecl{Span: p.spanTo(start, p.spanOf(end)), Name: name.Text, Fields_: fields}
 }
 
-func (p *Parser) parseEnum() ast.Node {
+func (p *Parser) parseEnum(errLayer string) ast.Node {
 	start := p.spanOf(p.adv()) // enum
 	name := p.expectKind(lexer.KindIdent, "枚举名")
 	var base *ast.TypeRef
@@ -477,7 +478,7 @@ func (p *Parser) parseEnum() ast.Node {
 	}
 	p.expectPunct("}", "枚举体结束")
 	end := p.expectPunct(";", "枚举声明结束")
-	return &ast.EnumDecl{Span: p.spanTo(start, p.spanOf(end)), Name: name.Text, Base: base, Variants: variants}
+	return &ast.EnumDecl{Span: p.spanTo(start, p.spanOf(end)), Name: name.Text, Base: base, Variants: variants, ErrLayer: errLayer}
 }
 
 func (p *Parser) parseTypeAlias() ast.Node {
@@ -488,4 +489,3 @@ func (p *Parser) parseTypeAlias() ast.Node {
 	end := p.expectPunct(";", "类型别名结束")
 	return &ast.TypeAlias{Span: p.spanTo(start, p.spanOf(end)), Name: name.Text, Target: target}
 }
-

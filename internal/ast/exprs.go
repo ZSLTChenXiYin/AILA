@@ -94,15 +94,18 @@ func (n *ArrayLit) Fields() []F {
 }
 
 // StructLit 是构造字面量（含 enum 变体构造）。
+// LeadingDot 表示 leading-dot 形态 `.名 { 字段 }`（designs/0004 §3.4）：
+// 错误成员直接构造，成员名由期待类型的变体集合静态解析。
 type StructLit struct {
 	Span       diag.Span
 	TypePath   []string
+	LeadingDot bool
 	FieldPairs []Pair
 }
 
 func (n *StructLit) Kind() string { return "StructLit" }
 func (n *StructLit) Fields() []F {
-	return []F{N("type_path", n.TypePath), N("fields", pairsAny(n.FieldPairs))}
+	return []F{N("type_path", n.TypePath), N("leading_dot", n.LeadingDot), N("fields", pairsAny(n.FieldPairs))}
 }
 
 // GroupExpr 是多值组。
@@ -144,8 +147,8 @@ func (n *MethodCall) Fields() []F {
 
 // Index 是下标。
 type Index struct {
-	Span  diag.Span
-	Base  Node
+	Span   diag.Span
+	Base   Node
 	Index_ Node
 }
 
@@ -191,19 +194,6 @@ func (n *Unary) Fields() []F {
 	return []F{N("op", n.Op), N("operand", optNode(n.Operand))}
 }
 
-// Cast 是 `as` / `trunc`。
-type Cast struct {
-	Span    diag.Span
-	KindV   string
-	Operand Node
-	Target  *TypeRef
-}
-
-func (n *Cast) Kind() string { return "Cast" }
-func (n *Cast) Fields() []F {
-	return []F{N("kind", n.KindV), N("operand", optNode(n.Operand)), N("target", optNode(n.Target))}
-}
-
 // TryPropagate 是后缀 `?`。
 type TryPropagate struct {
 	Span    diag.Span
@@ -213,15 +203,6 @@ type TryPropagate struct {
 func (n *TryPropagate) Kind() string { return "TryPropagate" }
 func (n *TryPropagate) Fields() []F  { return []F{N("operand", optNode(n.Operand))} }
 
-// TryDetect 是前缀 `?(expr)`。
-type TryDetect struct {
-	Span    diag.Span
-	Operand Node
-}
-
-func (n *TryDetect) Kind() string { return "TryDetect" }
-func (n *TryDetect) Fields() []F  { return []F{N("operand", optNode(n.Operand))} }
-
 // Move 是 `move x`。
 type Move struct {
 	Span    diag.Span
@@ -230,15 +211,6 @@ type Move struct {
 
 func (n *Move) Kind() string { return "Move" }
 func (n *Move) Fields() []F  { return []F{N("operand", optNode(n.Operand))} }
-
-// Len 是 `len v`。
-type Len struct {
-	Span    diag.Span
-	Operand Node
-}
-
-func (n *Len) Kind() string { return "Len" }
-func (n *Len) Fields() []F  { return []F{N("operand", optNode(n.Operand))} }
 
 // Copy 是 `copy x @[r]`。
 type Copy struct {
@@ -282,57 +254,25 @@ func (n *Alloc) Fields() []F {
 	return []F{N("expr", optNode(n.Expr)), N("region", n.Region)}
 }
 
-// ChanCreate 是 `chan@r T(n)`。
-type ChanCreate struct {
-	Span   diag.Span
-	Elem   *TypeRef
-	Cap    Node
-	Region string
-}
-
-func (n *ChanCreate) Kind() string { return "ChanCreate" }
-func (n *ChanCreate) Fields() []F {
-	return []F{N("elem", optNode(n.Elem)), N("cap", optNode(n.Cap)), N("region", n.Region)}
-}
-
-// CoroCreate 是 `coroutine@r call(...)`。
-type CoroCreate struct {
-	Span        diag.Span
-	Call        Node
-	FrameRegion string
-}
-
-func (n *CoroCreate) Kind() string { return "CoroCreate" }
-func (n *CoroCreate) Fields() []F {
-	return []F{N("call", optNode(n.Call)), N("frame_region", n.FrameRegion)}
-}
-
-// SizeOf 是 `#size(T)`。
-type SizeOf struct {
-	Span   diag.Span
-	Target *TypeRef
-}
-
-func (n *SizeOf) Kind() string { return "SizeOf" }
-func (n *SizeOf) Fields() []F  { return []F{N("target", optNode(n.Target))} }
-
-// AlignOf 是 `#align(T)`。
-type AlignOf struct {
-	Span   diag.Span
-	Target *TypeRef
-}
-
-func (n *AlignOf) Kind() string { return "AlignOf" }
-func (n *AlignOf) Fields() []F  { return []F{N("target", optNode(n.Target))} }
-
 // Match 是 match 表达式。
 type Match struct {
-	Span  diag.Span
-	Head  Node
-	Arms  []*Arm
+	Span diag.Span
+	Head Node
+	Arms []*Arm
+
+	// CompileTime 表示这是 `#compile.match`（designs/0006 §1）：判别式必须是编译期常量，
+	// 命中分支之外的臂只在代码生成阶段省略（类型检查照常覆盖全部臂）。
+	CompileTime bool
+	// PruneArm 是 sema 的剪枝结论（仅 CompileTime 为真时有效）：
+	//   -1 = 未剪；否则为命中的臂下标。
+	PruneArm int
 }
 
 func (n *Match) Kind() string { return "Match" }
 func (n *Match) Fields() []F {
-	return []F{N("head", optNode(n.Head)), N("arms", arms(n.Arms))}
+	fields := []F{N("head", optNode(n.Head)), N("arms", arms(n.Arms))}
+	if n.CompileTime {
+		fields = append(fields, N("compile_time", true), N("prune_arm", n.PruneArm))
+	}
+	return fields
 }

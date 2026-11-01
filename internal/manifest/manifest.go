@@ -24,15 +24,20 @@ type Manifest struct {
 	Name     string
 	Version  string
 	Entry    string
-	Board    string
-	Arch     string
 	Triple   string
+	CPU      string
 	Opt      int
 	Warnings string
 	Debug    bool
 	CC       string
 	LLVM     string
-	Domains  map[string]Domain
+	// Sdk 是 `[sdk] name` 声明（如 esp8266-nosdk）：非空时 build 走 SDK 模式
+	// （SDK ld 变体 + 随装 SDK 库链接 + runtime 入口让位，docs/specs/0001 §2.1）。
+	Sdk string
+	// Libs 是 `[build] libs`：额外交给链接器的**系统库名**（`-l` 形态），
+	// 例如 Windows 上走 Winsock 的 cpack 需要 `libs = ["ws2_32"]`。
+	Libs    []string
+	Domains map[string]Domain
 	// Dependencies 是跨项目依赖（docs/rfcs/0004）：名字 → 声明。
 	Dependencies map[string]Dependency
 }
@@ -60,14 +65,17 @@ type rawManifest struct {
 		Entry   string `toml:"entry"`
 	} `toml:"package"`
 	Target struct {
-		Board  string `toml:"board"`
-		Arch   string `toml:"arch"`
 		Triple string `toml:"triple"`
+		CPU    string `toml:"cpu"`
 	} `toml:"target"`
+	Sdk struct {
+		Name string `toml:"name"`
+	} `toml:"sdk"`
 	Build struct {
-		Opt       *int   `toml:"opt"`
-		Warnings  string `toml:"warnings"`
-		Debug     bool   `toml:"debug"`
+		Opt       *int     `toml:"opt"`
+		Warnings  string   `toml:"warnings"`
+		Debug     bool     `toml:"debug"`
+		Libs      []string `toml:"libs"`
 		Toolchain struct {
 			CC   string `toml:"cc"`
 			LLVM string `toml:"llvm"`
@@ -121,16 +129,11 @@ func Load(root string, bag *diag.Bag) *Manifest {
 		bag.Error("E7002", diag.Empty, "包名 `"+m.Name+"` 不合法", "应为 [A-Za-z_][A-Za-z0-9_-]*", "")
 	}
 
-	m.Board = strings.TrimSpace(r.Target.Board)
-	if m.Board == "" {
-		m.Board = "host"
-	}
-	m.Arch = strings.TrimSpace(r.Target.Arch)
 	m.Triple = strings.TrimSpace(r.Target.Triple)
-	if _, ok := targets.Find(m.Board); !ok && m.Arch == "" && m.Triple == "" {
-		names, _ := targets.Names()
-		bag.Error("E7006", diag.Empty, "未知 board `"+m.Board+"`，且没有给 `arch` / `triple`",
-			"未知 board", "候选："+strings.Join(names, " / "))
+	m.CPU = strings.TrimSpace(r.Target.CPU)
+	if m.Triple != "" && !targets.Valid(m.Triple) {
+		bag.Error("E7006", diag.Empty, "`[target] triple = \""+m.Triple+"\"` 不是合法三元组",
+			"至少两段、段非空", "形如 xtensa-esp8266-elf；不写 [target] = 宿主目标")
 	}
 
 	m.Opt = 0
@@ -149,6 +152,18 @@ func Load(root string, bag *diag.Bag) *Manifest {
 		bag.Error("E7007", diag.Empty, "`build.warnings` 只接受 default/strict/allow，实得 `"+m.Warnings+"`", "", "")
 	}
 	m.Debug = r.Build.Debug
+	m.Sdk = strings.TrimSpace(r.Sdk.Name)
+	// `[build] libs`：系统库名（`-l` 形态）。只校验形状——库里到底有没有这个符号，
+	// 链接器说了算（不做白名单，与「能力靠探测」一致）。
+	for _, l := range r.Build.Libs {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.ContainsAny(l, " \t/\\") {
+			bag.Error("E7007", diag.Empty, "`build.libs` 只接受库名（不带路径），实得 `"+l+"`",
+				"例如 ws2_32 / pthread / m", "cpack 自己的静态库直接放 cpacks/<名字>/，不用写在这里")
+			continue
+		}
+		m.Libs = append(m.Libs, l)
+	}
 	m.CC = defaultIfEmpty(r.Build.Toolchain.CC, "auto")
 	m.LLVM = defaultIfEmpty(r.Build.Toolchain.LLVM, "auto")
 
@@ -201,13 +216,10 @@ func defaultIfEmpty(v, def string) string {
 	return strings.TrimSpace(v)
 }
 
-// EffectiveTriple 返回该清单生效的目标三元组。
+// EffectiveTriple 返回该清单生效的目标三元组：显式 triple 优先，缺省 = 宿主。
 func (m *Manifest) EffectiveTriple(hostTriple string) string {
 	if m.Triple != "" {
 		return m.Triple
-	}
-	if b, ok := targets.Find(m.Board); ok && b.Triple != nil {
-		return *b.Triple
 	}
 	return hostTriple
 }
@@ -215,11 +227,6 @@ func (m *Manifest) EffectiveTriple(hostTriple string) string {
 // PtrSize 返回目标指针字节数（32 位与 xtensa 为 4）。
 func (m *Manifest) PtrSize() int {
 	t := m.Triple
-	if t == "" {
-		if b, ok := targets.Find(m.Board); ok && b.Triple != nil {
-			t = *b.Triple
-		}
-	}
 	if strings.Contains(t, "32") || strings.HasPrefix(t, "xtensa") {
 		return 4
 	}

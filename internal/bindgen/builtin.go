@@ -611,7 +611,7 @@ func renderItem(it *item, declared map[string]string, target Target, bag *diag.B
 				retPart = " -> " + retMapped
 			}
 			// 生成的绑定就是 cpack 的对外接口：一律 public（包外可见）
-			return []string{"#[c] public func " + ValueName(fname) + "(" + strings.Join(args, ", ") + ")" + retPart + ";"}
+			return []string{"#compile.c public func " + ValueName(fname) + "(" + strings.Join(args, ", ") + ")" + retPart + ";"}
 		}
 		if len(texts) >= 2 && it.parts[len(it.parts)-1].Kind == "id" {
 			vname := it.parts[len(it.parts)-1].Text
@@ -625,7 +625,7 @@ func renderItem(it *item, declared map[string]string, target Target, bag *diag.B
 					kw = "let"
 				}
 			}
-			return []string{"#[c] public " + kw + " " + ValueName(vname) + ": " + mapped + ";"}
+			return []string{"#compile.c public " + kw + " " + ValueName(vname) + ": " + mapped + ";"}
 		}
 	}
 	return nil
@@ -870,14 +870,6 @@ func baseName(path string) string {
 		return path[i+1:]
 	}
 	return path
-}
-
-func sortStrings(list []string) {
-	for i := 1; i < len(list); i++ {
-		for j := i; j > 0 && list[j] < list[j-1]; j-- {
-			list[j], list[j-1] = list[j-1], list[j]
-		}
-	}
 }
 
 func firstNonEmpty(a, b string) string {

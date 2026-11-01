@@ -64,8 +64,17 @@ func (c *Checker) checkImplMatchesDecl(decl *FuncSig, impl *ast.FuncDecl) {
 		if i >= len(decl.Params) {
 			break
 		}
-		if p.Type == nil && !p.IsSelf {
+		// AILA 原生变参一致性：rest（末位参数）两边都必须是 `...T` 形态
+		declRest := decl.VariadicElem != nil && i == len(decl.Params)-1
+		if p.IsVariadic != declRest {
+			c.err("E3201", p.Span,
+				"`"+qualifiedName(impl)+"` 的变参修饰与壳内声明不一致",
+				"声明 "+variadicDesc(declRest)+"，实现 "+variadicDesc(p.IsVariadic),
+				"末位参数写成同一个 `名字: ...T`")
 			continue
+		}
+		if p.Type == nil {
+			continue // self 恒无标注（类型由方法前缀决定），无类型参数不参与比较
 		}
 		it := c.table.Resolve(p.Type, c.bag)
 		if !sameType(decl.Params[i].Type, it) {
@@ -105,4 +114,11 @@ func qualifiedName(fn *ast.FuncDecl) string {
 		return fn.OwnerType + "." + fn.Name
 	}
 	return fn.Name
+}
+
+func variadicDesc(v bool) string {
+	if v {
+		return "变参 `...T`"
+	}
+	return "普通参数"
 }

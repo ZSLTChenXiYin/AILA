@@ -71,16 +71,16 @@ func TestTargetCommands(t *testing.T) {
 	if code != ExitOK {
 		t.Fatalf("exit=%d", code)
 	}
-	if !strings.Contains(out, "esp32s3") {
+	if !strings.Contains(out, "宿主三元组") {
 		t.Fatalf("target list 输出异常：%s", out)
 	}
-	code, out, _ = run(t, "target", "show", "esp32s3")
-	if code != ExitOK || !strings.Contains(out, "internal-ram") {
+	code, out, _ = run(t, "target", "show", "xtensa-esp8266-elf")
+	if code != ExitOK || !strings.Contains(out, "cpu 候选") || !strings.Contains(out, "esp8266") {
 		t.Fatalf("target show 输出异常：%s", out)
 	}
 	code, _, _ = run(t, "target", "show", "nope")
 	if code != ExitUsage {
-		t.Fatalf("未知 board 应返回 2，实得 %d", code)
+		t.Fatalf("非法 triple 应返回 2，实得 %d", code)
 	}
 }
 
@@ -115,7 +115,7 @@ func TestNewProject(t *testing.T) {
 }
 
 // TestBindgenCommandGeneratesAil 守护 `aila bindgen`：它产出的是 `.ail` 绑定文件
-// （不是 `.aila` 源码），且默认落在 `build/bindgen/`。
+// （不是 `.aila` 源码），且默认落在产物目录 `.local/build/<工程>/bindgen/`。
 func TestBindgenCommandGeneratesAil(t *testing.T) {
 	root := t.TempDir()
 	write := func(name, body string) {
@@ -128,7 +128,7 @@ func TestBindgenCommandGeneratesAil(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("aila.toml", "[package]\nname = \"bg\"\nversion = \"0.1.0\"\nentry = \"_.main\"\n\n[target]\nboard = \"host\"\n")
+	write("aila.toml", "[package]\nname = \"bg\"\nversion = \"0.1.0\"\nentry = \"_.main\"\n")
 	write("main.aila", "import ch _.cpacks.kit;\n\nfunc main() {\n    _ = kit.kit_add(1, 2);\n}\n")
 	write("cpacks/kit/include/kit.h", "int kit_add(int a, int b);\n")
 	write("cpacks/kit/kit.c", "int kit_add(int a, int b) { return a + b; }\n")
@@ -148,9 +148,9 @@ func TestBindgenCommandGeneratesAil(t *testing.T) {
 	if !strings.Contains(out, "kit.ail") {
 		t.Fatalf("输出应提到 kit.ail：%s", out)
 	}
-	data, err := os.ReadFile(filepath.Join(root, "build", "bindgen", "kit.ail"))
+	data, err := os.ReadFile(filepath.Join(root, ".local", "build", "bindgen", "kit.ail"))
 	if err != nil {
-		t.Fatalf("没有生成 build/bindgen/kit.ail：%v", err)
+		t.Fatalf("没有生成 .local/build/bindgen/kit.ail：%v", err)
 	}
 	if !strings.Contains(string(data), "kit_add") {
 		t.Fatalf("绑定文件里应有 kit_add：%s", string(data))
@@ -178,12 +178,47 @@ func TestInstallBadZip(t *testing.T) {
 	if err := os.WriteFile(archive, []byte("not a zip"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	code, _, errs := run(t, "toolchain", "install", archive, "--triple", "x86_64-unknown-linux-gnu")
+	// sha256 不在 available 清单里且没给 flags → 用法错误（2）
+	code, _, _ := run(t, "toolchain", "install", archive)
+	if code != ExitUsage {
+		t.Fatalf("无法确定家族/版本应返回 2，实得 %d", code)
+	}
+	// flags 补齐后走到解压 → E7013（1）
+	code, _, errs := run(t, "toolchain", "install", archive, "--family", "clang", "--version", "1.0")
 	if code != ExitDiag {
 		t.Fatalf("坏压缩包应返回 1，实得 %d", code)
 	}
 	if !strings.Contains(errs, "E7013") {
 		t.Fatalf("应报 E7013：%s", errs)
+	}
+}
+
+// TestDownloadCandidates 守护镜像拼法（GitHub 直连不通时国内镜像兜底）：
+// 镜像前缀按序排在前面，原始直连永远最后兜底；非 GitHub 源不套镜像。
+func TestDownloadCandidates(t *testing.T) {
+	gh := "https://github.com/x/y/releases/download/v1/z.zip"
+	got := downloadCandidates(gh, "https://gh-proxy.com, https://ghfast.top")
+	want := []string{
+		"https://gh-proxy.com/" + gh,
+		"https://ghfast.top/" + gh,
+		gh,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("候选数：got=%v want=%v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("候选 %d：got=%s want=%s", i, got[i], want[i])
+		}
+	}
+	// 没有镜像时只剩直连。
+	if only := downloadCandidates(gh, ""); len(only) != 1 || only[0] != gh {
+		t.Fatalf("无镜像应只剩直连：%v", only)
+	}
+	// 非 GitHub 源（如 dl.espressif.cn）不套镜像。
+	cn := "https://dl.espressif.cn/a.zip"
+	if got := downloadCandidates(cn, "https://gh-proxy.com"); len(got) != 1 || got[0] != cn {
+		t.Fatalf("非 GitHub 源不应套镜像：%v", got)
 	}
 }
 
@@ -206,4 +241,3 @@ func TestIRCommandMatchesSnapshot(t *testing.T) {
 		}
 	}
 }
-

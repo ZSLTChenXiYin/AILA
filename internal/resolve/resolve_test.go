@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"aila/internal/home"
@@ -34,9 +35,9 @@ func TestVersionBand(t *testing.T) {
 func TestBundledOnlyNeverFallsBack(t *testing.T) {
 	home.Override(t.TempDir())
 	defer home.Override("")
-	tool := ResolveCC("bundled")
+	tool := ResolveCC("", "bundled")
 	if tool.OK() {
-		t.Fatalf("没有 bundle 时 `bundled` 不应可用：%s", tool.Describe())
+		t.Fatalf("没有工具链时 `bundled` 不应可用：%s", tool.Describe())
 	}
 	if tool.Source != SourceMissing {
 		t.Fatalf("source=%s", tool.Source)
@@ -47,7 +48,7 @@ func TestSystemVersionFloorRejects(t *testing.T) {
 	home.Override(repoRoot(t))
 	defer home.Override("")
 	for _, name := range []string{"clang", "gcc", "cc"} {
-		tool := ResolveCC("system:" + name + ">=999")
+		tool := ResolveCC("", "system:"+name+">=999")
 		if tool.OK() {
 			continue // 该名字不存在时本来就 OK()==false
 		}
@@ -59,68 +60,135 @@ func TestSystemVersionFloorRejects(t *testing.T) {
 	t.Skip("本机没有 clang/gcc/cc 可供验证")
 }
 
-func TestBundledPreferred(t *testing.T) {
-	tmp := t.TempDir()
-	home.Override(tmp)
-	defer home.Override("")
-	triple := "x86_64-unknown-linux-gnu"
-	bin := home.BundleBin(triple)
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// 用一个真实可执行的 shell 顶替 clang 只为验证「解析走到随包」
-	cc := ""
+// fakeGCC 把系统 gcc/clang 拷进 gcc/<triple>/<ver>/bin（冒充目标 GCC）。
+// gcc 目录解析只看目录名与驱动名，不需要探测，任何可执行文件都能验证解析路径。
+func fakeGCC(t *testing.T, triple, version string) {
+	t.Helper()
+	src := ""
 	for _, n := range []string{"clang", "gcc", "cc"} {
 		if p, err := execLookPath(n); err == nil {
-			cc = p
+			src = p
 			break
 		}
 	}
-	if cc == "" {
-		t.Skip("本机没有 C 编译器，无法伪造 bundle")
+	if src == "" {
+		t.Skip("本机没有 C 编译器，无法伪造 GCC 目录")
 	}
-	data, err := os.ReadFile(cc)
+	data, err := os.ReadFile(src)
 	if err != nil {
 		t.Skip("读取编译器失败")
+	}
+	bin := filepath.Join(home.ToolchainsRoot(), "gcc", triple, version, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, triple+"-gcc"+home.ExeSuffix()), data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGCCDirWinsForCC(t *testing.T) {
+	home.Override(t.TempDir())
+	defer home.Override("")
+	triple := "xtensa-lx106-elf"
+	fakeGCC(t, triple, "8.4.0")
+	tool := ResolveCC(triple, "auto")
+	if tool.Source != SourceBundled || tool.Family != "gcc" {
+		t.Fatalf("GCC 目录应优先承担 cc：%s", tool.Describe())
+	}
+	if !tool.OK() {
+		t.Fatalf("GCC 工具应可用（无版本带约束）：%s（note=%s）", tool.Describe(), tool.Note)
+	}
+}
+
+func TestParseRegisteredTargets(t *testing.T) {
+	out := "  x86    -            32-bit x86\n" +
+		"  x86-64 -            64-bit x86\n" +
+		"  xtensa -            Xtensa\n\nSome trailer\n"
+	got := parseRegisteredTargets(out)
+	if len(got) != 3 || got[0] != "x86" || got[2] != "xtensa" {
+		t.Fatalf("解析异常：%v", got)
+	}
+	if !supportsArchText(out, "Xtensa") || !supportsArchText(out, "x86_64") {
+		t.Fatal("归一化比较失败（xtensa / x86_64）")
+	}
+	if supportsArchText(out, "riscv32") {
+		t.Fatal("riscv32 不应命中")
+	}
+}
+
+// supportsArchText 直接对文本做归一化比较（不经进程探测）。
+func supportsArchText(out, arch string) bool {
+	want := normArch(arch)
+	for _, got := range parseRegisteredTargets(out) {
+		if normArch(got) == want {
+			return true
+		}
+	}
+	return false
+}
+
+// TestBundledClangPreferred 守护「解析走到随包」：需要真实 clang
+// （探测 --print-targets / -print-target-triple），伪造二进制过不了。
+func TestBundledClangPreferred(t *testing.T) {
+	home.Override(t.TempDir())
+	defer home.Override("")
+	clangPath := ""
+	if p, err := execLookPath("clang"); err == nil {
+		clangPath = p
+	}
+	if clangPath == "" {
+		t.Skip("本机没有 clang，无法伪造 clang 家族安装")
+	}
+	data, err := os.ReadFile(clangPath)
+	if err != nil {
+		t.Skip("读取 clang 失败")
+	}
+	bin := filepath.Join(home.ToolchainsRoot(), "clang", "19.1.8", "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(bin, "clang"+home.ExeSuffix()), data, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home.BundleDir(triple), "VERSION"), []byte("19.1.8\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	tool := ResolveCC("auto")
+	// cc：默认三元组探测命中即随包优先
+	triple := HostTriple()
+	tool := ResolveCC(triple, "auto")
 	if tool.Source != SourceBundled {
 		t.Fatalf("auto 应优先随包：%s", tool.Describe())
 	}
 	if !tool.OK() {
 		t.Fatalf("随包工具应可用：%s（note=%s）", tool.Describe(), tool.Note)
 	}
+	// ir2obj：同一家族应被选中（通版 clang 自报支持宿主架构）
+	llvm := ResolveLLVMFor(triple, "auto")
+	if llvm.Source != SourceBundled || !llvm.OK() {
+		t.Fatalf("ir2obj 应落在随包：%s", llvm.Describe())
+	}
 }
 
-func TestOutOfBandBundleRejected(t *testing.T) {
-	tmp := t.TempDir()
-	home.Override(tmp)
+func TestOutOfBandClangRejected(t *testing.T) {
+	home.Override(t.TempDir())
 	defer home.Override("")
-	triple := "x86_64-unknown-linux-gnu"
-	bin := home.BundleBin(triple)
+	clangPath := ""
+	if p, err := execLookPath("clang"); err == nil {
+		clangPath = p
+	}
+	if clangPath == "" {
+		t.Skip("本机没有 clang，无法伪造 clang 家族安装")
+	}
+	data, err := os.ReadFile(clangPath)
+	if err != nil {
+		t.Skip("读取 clang 失败")
+	}
+	bin := filepath.Join(home.ToolchainsRoot(), "clang", "11.0.0", "bin")
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, n := range []string{"clang", "gcc", "cc"} {
-		if p, err := execLookPath(n); err == nil {
-			data, _ := os.ReadFile(p)
-			_ = os.WriteFile(filepath.Join(bin, "clang"+home.ExeSuffix()), data, 0o755)
-			break
-		}
-	}
-	if _, err := os.Stat(filepath.Join(bin, "clang"+home.ExeSuffix())); err != nil {
-		t.Skip("本机没有 C 编译器，无法伪造 bundle")
-	}
-	if err := os.WriteFile(filepath.Join(home.BundleDir(triple), "VERSION"), []byte("11.0.0\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(bin, "clang"+home.ExeSuffix()), data, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	tool := ResolveLLVM("bundled")
+	tool := ResolveLLVMFor("", "bundled")
 	if tool.OK() {
 		t.Fatalf("带外版本不应可用：%s", tool.Describe())
 	}
@@ -130,12 +198,5 @@ func TestOutOfBandBundleRejected(t *testing.T) {
 }
 
 func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (func() bool {
-		for i := 0; i+len(sub) <= len(s); i++ {
-			if s[i:i+len(sub)] == sub {
-				return true
-			}
-		}
-		return false
-	})()
+	return strings.Contains(s, sub)
 }

@@ -3,26 +3,60 @@ package cli
 import (
 	"fmt"
 	"os/exec"
+	"sort"
 
 	"github.com/spf13/cobra"
 
 	"aila/internal/build"
+	"aila/internal/targets"
 )
 
 // loadOpts 把命令行开关转成构建选项。
 func loadOpts() build.Options {
 	return build.Options{
-		Board:    buildBoard,
-		Opt:      buildOpt,
-		LLVM:     buildLLVM,
-		CC:       buildCC,
-		EmitIR:   buildEmitIR,
-		EmitJSON: buildEmitJSON,
+		Triple:       buildTriple,
+		Opt:          buildOpt,
+		LLVM:         buildLLVM,
+		CC:           buildCC,
+		EmitIR:       buildEmitIR,
+		EmitJSON:     buildEmitJSON,
 		EmitBindings: buildEmitBnd,
-		OutName:  buildOutName,
-		UpdateDeps: buildDepsUpd,
-		Vendor:     buildVendor,
+		OutName:      buildOutName,
+		UpdateDeps:   buildDepsUpd,
+		Vendor:       buildVendor,
+		GCSections:   buildGC,
+		SizeDelta:    buildSizeDlt,
 	}
+}
+
+// printSize 在开 `--emit-size-delta` 时打印体积表：产物字节数 + 每个模块目标文件。
+func printSize(res *build.Result) {
+	raw, ok := res.Artifacts["size"]
+	if !ok {
+		return
+	}
+	size, ok := raw.(map[string]any)
+	if !ok {
+		return
+	}
+	if n, ok := size["exe_bytes"].(int64); ok {
+		fmt.Fprintf(stdout, "体积：产物 %d 字节\n", n)
+	}
+	objs, ok := size["objects_bytes"].(map[string]int64)
+	if !ok {
+		return
+	}
+	names := make([]string, 0, len(objs))
+	for name := range objs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var total int64
+	for _, name := range names {
+		fmt.Fprintf(stdout, "  %-28s %8d\n", name, objs[name])
+		total += objs[name]
+	}
+	fmt.Fprintf(stdout, "  %-28s %8d\n", "（目标文件合计）", total)
 }
 
 // reportDiags 打印诊断并返回退出码（有错误 → 1）。
@@ -67,6 +101,7 @@ func newBuildCmd() *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(stdout, "构建完成：%s\n", res.Exe)
+			printSize(res)
 			return nil
 		},
 	}
@@ -79,12 +114,34 @@ func newRunCmd() *cobra.Command {
 		Use:   "run [路径] [-- 参数...]",
 		Short: "构建并运行",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			root := findRoot(argOrDot(args))
+			// `run [路径] -- 参数...`：`--` 之前是工程路径，之后全部透传给程序
+			var runArgs []string
+			var rootArg string
+			if n := cmd.ArgsLenAtDash(); n >= 0 {
+				rootArg = argOrDot(args[:n])
+				runArgs = args[n:]
+			} else {
+				rootArg = argOrDot(args)
+			}
+			root := findRoot(rootArg)
 			res := build.Build(root, loadOpts())
 			if err := reportDiags(res); err != nil {
 				return err
 			}
-			proc := exec.Command(res.Exe, passArgs...)
+			// 嵌入式产物是芯片镜像，宿主没法执行——给出烧录提示而不是报运行失败
+			if targets.Parse(res.Triple).Embedded {
+				esptoolChip := targets.Parse(res.Triple).CPUDerived()
+				if bl, _ := res.Artifacts["bootloader"].(string); bl != "" {
+					bootOff, _ := res.Artifacts["boot_offset"].(string)
+					appOff, _ := res.Artifacts["app_offset"].(string)
+					fmt.Fprintf(stderr, "`%s` 是芯片 flash 镜像，无法在宿主执行。\n烧录：esptool --chip %s write_flash %s %s %s %s\n",
+						res.Triple, esptoolChip, bootOff, bl, appOff, res.Exe)
+				} else {
+					fmt.Fprintf(stderr, "`%s` 是芯片 flash 镜像，无法在宿主执行。\n烧录：esptool --chip %s write_flash 0x0 %s\n", res.Triple, esptoolChip, res.Exe)
+				}
+				return &exitError{ExitUsage}
+			}
+			proc := exec.Command(res.Exe, append(passArgs, runArgs...)...)
 			proc.Stdout = stdout
 			proc.Stderr = stderr
 			proc.Stdin = stdin

@@ -11,9 +11,9 @@ func featureProject(t *testing.T) (*Workspace, string) {
 	dir := t.TempDir()
 	mustDir(t, dir+"/sub")
 	mustWrite(t, dir+"/aila.toml",
-		"[package]\nname = \"demo\"\nversion = \"0.1.0\"\nentry = \"_.main\"\n\n[target]\nboard = \"host\"\n")
+		"[package]\nname = \"demo\"\nversion = \"0.1.0\"\nentry = \"_.main\"\n")
 	main := strings.Join([]string{
-		"import _.sub.util as u;",
+		"import _.sub.util;",
 		"",
 		"public struct Point {",
 		"    x: I32,",
@@ -27,8 +27,8 @@ func featureProject(t *testing.T) (*Workspace, string) {
 		"module {",
 		"    func main() {",
 		"        let p: Point = Point { x: 1, y: 2 };",
-		"        let n = u.double(p.x);",
-		"        let m = u.add(n, 1);",
+		"        let n = util.double(p.x);",
+		"        let m = util.add(n, 1);",
 		"        _ = m;",
 		"    }",
 		"}",
@@ -84,7 +84,7 @@ func posAtWord(t *testing.T, w *Workspace, uri, needle, word string) Position {
 func TestCompletionOnLocalField(t *testing.T) {
 	w, uri := featureProject(t)
 	// `p.x` 里把光标放在点之后
-	pos := posOfLine(t, w, uri, "u.double(p.", 0)
+	pos := posOfLine(t, w, uri, "util.double(p.", 0)
 	list := w.Completion(uri, pos)
 	labels := map[string]bool{}
 	for _, it := range list.Items {
@@ -95,16 +95,16 @@ func TestCompletionOnLocalField(t *testing.T) {
 	}
 }
 
-func TestCompletionOnImportAlias(t *testing.T) {
+func TestCompletionOnImportBinding(t *testing.T) {
 	w, uri := featureProject(t)
-	pos := posOfLine(t, w, uri, "u.", 0)
+	pos := posOfLine(t, w, uri, "util.", 0)
 	list := w.Completion(uri, pos)
 	labels := map[string]bool{}
 	for _, it := range list.Items {
 		labels[it.Label] = true
 	}
 	if !labels["double"] || !labels["add"] {
-		t.Fatalf("`u.` 之后应补全出 double/add，实得 %v", labels)
+		t.Fatalf("`util.` 之后应补全出 double/add，实得 %v", labels)
 	}
 }
 
@@ -129,7 +129,7 @@ func TestCompletionKeywordAndLocals(t *testing.T) {
 
 func TestSignatureHelp(t *testing.T) {
 	w, uri := featureProject(t)
-	pos := posOfLine(t, w, uri, "u.double(", 0)
+	pos := posOfLine(t, w, uri, "util.double(", 0)
 	help := w.SignatureHelp(uri, pos)
 	if help == nil {
 		t.Fatal("应给出签名帮助")
@@ -141,7 +141,7 @@ func TestSignatureHelp(t *testing.T) {
 		t.Fatalf("第一个实参，activeParameter 应为 0，实得 %d", help.ActiveParameter)
 	}
 	// 第二个实参
-	pos2 := posOfLine(t, w, uri, "u.add(n, ", 0)
+	pos2 := posOfLine(t, w, uri, "util.add(n, ", 0)
 	help2 := w.SignatureHelp(uri, pos2)
 	if help2 == nil || help2.ActiveParameter != 1 {
 		t.Fatalf("逗号之后 activeParameter 应为 1：%+v", help2)
@@ -154,7 +154,7 @@ func TestSignatureHelp(t *testing.T) {
 func TestPrepareRenameAndRename(t *testing.T) {
 	w, uri := featureProject(t)
 	// 函数名跨模块改名（光标落在 `double` 中间）
-	pos := posOfLine(t, w, uri, "u.double", -3)
+	pos := posOfLine(t, w, uri, "util.double", -3)
 	if p := w.PrepareRename(uri, pos); p == nil || p.Placeholder != "double" {
 		t.Fatalf("函数名应可改名：%+v", p)
 	}
@@ -222,7 +222,7 @@ func TestFoldingRanges(t *testing.T) {
 
 func TestSelectionRanges(t *testing.T) {
 	w, uri := featureProject(t)
-	pos := posOfLine(t, w, uri, "u.double(", 0)
+	pos := posOfLine(t, w, uri, "util.double(", 0)
 	rs := w.SelectionRanges(uri, []Position{pos})
 	if len(rs) != 1 {
 		t.Fatalf("应返回一个选区链：%+v", rs)
@@ -242,7 +242,7 @@ func TestSelectionRanges(t *testing.T) {
 func TestFormatDocument(t *testing.T) {
 	dir := t.TempDir()
 	mustWrite(t, dir+"/aila.toml",
-		"[package]\nname = \"demo\"\nversion = \"0.1.0\"\nentry = \"_.main\"\n\n[target]\nboard = \"host\"\n")
+		"[package]\nname = \"demo\"\nversion = \"0.1.0\"\nentry = \"_.main\"\n")
 	messy := "module {\n   func main() {\n         let x: I32 = 1;   \n  }\n}\n\n\n"
 	mustWrite(t, dir+"/main.aila", messy)
 	w := NewWorkspace()

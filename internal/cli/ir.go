@@ -46,7 +46,7 @@ func newIRCmd() *cobra.Command {
 				return &exitError{ExitDiag}
 			}
 			layout := types.NewLayout(8)
-			lw := codegen.New(mod, "_.main", table, sigs, check, layout, triple, "_.main")
+			lw := codegen.New(mod, "_.main", table, sigs, check, layout, triple, "_.main", false)
 			ir := lw.Generate()
 			if blockers := lw.Unsupported(); len(blockers) > 0 {
 				for _, what := range blockers {

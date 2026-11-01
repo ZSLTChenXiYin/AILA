@@ -21,7 +21,7 @@ func repoRoot(t *testing.T) string {
 func TestMathkitBindings(t *testing.T) {
 	root := repoRoot(t)
 	cpackDir := filepath.Join(root, "examples", "cinterop", "cpacks", "mathkit")
-	target := Target{Board: "host", Triple: "x86_64-w64-windows-gnu", PtrSize: 8}
+	target := Target{Triple: "x86_64-w64-windows-gnu", PtrSize: 8}
 	bag := &diag.Bag{}
 	res := Run("mathkit", cpackDir, target, bag, "builtin")
 	if bag.HasErrors() {
@@ -43,7 +43,7 @@ func TestMathkitBindings(t *testing.T) {
 
 // TestMapCType 守护 C → AILA 的类型映射表（docs/specs/0001 §6.2）。
 func TestMapCType(t *testing.T) {
-	target := Target{Board: "host", Triple: "x86_64-w64-windows-gnu", PtrSize: 8}
+	target := Target{Triple: "x86_64-w64-windows-gnu", PtrSize: 8}
 	named := map[string]string{"mathkit_err_t": "MathkitErr"}
 	cases := map[string]string{
 		"int":                    "I32",

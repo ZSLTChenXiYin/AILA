@@ -13,6 +13,7 @@ import (
 
 	"aila/internal/ast"
 	"aila/internal/bindgen"
+	"aila/internal/chip"
 	"aila/internal/codegen"
 	"aila/internal/deps"
 	"aila/internal/diag"
@@ -20,52 +21,62 @@ import (
 	"aila/internal/manifest"
 	"aila/internal/parser"
 	"aila/internal/project"
+	"aila/internal/registry"
 	"aila/internal/resolve"
 	"aila/internal/sema"
+	"aila/internal/targets"
 	"aila/internal/toolchain"
 	"aila/internal/types"
 )
 
 // Options 是一次构建的可选参数（与 `aila build` 的命令行开关一一对应）。
 type Options struct {
-	Opt      int
+	Opt int
 	// UpdateDeps 强制重新解析依赖并重写 `aila.lock`。
 	UpdateDeps bool
 	// Vendor 把解析好的依赖复制到 `vendor/`（离线构建）。
-	Vendor bool
-	Board    string
+	Vendor   bool
+	Triple   string
 	LLVM     string
 	CC       string
 	EmitIR   bool
 	EmitJSON bool
 	// EmitBindings 把 bindgen 生成的 `.ail` 复制到产物目录（便于审计）
 	EmitBindings bool
-	OutName  string
+	OutName      string
+	// GCSections 打开函数/数据分段 + 链接期 --gc-sections：**没被引用的模块代码
+	// 不进产物**——配合 `#compile.match` 选驱动，未选中的驱动整块消失
+	//（designs/0006 §2.6 / §4 的 P5）。
+	GCSections bool
+	// SizeDelta 在构建后报告体积：产物字节数 + 每个模块目标文件的大小，
+	// 用来量化「换驱动 / 关功能」到底省了多少（designs/0006 §1.3 规则 8）。
+	SizeDelta bool
 }
 
 // Result 是一次构建的结果。
 type Result struct {
-	OK        bool
-	Diags     *diag.Bag
-	Manifest  *manifest.Manifest
-	Project   *project.Project
-	Program   *sema.Program
-	Triple    string
-	Exe       string
+	OK       bool
+	Diags    *diag.Bag
+	Manifest *manifest.Manifest
+	Project  *project.Project
+	Program  *sema.Program
+	Triple   string
+	Exe      string
 	// Deps 是跨项目依赖图；Packages 是本次参与构建的包名（不含根包的 `_` 在前）。
 	Deps     *deps.Graph
 	Packages []string
-	Objects   []string
-	IR        map[string]string
-	Cpacks    []string
+	Objects  []string
+	IR       map[string]string
+	Cpacks   []string
 	// bindText 是本次构建生成的 C 绑定文本（cpack → .ail 内容）
-	bindText map[string]string
+	bindText  map[string]string
 	OutDir    string
 	Artifacts map[string]any
 }
 
 // Load 是「解析 + 语义」阶段：模块发现、清单、逐模块解析、多模块类型检查。
 func Load(root string, opts Options) *Result {
+	types.ResetErrorSpace() // 每次装载 = 一次编译：错误全局编号只由本工程的模块加载序决定
 	bag := &diag.Bag{}
 	res := &Result{Diags: bag, IR: map[string]string{}, bindText: map[string]string{}, Artifacts: map[string]any{}}
 	man := manifest.Load(root, bag)
@@ -73,8 +84,8 @@ func Load(root string, opts Options) *Result {
 		return res
 	}
 	res.Manifest = man
-	if opts.Board != "" {
-		man.Board = opts.Board
+	if opts.Triple != "" {
+		man.Triple = opts.Triple
 	}
 	if opts.Opt > 0 {
 		man.Opt = opts.Opt
@@ -86,6 +97,7 @@ func Load(root string, opts Options) *Result {
 		man.CC = opts.CC
 	}
 	res.Triple = man.EffectiveTriple(resolve.HostTriple())
+	man.Triple = res.Triple // 归一化：PtrSize 等后续按生效 triple 算
 
 	// ---- 依赖图（跨项目依赖：path / git，docs/rfcs/0004）----
 	graph := deps.Resolve(root, opts.UpdateDeps, bag)
@@ -144,7 +156,7 @@ func Load(root string, opts Options) *Result {
 	// 排序，保证输出与模块图稳定（不影响语义）
 	sort.Strings(order)
 
-	bindTarget := bindgen.Target{Board: man.Board, Triple: res.Triple, PtrSize: man.PtrSize()}
+	bindTarget := bindgen.Target{Triple: res.Triple, PtrSize: man.PtrSize()}
 	loaded := map[string]bool{}
 	for _, name := range order {
 		loaded[name] = true
@@ -165,7 +177,19 @@ func Load(root string, opts Options) *Result {
 					continue
 				}
 				bindName, bindText, ok := bindCpack(rootPrj, imp, res, bindTarget)
-				if !ok || loaded[bindName] {
+				if !ok {
+					// `import cc`（只编译 C 源、不要绑定）：登记一个空模块，
+					// 让 `cc` 导入在 sema 侧能解析到一个「没有公开符号」的模块。
+					if imp.KindV == "cc" {
+						name := "_.cpacks." + imp.Path[1]
+						if !loaded[name] {
+							loadOne("_", name, name, "")
+							loaded[name] = true
+						}
+					}
+					continue
+				}
+				if loaded[bindName] {
 					continue
 				}
 				loadOne("_", bindName, bindName, bindText)
@@ -308,7 +332,7 @@ func bindCpack(prj *project.Project, imp *ast.Import, res *Result, target bindge
 	// （映射规则改了就换 schema，避免拿旧缓存装作成功）
 	const bindgenSchema = "v2"
 	header := fmt.Sprintf("%s-%08x.ail", name, fnv32(bindgenSchema+br.HashInput+br.Backend+target.Triple))
-	cacheDir := filepath.Join(prj.Root, "build", ".cache", "bindgen")
+	cacheDir := filepath.Join(home.BuildDirFor(prj.Root), ".cache", "bindgen")
 	if err := os.MkdirAll(cacheDir, 0777); err == nil {
 		_ = os.WriteFile(filepath.Join(cacheDir, header), []byte(text), 0666)
 	}
@@ -341,22 +365,6 @@ func mergeBag(dst, src *diag.Bag) {
 	dst.Items = append(dst.Items, src.Items...)
 }
 
-func importTarget(root string, path []string) string {
-	switch root {
-	case "_":
-		if len(path) == 0 {
-			return "_"
-		}
-		return "_." + strings.Join(path, ".")
-	case "std":
-		if len(path) == 0 {
-			return "std"
-		}
-		return "std." + strings.Join(path, ".")
-	}
-	return ""
-}
-
 // Check 只做检查（不产产物）。
 func Check(root string, opts Options) *Result {
 	res := Load(root, opts)
@@ -379,10 +387,7 @@ func Build(root string, opts Options) *Result {
 	bag := res.Diags
 	man := res.Manifest
 	prj := res.Project
-	outDir := filepath.Join(prj.Root, "build", strings.ReplaceAll(res.Triple, "-", "_"))
-	if man.Board != "" {
-		outDir = filepath.Join(prj.Root, "build", man.Board)
-	}
+	outDir := filepath.Join(home.BuildDirFor(prj.Root), strings.ReplaceAll(res.Triple, "-", "_"))
 	if err := os.MkdirAll(outDir, 0777); err != nil {
 		bag.Error("E7001", diag.Empty, "建不了构建目录："+err.Error(), "目录", "")
 		return res
@@ -396,12 +401,16 @@ func Build(root string, opts Options) *Result {
 	}
 
 	// ---- 目标文件 ----
-	llvm := resolve.ResolveLLVM(man.LLVM)
-	cc := resolve.ResolveCC(man.CC)
-	if !cc.OK() {
-		bag.Error("E8011", diag.Empty, "没有可用的 C 编译器 / 链接器", "工具链第二件",
-			"安装 clang 或 MinGW-w64，并把 `clang`/`gcc` 放进 PATH")
-		return res
+	llvm := resolve.ResolveLLVMFor(res.Triple, man.LLVM)
+	// 模块级 coro 路由：llc 不跑 coro 中端 pass（intrinsic 直落后端崩），
+	// 含 llvm.coro 的 IR 必须走 clang `-x ir -c`（已实测双后端可行）。
+	// clang 按「自报支持该目标架构」挑（esp8266 命中 esp-clang，宿主命中通版）。
+	coroLLVM := llvm
+	if strings.HasPrefix(llvm.Name, "llc") {
+		if c, ok := resolve.ResolveClangForIR(res.Triple); ok && c.OK() {
+			coroLLVM = c
+			coroLLVM.Role = llvm.Role
+		}
 	}
 	// C 绑定产物（`--emit-bindings`）：`.ail` 是机器生成的声明文件，`.aila` 才是源码
 	if opts.EmitBindings {
@@ -432,14 +441,50 @@ func Build(root string, opts Options) *Result {
 		}
 	}
 	var objects []string
+	// -mcpu：清单显式 cpu 优先，缺省从 triple 第二段推导（esp 系芯片名即 cpu）
+	cpu := man.CPU
+	if cpu == "" {
+		cpu = targets.Parse(res.Triple).CPUDerived()
+	}
+	// SDK 模式：用户代码跨区调用（IRAM → IROM）超出直调范围，后端标志
+	// 由 chip.json 的 sdks 数据提供（此时 linkEmbedded 还没跑，提前读一份）；
+	// irTextSection 非空时用户 IR 的 define 全部落该段（esp8266 = .irom0.text，
+	// IRAM 被 libpp/libmain 固占 23K，用户代码必须驻留 flash）
+	var irFlags []string
+	irTextSection := ""
+	// 芯片级后端事实（与 SDK 无关）：esp8266 的 call0 ABI 在 llc -O0 下会对
+	// 高寄存器压力函数报 "Cannot scavenge register"，必须带 chip.json 的 ir_flags
+	//（含 -O1）。裸机与 SDK 两条路都要，否则显示栈这种大函数直接编不出来。
+	if fl, ok := chipBackendFlags(res.Triple); ok {
+		irFlags = append(irFlags, fl...)
+	}
+	if man.Sdk != "" {
+		if fl, sec, ferr := sdkBackendFlags(res.Triple, man.Sdk); ferr == nil {
+			irFlags = append(irFlags, fl...)
+			irTextSection = sec
+		}
+	}
 	for _, name := range res.Program.Order {
 		ir, ok := irs[name]
 		if !ok || !strings.Contains(ir, "define ") {
 			continue // 纯声明模块不产目标文件
 		}
+		if irTextSection != "" {
+			ir = placeIRInSection(ir, irTextSection)
+		}
 		safe := safeName(name)
 		obj := filepath.Join(outDir, safe+".o")
-		if err := toolchain.IRToObject(ir, obj, res.Triple, llvm); err != nil {
+		backend := llvm
+		if strings.Contains(ir, "llvm.coro") {
+			backend = coroLLVM
+		}
+		// --gc-sections 要求每个函数/全局各占一段，否则一个 .o 的 .text 是一整块、
+		// 链接器删不掉函数（designs/0006 §2.6：设备选择靠「编译期剪枝 + 链接期 GC」）。
+		flags := irFlags
+		if opts.GCSections {
+			flags = append(append([]string{}, irFlags...), sectionFlags(backend)...)
+		}
+		if err := toolchain.IRToObject(ir, obj, res.Triple, cpu, backend, flags...); err != nil {
 			bag.Error("E8010", diag.Empty, "LLVM 后端失败："+err.Error(), "这里",
 				"确认 llc/clang 版本在受支持区间；或先 `aila build --emit-ir` 看 IR")
 			return res
@@ -447,7 +492,18 @@ func Build(root string, opts Options) *Result {
 		objects = append(objects, obj)
 	}
 
-	// ---- C 侧：运行时 + `import ch|cc` 的 cpack 源 ----
+	// ---- 嵌入式：平台 runtime + 交叉链接 + flash 镜像，全部在 aila 内部完成 ----
+	if tgt := targets.Parse(res.Triple); tgt.Embedded {
+		return res.linkEmbedded(objects, opts)
+	}
+
+	// ---- C 侧：运行时 + `import ch|cc` 的 cpack 源（宿主语义）----
+	cc := resolve.ResolveCC(res.Triple, man.CC)
+	if !cc.OK() {
+		bag.Error("E8011", diag.Empty, "没有可用的 C 编译器 / 链接器", "工具链第二件",
+			"安装 clang 或 MinGW-w64，并把 `clang`/`gcc` 放进 PATH")
+		return res
+	}
 	cSources := []string{}
 	if src := home.RuntimeSrc(); src != "" {
 		cSources = append(cSources, src)
@@ -469,12 +525,6 @@ func Build(root string, opts Options) *Result {
 	objects = append(objects, cObjs...)
 
 	// ---- 链接 ----
-	if man.Board != "" && man.Board != "host" {
-		bag.Error("E8020", diag.Empty, "目标 `"+man.Board+"` 的交叉链接待批次（M2）",
-			"M1 只有 host 能产出可执行文件", "目标文件已生成在 "+res.OutDir)
-		res.Objects = objects
-		return res
-	}
 	exeName := opts.OutName
 	if exeName == "" {
 		exeName = "app" + home.ExeSuffix()
@@ -483,13 +533,27 @@ func Build(root string, opts Options) *Result {
 	for _, name := range res.Cpacks {
 		extraLibs = append(extraLibs, bindgen.FindLibs(prj.Cpacks[name])...)
 	}
+	// `[build] libs = [...]` → 系统库（-l 形态），如 Windows 走 Winsock 的 ws2_32
+	var libFlags []string
+	for _, l := range res.Manifest.Libs {
+		libFlags = append(libFlags, "-l"+l)
+	}
 	exe := filepath.Join(outDir, exeName)
-	if err := toolchain.Link(append(objects, extraLibs...), exe, cc, nil); err != nil {
-		bag.Error("E8010", diag.Empty, "链接失败："+err.Error(), "这里", "")
+	linkFlags := libFlags
+	if opts.GCSections {
+		linkFlags = append(append([]string{}, libFlags...), "-Wl,--gc-sections")
+	}
+	if err := toolchain.Link(append(objects, extraLibs...), exe, cc, linkFlags); err != nil {
+		bag.Error("E8010", diag.Empty, "链接失败："+explainLinkError(err.Error()), "这里", "")
 		return res
 	}
 	res.Exe = exe
 	res.Objects = objects
+
+	// ---- 体积报告（--emit-size-delta）----
+	if opts.SizeDelta {
+		res.Artifacts["size"] = sizeReport(res, objects)
+	}
 
 	// ---- 报告 ----
 	if opts.EmitJSON {
@@ -497,6 +561,417 @@ func Build(root string, opts Options) *Result {
 	}
 	res.OK = !bag.HasErrors()
 	return res
+}
+
+// sectionFlags 返回「每个函数/全局各占一段」的后端标志（--gc-sections 的前提）。
+// llc 用 -function-sections/-data-sections，clang 用 -f 前缀的两件套。
+func sectionFlags(tool resolve.Tool) []string {
+	if strings.HasPrefix(tool.Name, "llc") {
+		return []string{"-function-sections", "-data-sections"}
+	}
+	return []string{"-ffunction-sections", "-fdata-sections"}
+}
+
+// sizeReport 统计产物与每个目标文件的大小（键 = 模块名，值 = 字节数）。
+// 用来量化「换驱动 / 关功能」的体积差（designs/0006 §1.3 规则 8）。
+func sizeReport(res *Result, objects []string) map[string]any {
+	out := map[string]any{}
+	total := int64(0)
+	total += fileSize(res.Exe)
+	out["exe"] = res.Exe
+	out["exe_bytes"] = fileSize(res.Exe)
+	per := map[string]int64{}
+	for _, obj := range objects {
+		n := fileSize(obj)
+		per[strings.TrimSuffix(filepath.Base(obj), ".o")] = n
+		total += n
+	}
+	out["objects_bytes"] = per
+	out["objects_total"] = total - fileSize(res.Exe)
+	return out
+}
+
+// fileSize 返回文件字节数（读不到 = 0）。
+func fileSize(path string) int64 {
+	if path == "" {
+		return 0
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
+// linkEmbedded 完成嵌入式目标的收尾：读家族 chip.json（物理事实单一来源），
+// 生成链接脚本与 chip_cfg.h，编平台 runtime（启动汇编 + 平台 C），随包 GCC
+// 交叉链接（GCC 驱动 GNU ld——lld 没有 Xtensa 后端），打出 flash 镜像；
+// esp32 系还编自研最小 bootloader 并一起产出（esp8266 由 ROM 直载，无需）。
+// 项目里零平台文件：runtime 文件随 aila 分发在 share/aila/runtime/<家族>/
+// （chip.json + startup.S + aila_rt_<家族>.c [+ boot.c]，docs/specs/0003 §1）。
+func (res *Result) linkEmbedded(objects []string, opts Options) *Result {
+	bag := res.Diags
+	tgt := targets.Parse(res.Triple)
+	family := tgt.RuntimeFamily()
+	gccTriple := tgt.GCCTriple()
+
+	rtDir := home.PlatformRuntime(family)
+	if rtDir == "" {
+		bag.Error("E8020", diag.Empty,
+			"平台 `"+family+"` 尚未随包适配（找不到 runtime/"+family+"/）",
+			"平台运行时",
+			"适配一个平台 = 在 share/aila/runtime/ 下提供 chip.json、startup.S、aila_rt_<家族>.c（esp32 系再加 boot.c）")
+		return res
+	}
+	chipDef, err := chip.Load(rtDir)
+	if err != nil {
+		bag.Error("E8020", diag.Empty, "平台 `"+family+"` 的 chip.json 不可用："+err.Error(),
+			"平台运行时", "chip.json 是内存布局 / 镜像格式 / UART 常量的单一事实源")
+		return res
+	}
+
+	cc := resolve.ResolveCrossCC(gccTriple, res.Manifest.CC)
+	if !cc.OK() {
+		bag.Error("E8011", diag.Empty, "没有可用的交叉 C 编译器 / 链接器", "工具链第二件", cc.Note)
+		return res
+	}
+
+	// SDK 模式（aila.toml 的 [sdk] name）：入口层换 SDK 回调 + 预编译 .a 链接 +
+	// SDK 变体链接脚本，irom 代码内嵌镜像（flash cache 线性映射直读）
+	if res.Manifest.Sdk != "" {
+		return res.linkSDK(chipDef, cc, rtDir, objects, opts)
+	}
+
+	rtOut := filepath.Join(res.OutDir, "rt")
+	// 生成件：链接脚本 + UART 常量头（同一份 chip.json 渲染，物理事实同源）
+	ldScript := filepath.Join(rtOut, family+".ld")
+	if err := os.MkdirAll(rtOut, 0o755); err == nil {
+		_ = os.WriteFile(ldScript, []byte(chipDef.LinkerScript()), 0o666)
+		if h, herr := chipDef.ChipCfgH(); herr == nil {
+			_ = os.WriteFile(filepath.Join(rtOut, "chip_cfg.h"), []byte(h), 0o666)
+		}
+	}
+
+	// 平台 runtime：启动汇编 + 平台 C（GCC 一把编，.S 自动走预处理汇编）
+	rtSrc := filepath.Join(rtDir, "aila_rt_"+family+".c")
+	cObjs, err := toolchain.CompileC([]string{
+		filepath.Join(rtDir, "startup.S"),
+		rtSrc,
+	}, rtOut, cc, append([]string{"-I", rtOut}, chipDef.GCCFlags...))
+	if err != nil {
+		bag.Error("E8010", diag.Empty, "编译平台运行时失败："+err.Error(), "这里", "")
+		return res
+	}
+
+	// C 互操作（cpack）：`import ch|cc _.cpacks.<名字>` 的 C 源与头用同一套
+	// 交叉 GCC 编（aila → C 的桥 bindgen 是全架构通用的），预编译库（.a）透传
+	// 给链接——ld 从左到右解析符号，库必须排在用户 .o 之后。
+	extraLibs := []string{}
+	for _, name := range res.Cpacks {
+		dir := res.Project.Cpacks[name]
+		if cpSrcs := bindgen.FindCSources(dir); len(cpSrcs) > 0 {
+			incFlags := append([]string{
+				"-I", rtOut, "-I", filepath.Join(dir, "include"), "-I", dir,
+			}, chipDef.GCCFlags...)
+			cpObjs, cerr := toolchain.CompileC(cpSrcs, filepath.Join(res.OutDir, "cpack"), cc, incFlags)
+			if cerr != nil {
+				bag.Error("E8010", diag.Empty, "编译 cpack `"+name+"` 失败："+cerr.Error(), "这里", "")
+				return res
+			}
+			objects = append(objects, cpObjs...)
+		}
+		extraLibs = append(extraLibs, bindgen.FindLibs(dir)...)
+	}
+
+	// 交叉链接：startup 最先，用户 .o 次之，cpack 库再次，libgcc 收尾（64 位除法 / 浮点助手）
+	elfPath := filepath.Join(res.OutDir, "app.elf")
+	all := append([]string{cObjs[0], cObjs[1]}, objects...)
+	all = append(all, extraLibs...)
+	embFlags := []string{"-nostdlib", "-T", ldScript, "-lgcc"}
+	if opts.GCSections {
+		embFlags = append(embFlags, "-Wl,--gc-sections")
+	}
+	if err := toolchain.Link(all, elfPath, cc, embFlags); err != nil {
+		bag.Error("E8010", diag.Empty, "交叉链接失败："+err.Error(), "这里", "")
+		return res
+	}
+
+	// flash 镜像（esptool elf2image 的原生实现，格式由 chip.json 的 image.kind 决定）
+	binPath := filepath.Join(res.OutDir, "app.bin")
+	if err := chipDef.Pack(elfPath, binPath); err != nil {
+		bag.Error("E8010", diag.Empty, "打包 flash 镜像失败："+err.Error(), "这里", "")
+		return res
+	}
+	res.Exe = binPath
+
+	// esp32 系：ROM 只认二级 bootloader——用同一套 GCC 编自研最小 bootloader，
+	// 与 app 一起产出（烧录偏移来自 chip.json 的 boot 段）
+	if chipDef.Boot != nil {
+		bootDir := filepath.Join(res.OutDir, "boot")
+		if err := res.buildBootloader(chipDef, cc, rtDir, bootDir); err != nil {
+			bag.Error("E8010", diag.Empty, "构建 bootloader 失败："+err.Error(), "这里", "")
+			return res
+		}
+	}
+
+	res.Objects = append(objects, cObjs...)
+	if opts.SizeDelta {
+		res.Artifacts["size"] = sizeReport(res, res.Objects)
+	}
+	if opts.EmitJSON {
+		writeReport(res, res.OutDir)
+	}
+	res.OK = !bag.HasErrors()
+	return res
+}
+
+// chipBackendFlags 读家族 chip.json 的**芯片级** IR → .o 标志（与 SDK 无关）。
+// 读不到（宿主目标 / 平台未适配）返回 ok=false，调用方静默跳过。
+func chipBackendFlags(triple string) ([]string, bool) {
+	family := targets.Parse(triple).RuntimeFamily()
+	if family == "" {
+		return nil, false
+	}
+	rtDir := home.PlatformRuntime(family)
+	if rtDir == "" {
+		return nil, false
+	}
+	def, err := chip.Load(rtDir)
+	if err != nil {
+		return nil, false
+	}
+	return def.IRFlags, len(def.IRFlags) > 0
+}
+
+// sdkBackendFlags 从家族 chip.json 读 SDK 的后端标志（IR → .o 用），
+// 在 Build 主流程里提前于 linkEmbedded 调用；读不到（平台/SDK 未适配）返回错误，
+// 由调用方静默跳过——后续 linkSDK 会给出正式诊断。
+func sdkBackendFlags(triple, sdkName string) ([]string, string, error) {
+	family := targets.Parse(triple).RuntimeFamily()
+	rtDir := home.PlatformRuntime(family)
+	if rtDir == "" {
+		return nil, "", fmt.Errorf("平台 %q 运行时不存在", family)
+	}
+	def, err := chip.Load(rtDir)
+	if err != nil {
+		return nil, "", err
+	}
+	s, err := def.SDK(sdkName)
+	if err != nil {
+		return nil, "", err
+	}
+	return s.IRFlags, s.IRTextSection, nil
+}
+
+// placeIRInSection 把模块里所有 define 落进指定段（esp8266 SDK 模式的
+// .irom0.text：用户代码驻留 flash，IRAM 留给 libpp/libmain 热代码与平台 C）。
+// 只改写行首 define、以 " {" 收尾的行——IR 里唯一有段属性需求的就是函数体。
+func placeIRInSection(ir, section string) string {
+	suffix := ` section "` + section + `" {`
+	var out []string
+	for _, line := range strings.Split(ir, "\n") {
+		if strings.HasPrefix(line, "define ") && strings.HasSuffix(line, " {") {
+			line = strings.TrimSuffix(line, " {") + suffix
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+// linkSDK 是 SDK 模式的收尾：平台入口层（aila_rt + SDK 回调层，无 startup.S——
+// 入口符号 call_user_start 由 libmain.a 提供）用随包 GCC 交叉编译，SDK 变体
+// 链接脚本（官方 eagle.app.v6.ld 语义 + AILA 堆窗口）由 chip.json 生成，
+// 预编译 .a 序列在 --start-group 内循环解析符号（libc/libgcc 也取 SDK 自带的，
+// 与 SDK 同源），镜像把 irom 段内嵌到其 flash 映射偏移（官方 gen_appbin 手法）。
+func (res *Result) linkSDK(chipDef chip.Chip, cc resolve.Tool, rtDir string, objects []string, opts Options) *Result {
+	bag := res.Diags
+	family := chipDef.Family
+	sdkName := res.Manifest.Sdk
+
+	sdkDef, err := chipDef.SDK(sdkName)
+	if err != nil {
+		bag.Error("E8020", diag.Empty, err.Error(), `aila.toml 的 [sdk] name`,
+			"可用 SDK 见 share/aila/runtime/"+family+"/chip.json 的 sdks 段")
+		return res
+	}
+
+	// SDK 安装目录：注册表 sdk/<名字> 键。专有许可的 SDK 无下载源，
+	// 只能本地 zip 安装（aila toolchain install sdk/<名字> <zip>）
+	reg := registry.Load()
+	inst, ok := reg.Installed[registry.Key("sdk", sdkName)]
+	if !ok {
+		bag.Error("E8011", diag.Empty, "SDK `"+sdkName+"` 未安装", "工具链",
+			"本地 zip 安装：`aila toolchain install sdk/"+sdkName+" <SDK zip 路径>`")
+		return res
+	}
+	sdkRoot := filepath.Join(home.Root(), filepath.FromSlash(inst.Path))
+	romLd := filepath.Join(sdkRoot, "ld", sdkDef.RomLD)
+	if _, err := os.Stat(romLd); err != nil {
+		bag.Error("E8020", diag.Empty, "SDK `"+sdkName+"` 目录不完整（缺 "+sdkDef.RomLD+"）",
+			"SDK 安装", "重装：`aila toolchain install sdk/"+sdkName+" <zip>`")
+		return res
+	}
+
+	rtOut := filepath.Join(res.OutDir, "rt")
+	if err := os.MkdirAll(rtOut, 0o755); err != nil {
+		bag.Error("E7001", diag.Empty, "建不了构建目录："+err.Error(), "目录", "")
+		return res
+	}
+	// 生成件：SDK 变体链接脚本 + UART 常量头 + 分区表头（同一份 chip.json 渲染）
+	ldScript := filepath.Join(rtOut, family+"-sdk.ld")
+	_ = os.WriteFile(ldScript, []byte(chipDef.SDKLinkerScript(sdkDef, romLd)), 0o666)
+	if h, herr := chipDef.ChipCfgH(); herr == nil {
+		_ = os.WriteFile(filepath.Join(rtOut, "chip_cfg.h"), []byte(h), 0o666)
+	}
+	if h, herr := chipDef.SDKCfgH(sdkDef); herr == nil {
+		_ = os.WriteFile(filepath.Join(rtOut, "nosdk_cfg.h"), []byte(h), 0o666)
+	}
+
+	// 平台入口层：aila_rt + SDK 回调层（runtime 名来自 chip.json 数据）
+	rtSrc := filepath.Join(rtDir, "aila_rt_"+family+".c")
+	// 平台 runtime 必须留在 IRAM：SDK 启动链（user_pre_init / user_init）在 flash
+	// cache 就绪前就被调用，丢进 .irom0.text 会静默重启。用户侧 cpack 才进 flash。
+	flags := append(append([]string{"-I", rtOut}, chipDef.GCCFlags...), sdkDef.GCCFlags...)
+	// SDK 会在 user_init 之前把 CPU 从复位默认的 52MHz 切到 80MHz，所以 UART 分频
+	// 与 ccount 换算必须按 SDK 的主频重算——chip_cfg.h 里的同名宏有 #ifndef 守卫，
+	// 这里以 -D 覆盖（chip.json 顶层记录的是裸机真值 52MHz）。
+	if sdkDef.CPUHz != 0 {
+		flags = append(flags,
+			fmt.Sprintf("-DAILA_UART_CLK_HZ=%du", sdkDef.CPUHz),
+			fmt.Sprintf("-DAILA_CPU_HZ=%du", sdkDef.CPUHz))
+	}
+	cObjs, err := toolchain.CompileC([]string{
+		rtSrc,
+		filepath.Join(rtDir, sdkDef.Runtime+".c"),
+	}, rtOut, cc, flags)
+	if err != nil {
+		bag.Error("E8010", diag.Empty, "编译平台运行时失败："+err.Error(), "这里", "")
+		return res
+	}
+
+	// 交叉链接：runtime/cpack/用户 .o 在前，cpack 透传 .a 次之，
+	// SDK .a 序列（--start-group 循环解析）在后；libc/libgcc 取 SDK 自带
+	//（-L 优先命中，与 SDK 的 GCC 同源）
+	elfPath := filepath.Join(res.OutDir, "app.elf")
+	// Windows 上把路径换成斜杠：ld 不认反斜杠，`-T C:\\...\\x.ld` 会报 Invalid argument
+	linkFlags := []string{"-nostdlib", "-T", filepath.ToSlash(ldScript), "-u", "call_user_start"}
+	extraLibs := []string{}
+	// C 互操作（cpack）：C 源用同一套交叉 GCC 编（SDK 头路径追加，桥接层
+	// include SDK 头），预编译库（.a）透传给链接
+	for _, name := range res.Cpacks {
+		dir := res.Project.Cpacks[name]
+		if cpSrcs := bindgen.FindCSources(dir); len(cpSrcs) > 0 {
+			incFlags := append([]string{
+				"-I", rtOut,
+				"-I", filepath.Join(dir, "include"), "-I", dir,
+				"-I", filepath.ToSlash(filepath.Join(sdkRoot, "include")),
+			}, chipDef.GCCFlags...)
+			incFlags = append(incFlags, sdkDef.GCCFlags...)
+			incFlags = append(incFlags, "-ffunction-sections", "-fdata-sections")
+			cpObjs, cerr := toolchain.CompileC(cpSrcs, filepath.Join(res.OutDir, "cpack"), cc, incFlags)
+			if cerr != nil {
+				bag.Error("E8010", diag.Empty, "编译 cpack `"+name+"` 失败："+cerr.Error(), "这里", "")
+				return res
+			}
+			cObjs = append(cObjs, cpObjs...)
+		}
+		extraLibs = append(extraLibs, bindgen.FindLibs(dir)...)
+	}
+	linkFlags = append(linkFlags, extraLibs...)
+	linkFlags = append(linkFlags,
+		"-L", filepath.ToSlash(filepath.Join(sdkRoot, "lib")),
+		"-Wl,--start-group",
+	)
+	for _, lib := range sdkDef.Libs {
+		linkFlags = append(linkFlags, "-l"+lib)
+	}
+	linkFlags = append(linkFlags, "-lc", "-lgcc", "-Wl,--end-group",
+		"-Wl,-Map="+filepath.ToSlash(filepath.Join(res.OutDir, "app.map")))
+	if err := toolchain.Link(cObjs, elfPath, cc, append(append([]string{}, objects...), linkFlags...)); err != nil {
+		bag.Error("E8010", diag.Empty, "交叉链接失败："+err.Error(), "这里",
+			"检查 [sdk] name 与已安装 SDK 是否匹配；缺符号时看该符号属于哪个 SDK 库")
+		return res
+	}
+
+	// flash 镜像：RAM 段进 0xE9 头，irom 段内嵌到其 flash 映射偏移
+	binPath := filepath.Join(res.OutDir, "app.bin")
+	if err := chipDef.PackSDK(elfPath, binPath, sdkDef); err != nil {
+		bag.Error("E8010", diag.Empty, "打包 flash 镜像失败："+err.Error(), "这里", "")
+		return res
+	}
+	res.Exe = binPath
+	res.Objects = append(objects, cObjs...)
+	if opts.EmitJSON {
+		writeReport(res, res.OutDir)
+	}
+	res.OK = !bag.HasErrors()
+	return res
+}
+
+// buildBootloader 编链接自研最小 bootloader 并打包（esp32 系专用）。
+func (res *Result) buildBootloader(chipDef chip.Chip, cc resolve.Tool, rtDir, bootDir string) error {
+	bootLd := filepath.Join(bootDir, "boot.ld")
+	ldText, err := chipDef.BootLinkerScript()
+	if err != nil {
+		return err
+	}
+	cfgText, err := chipDef.BootCfgH()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(bootDir, 0o755); err != nil {
+		return err
+	}
+	_ = os.WriteFile(bootLd, []byte(ldText), 0o666)
+	_ = os.WriteFile(filepath.Join(bootDir, "boot_cfg.h"), []byte(cfgText), 0o666)
+
+	extra := append([]string{"-I", bootDir, "-I", filepath.Join(res.OutDir, "rt")}, chipDef.GCCFlags...)
+	bootObjs, err := toolchain.CompileC([]string{filepath.Join(rtDir, "boot.c")}, bootDir, cc, extra)
+	if err != nil {
+		return err
+	}
+	bootElf := filepath.Join(bootDir, "bootloader.elf")
+	if err := toolchain.Link(bootObjs, bootElf, cc,
+		[]string{"-nostdlib", "-T", bootLd, "-lgcc"}); err != nil {
+		return err
+	}
+	bootBin := filepath.Join(bootDir, "bootloader.bin")
+	if err := chipDef.Pack(bootElf, bootBin); err != nil {
+		return err
+	}
+	res.Artifacts["bootloader"] = bootBin
+	res.Artifacts["boot_offset"] = chipDef.Boot.BootOffset
+	res.Artifacts["app_offset"] = chipDef.Boot.AppOffset
+	return nil
+}
+
+// programHasModule 判断程序模块图里是否有某模块（std.os 被任意模块 import 时
+// Load 会把它加载进来，Order 里即出现；用于入口转存决策，见 codegen.genEntryWrapper）。
+func programHasModule(prog *sema.Program, name string) bool {
+	for _, m := range prog.Order {
+		if m == name {
+			return true
+		}
+	}
+	return false
+}
+
+// explainLinkError 把链接器的 undefined symbol 报错翻译成用户能行动的提示：
+// std.os 的原语只在宿主 runtime（runtime/aila_rt.c）里实现——嵌入式 target
+// import 了 std.os（或其依赖链）就会在这里爆出来（designs/0003 §4.1）。
+func explainLinkError(msg string) string {
+	for _, sym := range []string{
+		"aila_rt_args_save", "aila_rt_args_count", "aila_rt_args_get",
+		"aila_rt_env_get", "aila_rt_env_set", "aila_rt_exit",
+		"aila_rt_file_open", "aila_rt_file_read", "aila_rt_file_write",
+		"aila_rt_file_close", "aila_rt_file_flush",
+	} {
+		if strings.Contains(msg, sym) {
+			return msg + "（std.os 需要 OS target：`" + sym +
+				"` 只在宿主 runtime 实现，嵌入式芯片上没有进程 / 文件 / 环境变量——去掉对 std.os 的 import）"
+		}
+	}
+	return msg
 }
 
 // GenerateIR 为每个模块产出 LLVM IR 文本（不碰后端工具，判据与构建共用）。
@@ -511,7 +986,8 @@ func (res *Result) GenerateIR() map[string]string {
 		}
 		// 陷阱信息里的源文件路径由模块名派生（确定性，不随机器漂移）：
 		// `_.main` → `main.aila`，`std.io` → `std/io.aila`。
-		lw := codegen.New(u.Mod, name, u.Table, u.Sigs, u.Check, layout, res.Triple, res.Manifest.Entry)
+		lw := codegen.New(u.Mod, name, u.Table, u.Sigs, u.Check, layout, res.Triple,
+			res.Manifest.Entry, programHasModule(res.Program, "std.os"))
 		ir := lw.Generate()
 		for _, what := range lw.Unsupported() {
 			bag.Error("E9002", diag.Empty, what, "代码生成", "见 docs/plans/0001 里程碑表")
@@ -527,12 +1003,29 @@ func writeReport(res *Result, outDir string) {
 	report := map[string]any{
 		"aila_version": version(),
 		"target":       res.Triple,
-		"board":        res.Manifest.Board,
 		"entry":        res.Manifest.Entry,
 		"package":      res.Manifest.Name,
 		"opt":          res.Manifest.Opt,
 		"exe":          res.Exe,
 		"objects":      len(res.Objects),
+	}
+	// 编译期剪枝清单（designs/0006 §1.3 规则 7）：每条都是「条件编译期已知 → 该分支被剪掉」，
+	// 用来回答"我这个 #compile.if 到底生效没有、省了哪一支"。
+	if res.Program != nil {
+		var prunes []map[string]any
+		for _, name := range res.Program.Order {
+			u := res.Program.Unit(name)
+			for _, rec := range u.Prunes() {
+				prunes = append(prunes, map[string]any{
+					"module": rec.Module,
+					"kind":   rec.Kind,
+					"line":   rec.Line,
+					"value":  rec.Value,
+					"branch": rec.Branch,
+				})
+			}
+		}
+		report["compile_time_prunes"] = prunes
 	}
 	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {

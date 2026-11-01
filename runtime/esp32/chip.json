@@ -1,0 +1,67 @@
+{
+  "_source": {
+    "memory": "ESP-IDF v5.1.4 components/esp_system/ld/esp32/memory.ld.in：iram0_0_seg 0x40080000+0x20000、dram0_0_seg 0x3FFB0000+0x2C200（顶端 0x3FFDC200 之上归 ROM 运行时）",
+    "boot": "ROM 二级 bootloader 偏移 0x1000（Kconfig BOOTLOADER_OFFSET_IN_FLASH）；boot 落位取 IDF bootloader 同区（iram 0x40078000+0x8000 / dram 0x3FFF0000+0x6000）；app 固定 0x10000（partitions_singleapp factory）；esp_rom_spiflash_read=0x40062ED8（esp32.rom.spiflash.ld）",
+    "wdt": "rtc_cntl_reg.h：RTC_CNTL@0x3FF48000，WDTWPROTECT@+0xA4 / WDTFEED@+0xA0 / WDTCONFIG0@+0x8C，key=0x50D83AA1",
+    "uart": "uart_reg.h：UART0@0x3FF40000，TXFIFO_CNT=[23:16] 8 位、RXFIFO_CNT=[7:0] 8 位；复位默认源时钟 APB 80MHz（TICK_REF_ALWAYS_ON=1），CLKDIV 整数[19:0]+FRAG[23:20]",
+    "gpio": "gpio_reg.h：GPIO@0x3FF44000，OUT@+0x04 / OUT_W1TS@+0x08 / OUT_W1TC@+0x0C / ENABLE@+0x20 / ENABLE_W1TS@+0x24 / ENABLE_W1TC@+0x28 / IN@+0x3C（引脚 32-39 走 OUT1/ENABLE1 组寄存器 +0x10/+0x2C，M1 位域只覆盖 0-31）",
+    "cpu_hz": "ESP-IDF soc/clk_tree_defs.h：复位默认 CPU 240MHz（AILA runtime 不改频；ccount 每周期 +1）",
+    "image": "esptool bin_image.py：扩展头 16B（wp_pin=0xEE、chip_id=0、hash_appended=1）+ 尾部 SHA256；flash size 表 4M=2，dio=2，40m=0"
+  },
+  "family": "esp32",
+  "abi": "windowed",
+  "cpu_hz": 240000000,
+  "memory": {
+    "iram_origin": "0x40080000",
+    "iram_len": "0x20000",
+    "dram_origin": "0x3FFB0000",
+    "dram_len": "0x2C200",
+    "stack_size": "0x1000",
+    "entry": "call_start"
+  },
+  "image": {
+    "kind": "esp32",
+    "chip_id": 0,
+    "mode_code": 2,
+    "size_code": 2,
+    "freq_code": 0
+  },
+  "uart": {
+    "base": "0x3FF40000",
+    "clk_hz": 80000000,
+    "baud": 115200,
+    "clkdiv_frac_bits": 4,
+    "txcnt_shift": 16,
+    "txcnt_bits": 8,
+    "rxcnt_shift": 0,
+    "rxcnt_bits": 8
+  },
+  "gpio": {
+    "base": "0x3FF44000",
+    "out": "0x04",
+    "out_w1ts": "0x08",
+    "out_w1tc": "0x0C",
+    "enable": "0x20",
+    "enable_w1ts": "0x24",
+    "enable_w1tc": "0x28",
+    "in": "0x3C",
+    "pin_count": 32
+  },
+  "boot": {
+    "app_offset": "0x10000",
+    "boot_offset": "0x1000",
+    "iram_origin": "0x40078000",
+    "iram_len": "0x8000",
+    "dram_origin": "0x3FFF0000",
+    "dram_len": "0x6000",
+    "rom_spiflash_read": "0x40062ED8",
+    "wdt": {
+      "rtc_base": "0x3FF48000",
+      "wdtkey_off": "0xA4",
+      "feed_off": "0xA0",
+      "config0_off": "0x8C",
+      "key": "0x50D83AA1"
+    }
+  },
+  "gcc_flags": ["-mlongcalls"]
+}

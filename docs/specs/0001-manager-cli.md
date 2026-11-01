@@ -59,14 +59,17 @@ version = "0.1.0"      # 必填；语义化版本
 entry = "_.main"       # 可选，默认 "_.main"
 
 [target]
-board = "host"         # 傻瓜路：一个词决定 arch / triple / 地形
-arch = ""              # 可选；board 未给时必填（riscv32 / xtensa / x86_64 / aarch64）
-triple = ""            # 可选；都给时以 triple 为准（内置 board 表已带 triple）
+triple = ""            # 可选；不写 = 宿主目标（rfcs/0006：triple 为主键，board 已移除）
+cpu = ""               # 可选；缺省取 triple 第二段（esp 系芯片名即 cpu）
+
+[sdk]                  # 可选：声明使用厂商 SDK（如 ESP8266 NonOS SDK）
+name = "esp8266-nosdk" # 键 = toolchains 里的 sdk/<name>；仅对 -elf triple 有意义
 
 [build]
 opt = 0                # 0..3，默认 0（嵌入式默认关闭优化，WCET 可读）
 warnings = "default"   # default | strict | allow，默认 default
 debug = false          # 是否产出位置的详细 IR 调试信息（M1：仅影响 IR 注释）
+libs = ["ws2_32"]      # 可选：额外链接的系统库名（-l 形态），宿主 cpack 常用
 
 [build.toolchain]      # 傻瓜路整段可省
 cc = "auto"            # auto | system:<name>[>=ver] | bundled
@@ -89,8 +92,9 @@ math  = { path = "../math", version = "0.3" }         # 可选版本前缀要求
 |---|---|---|
 | `package.name` | 缺失 / 空 | `E7002` |
 | `package.version` | 缺失 | `E7002` |
-| `target.board` | 不在内置 board 表且未给 `arch` | `E7006`，诊断附候选 board 列表 |
+| `target.triple` | 合法三元组：至少两段、段非空（如 `xtensa-esp8266-elf`） | `E7006`，修法见 `aila target show <triple>` |
 | `build.opt` | 非 0..3 | `E7007` |
+| `build.libs` | 只接受**库名**（不带路径/空白），链接期以 `-l<名>` 交给链接器 | `E7007` |
 | `domains.*.kind` | 不在 kind 枚举（`internal-ram`/`external-ram`/`rtc-slow`/`default`） | `E7008` |
 | `domains.*.size` | 形如 `<num>[KMG]`；嵌入式 target 必填 | `E7008` |
 | `dependencies.<名>` | 名是合法标识符；恰好 `path` 或 `git`；git 必须锁 `tag`/`rev` | `E7021` |
@@ -98,16 +102,24 @@ math  = { path = "../math", version = "0.3" }         # 可选版本前缀要求
 | 依赖图 | 同名依赖同源；有向无环 | `E7024` / `E7025` |
 | 跨模块引用 | 三级阶梯：文件内 ⊂ 子包内（块内 `public`/壳内默认）⊂ 包外（壳内 `public`） | `E7020` |
 
-### 2.1 内置 board 表（M1）
+### 2.1 目标三元组与工具链解析（rfcs/0006）
 
-| board | arch | triple | 预置域 |
-|---|---|---|---|
-| `host` | 宿主 | 由 LLVM 默认三元组决定 | `default` |
-| `esp32s3` | xtensa | `xtensa-esp32s3-elf` | `default`(internal-ram) / `psram`(external-ram) / `rtc`(rtc-slow) |
-| `riscv32` | riscv32 | `riscv32-unknown-elf` | `default` |
-| `aarch64` | aarch64 | `aarch64-unknown-none` | `default` |
+清单 `[target]` 以 **triple 为主键**，board 概念已移除；不写 `[target]` = 宿主目标。
 
-M1 只有 `host` 可产出可执行产物；其余 board `aila build` 到 `.o` 为止，链接阶段报 `E8020`「交叉链接器待批次」并在 `aila doctor` 中标明。
+- `arch` = triple 第一段；`cpu` 缺省 = triple 第二段（`unknown`/`none`/`generic`/`pc`/`w64`/`apple` 等豁免词不作 cpu），可用 `[target] cpu` 显式覆盖——esp-clang 对 `esp8266` 不做 triple→CPU 推断，IR→.o 需显式 `-mcpu`。
+- **嵌入式判定** = triple 后缀 `-elf`/`-none`/`-eabi`（freestanding）：`aila build` 一路到底——平台 runtime 随包分发（`share/aila/runtime/<家族>/`），随包 GCC 交叉链接（芯片 → 官方 GCC triple 的别名见 `internal/targets` 的 `chipGCC` 表，如 esp8266 → xtensa-lx106-elf），再由 `internal/image` 打出可烧录的 `app.bin`。平台未适配才报 `E8020`。
+- **芯片适配数据化**（加数据不加代码）：每家族一份 `runtime/<家族>/chip.json`（内存布局、镜像格式常量、UART 时钟/位域、boot 约定，含 `_source` 官方来源标注），构建时由 `internal/chip` 生成 `<家族>.ld` + `chip_cfg.h`（app）与 `boot.ld` + `boot_cfg.h`（bootloader）。新芯片 = 写一份 chip.json + 对应 runtime 源，不改 Go 代码。
+- **二级 bootloader**：esp32/esp32s3 的 ROM 只从固定偏移（0x1000/0x0）加载二级 bootloader，app 必须由它加载。随包 `runtime/<家族>/boot.c` 自研最小 bootloader（关 RTC WDT → UART 横幅 → ROM `esp_rom_spiflash_read` 逐段拷 app → 跳入口；无分区表，固定读 0x10000），`aila build` 直接出 `bootloader.bin` + `app.bin` 双产物，`aila run` 打印两段式烧录命令。esp8266 ROM 直载，单 `app.bin`。
+- **ABI**：esp8266 = call0（LX106 硬件只有 call0）；esp32/esp32s3 = windowed（官方 GCC 8.4 构建期固定，IDF 同款，无 `-mabi` 标志；`entry a1,16` 不依赖调用方进入方式）。仅平台 runtime 源感知，AILA codegen 无感知。
+- **SDK 模式**（`[sdk] name = "<键>"`）：项目声明使用厂商 SDK（如 `esp8266-nosdk` = NonOS SDK）时，build 走 SDK 链接变体——runtime 换成 `runtime/<家族>/<sdk runtime 源>`（如 `nosdk.c`：`user_init`/`user_rf_cal_sector_set`/`user_pre_init`，不再编 startup.S），链接脚本用 `chip.SDKLinkerScript` 生成的 SDK 版（按官方 eagle.app.v6.ld 语义，IRAM/IROM 分区、堆窗口让给 SDK），cpack 编译追加 `-I <sdk根>/include`，链接追加 `-L <sdk根>/lib --start-group -l<main> -l<libs…> --end-group`（start-group 循环解析），镜像由 `image.Pack8266SDK` 打包（RAM 段进 0xE9 头，irom 段按 `(irom_org - 0x40200000)` 绝对偏移内嵌在 0xFF 填充之后）。SDK 本体经 `aila toolchain install sdk/<name>` 安装（zip 按 Keep 白名单裁剪），未装报 `E8011` 附安装命令；IR 侧 flags（如 `-mattr=+long-calls`）来自 chip.json `sdks` 数据。
+
+工具链按「家族 + 版本」装在 `toolchains/`（`clang/<版本>/`、`esp-clang/<版本>/`、`gcc/<triple>/<版本>/`（目录名即目标三元组）、`sdk/<名称>/<版本>/`（厂商 SDK，zip 按 Keep 白名单裁剪）），能力一律运行时探测。角色推导内置：
+
+| 角色 | 推导规则 |
+|---|---|
+| ir2obj | 自报支持目标架构（`--print-targets`）的 clang 系家族；交叉时特化家族（esp-clang 等）优先，宿主时通版 clang 优先；版本须落在绑定带内 |
+| cc | 目标 triple 的 GCC 目录优先；否则默认目标恰为 triple 的 clang。交叉 C 必须走 GCC——CompileC 不传 `-target`，clang 兼任交叉 cc 会静默编错架构 |
+| ld | 跟 cc 家族（lld 无 Xtensa 后端，交叉链接走 GNU ld） |
 
 ---
 
@@ -166,7 +178,6 @@ aila [--version] [--help] <command> ...
 | `aila ir <文件>` | 单文件走完「解析 → 语义 → LLVM IR」并打印 IR 文本 | `--triple` | 有诊断 = 1 |
 | `aila deps [路径]` | 打印依赖图 / 重写 `aila.lock` / 生成 `vendor/` | `--update` `--vendor` `--json` | 0；有诊断 = 1 |
 | `aila lsp` | 启动语言服务器（JSON-RPC over stdio）：大纲 / 跳转定义 / 类型定义 / 跳到实现 / import 链接 / 悬停 / 引用 / 同文件高亮 / 工程符号 / 诊断推送 / 补全 / 签名帮助 / 重命名 / 折叠 / 选区 / 格式化 / 内联提示（§6.6） | `--log <文件>` | 0；内部错误 = 4 |
-| `aila skill [文件]` | 给 AI 编程工具的技能包：默认把 `SKILL.md` 打到 stdout，也可打印单篇 / 列出 / 装进 AI 工具目录（§6.7） | `--path` `--list` `--install <目录>` | 0；找不到技能目录 = 1 |
 
 ### 3.3 诊断输出格式（人读）
 
@@ -196,7 +207,7 @@ error[E3201]: 类型不匹配
 | `E5xxx` | 并发 | `E5001` `<-` 不在协程内 / `E5002` thread 参数白名单 |
 | `E6xxx` | C 互操作 | `E6001` 变参禁传类型 / `E6002` union 不支持 |
 | `E7xxx` | 工程、清单与依赖 | `E7002` 清单缺字段 / `E7003` 路径非法标识符 / `E7010` 导入根未声明 / `E7020` 跨包引用未导出 / `E7021` 依赖声明不合法 / `E7022` 依赖定位失败 / `E7023` 依赖与锁不一致 / `E7024` 同名依赖冲突 / `E7025` 依赖成环 |
-| `E8xxx` | 工具链与链接 | `E8010` 无可用 LLVM 后端 / `E8020` 交叉链接待批次 |
+| `E8xxx` | 工具链与链接 | `E8010` 无可用 LLVM 后端 / `E8020` 平台未随包适配 |
 | `E9xxx` | 批次未实现 | `E9001` 语法已解析但语义待批次 / `E9002` 代码生成待批次 |
 
 `aila explain <CODE>` 数据源 = 包内 `share/aila/data/diag_codes.json`（唯一事实源，禁止两处手写；Go 侧 `internal/diag` 直接读它）。
@@ -209,9 +220,9 @@ error[E3201]: 类型不匹配
 
 | 件 | 用途 | 探测顺序 | 缺失后果 |
 |---|---|---|---|
-| `llvm-backend` | IR 文本 → `.o` | ①清单 `llvm` 指定 ②随包 `llc`/`clang`（`toolchain/<triple>/bin/`）③系统 PATH 里的 `llc`/`clang` | `E8010`：错误信息直接给出安装 LLVM 或 `aila toolchain install` 的命令 |
-| `cc` | 编 C（`import cc`、runtime）与链接 | ①清单 `cc` ②`clang` ③`gcc` ④`cc` | `E8011` |
-| `clang` | bindgen 首选档 | `clang` / `clang.exe` | 降级 `builtin` 档 + `W3001` |
+| `llvm-backend` | IR 文本 → `.o` | ①清单 `llvm` 指定 ②随包 clang 系（`toolchains/<家族>/<版本>/`，自报支持目标架构者优先，rfcs/0006 §5）③系统 PATH 里的 `llc`/`clang` | `E8010`：错误信息直接给出安装 LLVM 或 `aila toolchain install` 的命令 |
+| `cc` | 编 C（`import cc`、runtime）与链接（宿主语义） | ①清单 `cc` ②目标 triple 的 GCC 目录 ③默认目标恰为 triple 的 clang ④系统 PATH 的 `clang`/`gcc`/`cc` | `E8011` |
+| `clang` | bindgen 首选档 | 随包通版 clang 优先，其次特化家族 | 降级 `builtin` 档 + `W3001` |
 
 `aila doctor` 检查项（全通过才退出 0）：
 
@@ -407,20 +418,18 @@ C 包在编译器侧是「导入时现算 bindgen → 生成 `.ail` → 当普�
 | `import cc` | 只让 C 源参与编译、不产生绑定模块，因此编辑器里不索引（符合编译器的语义） |
 | 只读保护 | 生成的 `.ail` 上拒绝改名与格式化（改了也会被下次生成覆盖） |
 
-### 6.7 给 AI 编程工具的技能包（`aila skill`）
+### 6.7 给 AI 编程工具的技能包
 
 **定位**：用户的 AI 面向的是**这个工具**（`aila` 命令），不是编译器源码。所以技能讲的全是
 「怎么用打包好的 aila 把程序做出来」，一份二进制也不用带。
 
 | 项 | 约定 |
 |---|---|
-| 位置 | `<AILA_HOME>/share/aila/skills/aila/`（仓库里同一相对路径；既随发布包分发，也可单独 zip） |
+| 位置 | `<AILA_HOME>/share/aila/skills/aila/`（仓库里同一相对路径，随发布包分发） |
 | 入口 | `SKILL.md`，带 YAML frontmatter（`name: aila` + 一句 description），供 AI 工具识别与触发 |
 | 结构 | `SKILL.md`（铁律 / 上手 / 工作循环 / 可见性阶梯 / 最小子集 / 报错速查 / 排错剧本）+ `reference/{language,recipes,manifest,cli,errors}.md` |
 | 生成物 | `reference/cli.md` 与 `reference/errors.md` 由 `go run ./tools/skillgen` 从命令树与 `share/aila/data/diag_codes.json` 生成；CI 用 `-check` 卡住漂移 |
-| 命令 | `aila skill`（打印入口）/ `aila skill <文件>`（打印单篇）/ `--list` / `--path` / `--install <目录>`（复制成 `<目录>/aila/`） |
-| 分发 | 发布包内 `share/aila/skills/`；另出 `aila-skill-<version>-<platform>.zip`（只含 `aila/`，见 specs/0003 §1） |
-| 判据 | `internal/skill` 单测（目录随 AILA_HOME / 列文件 / 读 / 安装）；`tools/skillgen -check` 在 CI 全绿；发布包解开后 `./aila skill --list` 列出 6 个文件 |
+| 消费方式 | 用户把该目录登记进 AI 工具（技能/规则目录），或直接把文件内容粘进对话——aila 不提供命令包装 |
 
 ---
 

@@ -1,0 +1,80 @@
+{
+  "_source": {
+    "memory": "ESP-IDF v5.1.4 components/esp_system/ld/esp8266（IRAM 32K @0x40100000、DRAM 96K @0x3FFE8000）",
+    "uart": "NonOS SDK v3.0.5 uart_register.h + esp8266/Arduino esp8266_peri.h（USTXC=16/USRXC=0，实机印证）：UART0@0x60000000，FIFO@0x00 / CLKDIV@0x14 / STATUS@0x1C，TXFIFO_CNT=[23:16] 8 位、RXFIFO_CNT=[7:0] 8 位（早前记录的 TRM [31:26] 有误，以 SDK 头为准），源时钟 APB 80MHz",
+    "gpio": "NonOS SDK v3.0.5 eagle_soc.h：PERIPHS_GPIO_BASEADDR=0x60000300，OUT@0x00 / OUT_W1TS@0x04 / OUT_W1TC@0x08（数据域 0xFFFF）/ ENABLE@0x0C / ENABLE_W1TS@0x10 / ENABLE_W1TC@0x14 / IN@0x18 / STATUS@0x1C，GPIO_PIN_COUNT=16（GPIO16 属 RTC 域不在内）",
+    "ir_flags": "call0 ABI 寄存器窗口窄，llc -O0 对高寄存器压力函数报 Cannot scavenge register（esp-llvm-embedded-toolchain 已知 RA 缺陷），ir_flags 里 -O1 后置覆盖默认 -O0；+long-calls 对应 GCC -mlongcalls；-mtext-section-literals 让 l32r 字面量随函数落段（用户代码进 .irom0.text 后字面量必须同段）",
+    "ir_text_section": ".irom0.text（ICACHE_FLASH_ATTR 同语义）：IRAM 32K 里 libpp+libmain 固占约 23K（WiFi 协议栈热代码官方设计驻留 IRAM），用户/std 代码必须驻留 flash，由 cache 线性映射 0x40210000 直读执行；SDK 库的路由由官方 eagle.app.v6.ld 的按库规则承担",
+    "cpu_hz": "ESP8266 Tech Ref §5 CPU：REMAP 后 CPU 停在晶振二倍频 52MHz（本板 26MHz XTAL → 52MHz），80MHz 必须软件切（NonOS SDK 在 user_init 前切，裸机 freestanding 不切）。实测印证：本文件的 cpu_hz 若写 80MHz，uart_init 会算 CLKDIV=694，实际输出就是 52MHz/694 = 74880（串口在 115200 上全是乱码、在 74880 上可读）。故顶层 cpu_hz / uart.clk_hz 取裸机真值 52MHz，SDK 构建由 sdks.*.cpu_hz = 80MHz 经 -D 覆盖（见 internal/build 的 linkSDK）。ccount 每周期 +1",
+    "image": "esptool esp8266_v2：无扩展头；flash size 表 4M=4（esp32 系是 2），dout=3（实测本板与官方 AT 镜像都是 DOUT；dio=2 时 ROM 二段跳转后读 flash 失败、静默重启），40m=0",
+    "boot_flash_map": "flash map 的唯一来源是 *bootloader 镜像头* 的 byte3 高 4 位（size code）：0x00→4Mbit/map0(512KB)、0x20→8Mbit/map2(1MB)、0x40→32Mbit/map4(4MB)；bootloader 经 RTC 把它传给应用，应用编译时的 map（system_partition_table_regist 的 map 参数）必须与它相等，否则启动最早期就 mismatch 报错并重启循环。实测：4MB 板跑官方 map-2 AT 固件必须配 byte3=0x20 的 boot。详见 docs/designs/0005。",
+    "sdk": "NonOS SDK v3.0.5 eagle.app.v6.ld（老布局非 FOTA：irom@0x40210000=flash 0x10000；app 镜像烧在 0x1000，所以镜像内的 irom 填充偏移 = 0xF000）+ gen_appbin.py（irom 内嵌填充）+ Partition Table 说明（map=4：RF_CAL 0x3FB000 / PHY 0x3FC000 / SYS 0x3FD000）"
+  },
+  "family": "esp8266",
+  "abi": "call0",
+  "cpu_hz": 52000000,
+  "memory": {
+    "iram_origin": "0x40100000",
+    "iram_len": "0x8000",
+    "dram_origin": "0x3FFE8000",
+    "dram_len": "0x18000",
+    "stack_size": "0x2000",
+    "entry": "call_start"
+  },
+  "image": {
+    "kind": "esp8266",
+    "mode_code": 3,
+    "size_code": 4,
+    "freq_code": 0
+  },
+  "uart": {
+    "base": "0x60000000",
+    "clk_hz": 52000000,
+    "baud": 115200,
+    "clkdiv_frac_bits": 0,
+    "txcnt_shift": 16,
+    "txcnt_bits": 8,
+    "rxcnt_shift": 0,
+    "rxcnt_bits": 8
+  },
+  "gpio": {
+    "base": "0x60000300",
+    "out": "0x00",
+    "out_w1ts": "0x04",
+    "out_w1tc": "0x08",
+    "enable": "0x0C",
+    "enable_w1ts": "0x10",
+    "enable_w1tc": "0x14",
+    "in": "0x18",
+    "pin_count": 16
+  },
+  "gcc_flags": [],
+  "ir_flags": ["-O1"],
+  "sdks": {
+    "esp8266-nosdk": {
+      "runtime": "nosdk",
+      "cpu_hz": 80000000,
+      "flash_map": 4,
+      "dram_len": "0x14000",
+      "irom": {
+        "origin": "0x40210000",
+        "len": "0x5C000",
+        "flash_offset": "0xF000"
+      },
+      "aila_heap": "0x2000",
+      "rom_ld": "eagle.rom.addr.v6.ld",
+      "gcc_flags": ["-mlongcalls", "-mtext-section-literals"],
+      "ir_flags": ["-mattr=+long-calls", "-mtext-section-literals", "-O1"],
+      "ir_text_section": ".irom0.text",
+      "libs": ["hal", "phy", "pp", "net80211", "lwip", "wpa", "wpa2", "crypto", "main"],
+      "partitions": [
+        { "type": 1, "addr": "0x00000", "size": "0x01000" },
+        { "type": 2, "addr": "0x01000", "size": "0x7B000" },
+        { "type": 3, "addr": "0x7C000", "size": "0x7B000" },
+        { "type": 4, "addr": "0xFB000", "size": "0x1000" },
+        { "type": 5, "addr": "0xFC000", "size": "0x1000" },
+        { "type": 6, "addr": "0xFD000", "size": "0x3000" }
+      ]
+    }
+  }
+}

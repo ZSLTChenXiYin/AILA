@@ -40,13 +40,13 @@ mkdir -p "$BUNDLE/share/aila"
 cp -r "$ROOT/runtime" "$BUNDLE/share/aila/runtime"
 cp -r "$ROOT/stdlib" "$BUNDLE/share/aila/stdlib"
 cp -r "$ROOT/share/aila/data" "$BUNDLE/share/aila/data"
-# 给 AI 编程工具的技能包（`aila skill` 读它；也可单独拿 aila-skill-<版本>.zip 分发）
+# 给 AI 编程工具的技能包（纯文本目录，用户直接登记进 AI 工具）
 cp -r "$ROOT/share/aila/skills" "$BUNDLE/share/aila/skills"
 
-if [ -d "$ROOT/toolchain" ]; then
-  cp -r "$ROOT/toolchain" "$BUNDLE/toolchain"
+if [ -d "$ROOT/toolchains" ]; then
+  cp -r "$ROOT/toolchains" "$BUNDLE/toolchains"
 else
-  echo "警告：没有 toolchain/ 目录（先跑 ci/fetch-llvm.sh）" >&2
+  echo "警告：没有 toolchains/ 目录（先跑 ci/fetch-llvm.sh）" >&2
 fi
 
 cp -r "$ROOT/examples" "$BUNDLE/examples"
@@ -59,19 +59,16 @@ AILA $VERSION ($PLATFORM)
 
 本发布包内含 llvm-mingw（clang + lld + MinGW-w64 运行时），
 LLVM/Clang 部分按 Apache-2.0 WITH LLVM-exception 再分发，
-许可证原文见 toolchain/<triple>/LICENSE.TXT。AILA 自身同样以 Apache-2.0 发布。
+许可证原文见 toolchains/clang/<版本>/LICENSE.TXT。AILA 自身同样以 Apache-2.0 发布。
 
-工具链解析规则（docs/specs/0003 §2）：默认只使用本包 toolchain/ 下的 clang/llc；
-只有当项目清单显式写 [build.toolchain] cc = "system:..." 时才会去系统里找。
+工具链解析规则（docs/specs/0003 §2，rfcs/0006 注册表布局）：默认只使用本包
+toolchains/ 下的 clang 系（目录名 = 家族/版本）；只有当项目清单显式写
+[build.toolchain] cc = "system:..." 时才会去系统里找。
 
 自检：./aila doctor     编译并运行：./aila run examples/hello
-给 AI 用：./aila skill  （技能包在 share/aila/skills/aila/）
+给 AI 用：把 share/aila/skills/aila/ 登记进你的 AI 工具（技能/规则目录）
 EOF
 
 echo "== 打包 =="
 ( cd "$OUT" && zip -qr "aila-$VERSION-$PLATFORM.zip" "aila-$VERSION-$PLATFORM" )
 echo "产物：$OUT/aila-$VERSION-$PLATFORM.zip"
-
-# 单独发一份「技能包」zip：不装 AILA 也能把这份技能喂给 AI 工具
-( cd "$ROOT/share/aila/skills" && zip -qr "$OUT/aila-skill-$VERSION-$PLATFORM.zip" "aila" )
-echo "产物：$OUT/aila-skill-$VERSION-$PLATFORM.zip"

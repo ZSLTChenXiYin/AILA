@@ -8,13 +8,13 @@ import (
 
 // Symbol 是一个绑定。
 type Symbol struct {
-	Name     string
-	Type     types.Type
-	Mutable  bool
-	Kind     string // local | param | global | state
-	Moved    bool
-	Used     bool
-	IsSelf   bool
+	Name         string
+	Type         types.Type
+	Mutable      bool
+	Kind         string // local | param | global | state
+	Moved        bool
+	Used         bool
+	IsSelf       bool
 	OriginRegion string // 分配来源区域（逃逸检查）
 }
 
@@ -51,12 +51,14 @@ func (s *Scope) Lookup(name string) *Symbol {
 // FuncCtx 是一个函数体的检查上下文。
 type FuncCtx struct {
 	Sig         *FuncSig
+	Decl        *ast.FuncDecl // 当前函数声明（调用链记录键）
 	Scope       *Scope
 	Regions     map[string]bool // @region 参数
 	Lexical     []string        // 体内 region 块
 	InCoroutine bool
 	InThread    bool
 	UnsafeDepth int
+	WroteGlobal bool // 本函数体写过模块级可变状态（E5003 判据）
 	Ret         types.Type
 	Err         types.Type
 	RetGroup    []types.Type
@@ -80,33 +82,43 @@ func (c *FuncCtx) RegionVisible(name string) bool {
 
 // Checker 是语义检查器。
 type Checker struct {
-	mod      *ast.Module
-	table    *Table
-	sigs     *Sigs
-	bag      *diag.Bag
-	ctx      *FuncCtx
+	mod       *ast.Module
+	table     *Table
+	sigs      *Sigs
+	bag       *diag.Bag
+	ctx       *FuncCtx
 	loopDepth int
 
 	// 类型注解（sema 产物，不进 AST 序列化）
-	Types       map[ast.Node]types.Type
-	Bindings    map[*ast.LetDecl]types.Type
-	Syms        map[*ast.LetDecl]*Symbol
-	Origins     map[ast.Node]string
-	PathSyms    map[*ast.Path]*Symbol
-	PathGlobals map[*ast.Path]*GlobalInfo
-	PathConsts  map[*ast.Path]*ConstInfo
-	PathFuncs   map[*ast.Path]*FuncSig
+	Types        map[ast.Node]types.Type
+	Bindings     map[*ast.LetDecl]types.Type
+	Syms         map[*ast.LetDecl]*Symbol
+	Origins      map[ast.Node]string
+	PathSyms     map[*ast.Path]*Symbol
+	PathGlobals  map[*ast.Path]*GlobalInfo
+	PathConsts   map[*ast.Path]*ConstInfo
+	PathFuncs    map[*ast.Path]*FuncSig
 	PathVariants map[*ast.Path]variantRef
-	PathBuiltin map[*ast.Path]string
-	CallSigs    map[ast.Node]*FuncSig
-	CallKinds   map[ast.Node]string
-	CallRecv    map[ast.Node]ast.Node
-	BinOperands map[ast.Node]types.Type
-	CastTypes   map[ast.Node][2]types.Type
-	TryModes    map[ast.Node]string
-	StructLits  map[*ast.StructLit]*types.StructInfo
-	VariantLits map[*ast.StructLit]variantRef
-	BuiltinLits  map[*ast.StructLit]string
+	PathBuiltin  map[*ast.Path]string
+	CallSigs     map[ast.Node]*FuncSig
+	CallKinds    map[ast.Node]string
+	CallRecv     map[ast.Node]ast.Node
+	// CoroCalls 标记「coroutine@ 的启动点 call」：豁免「直接调用协程函数」检查。
+	CoroCalls map[ast.Node]bool
+	// ErrReturns 标记 v2 `return .成员;`（designs/0004 §3.4）：
+	// 返回位置自动装载错误态，codegen 走 buildResult(ok=false)。
+	ErrReturns map[*ast.Return]bool
+	// SelectBinds 记录 select case 的绑定符号（designs/0004 §6）：
+	// chan 事件省绑定时隐式绑定 v；nil = 无绑定（事件产出丢弃）。
+	SelectBinds map[*ast.SelectCase]*Symbol
+	// LayerRefs 记录层 API 调用的静态解释（designs/0004 §2.4）。
+	LayerRefs map[*ast.LayerCall]*LayerRef
+	// CallCallee 记录 fnptr 间接调用的「函数指针值」表达式（字段形态由 sema 合成）。
+	CallCallee   map[ast.Node]ast.Node
+	BinOperands  map[ast.Node]types.Type
+	TryModes     map[ast.Node]string
+	StructLits   map[*ast.StructLit]*types.StructInfo
+	VariantLits  map[*ast.StructLit]variantRef
 	ArmVariants  map[*ast.Arm]variantRef
 	MatchResults map[*ast.Match]types.Type
 	ParamSyms    map[*ast.FuncDecl][]*Symbol
@@ -131,8 +143,15 @@ type Checker struct {
 	ArrRefs      map[*ast.ArrayLit]*ArrayRef
 	AllocRefs    map[*ast.Alloc]*AllocRef
 	TryRefs      map[*ast.TryPropagate]*TryRef
-	LenRefs      map[*ast.Len]types.Type
-	DestructRefs map[*ast.DestructAssign][]*Symbol
+	DestructRefs map[ast.Node][]*Symbol
+	// 线程调用链检查（E5003，designs/0001 §10.7 全局可变状态禁令）
+	FuncDecls    map[*FuncSig]*ast.FuncDecl
+	CallEdges    map[*ast.FuncDecl][]*FuncSig
+	WroteGlobals map[*ast.FuncDecl]bool
+
+	// ConstVals 记录「函数内 let 绑到 const-expr」的整数值（designs/0006 §1.2）：
+	// `#compile.if` / `#compile.match` 的条件可以是这类 let 绑定，它天然不可重新赋值。
+	ConstVals map[*Symbol]int64
 }
 
 // Check 检查模块级值与全部函数体，返回可查询的类型注解。
@@ -146,25 +165,28 @@ func Check(mod *ast.Module, table *Table, sigs *Sigs, bag *diag.Bag) *Checker {
 func NewChecker(mod *ast.Module, table *Table, sigs *Sigs, bag *diag.Bag) *Checker {
 	return &Checker{
 		mod: mod, table: table, sigs: sigs, bag: bag,
-		Types:       map[ast.Node]types.Type{},
-		Bindings:    map[*ast.LetDecl]types.Type{},
-		Syms:        map[*ast.LetDecl]*Symbol{},
-		Origins:     map[ast.Node]string{},
-		PathSyms:    map[*ast.Path]*Symbol{},
-		PathGlobals: map[*ast.Path]*GlobalInfo{},
-		PathConsts:  map[*ast.Path]*ConstInfo{},
-		PathFuncs:   map[*ast.Path]*FuncSig{},
+		Types:        map[ast.Node]types.Type{},
+		Bindings:     map[*ast.LetDecl]types.Type{},
+		Syms:         map[*ast.LetDecl]*Symbol{},
+		Origins:      map[ast.Node]string{},
+		PathSyms:     map[*ast.Path]*Symbol{},
+		PathGlobals:  map[*ast.Path]*GlobalInfo{},
+		PathConsts:   map[*ast.Path]*ConstInfo{},
+		PathFuncs:    map[*ast.Path]*FuncSig{},
 		PathVariants: map[*ast.Path]variantRef{},
-		PathBuiltin: map[*ast.Path]string{},
-		CallSigs:    map[ast.Node]*FuncSig{},
-		CallKinds:   map[ast.Node]string{},
-		CallRecv:    map[ast.Node]ast.Node{},
-		BinOperands: map[ast.Node]types.Type{},
-		CastTypes:   map[ast.Node][2]types.Type{},
-		TryModes:    map[ast.Node]string{},
-		StructLits:  map[*ast.StructLit]*types.StructInfo{},
-		VariantLits: map[*ast.StructLit]variantRef{},
-		BuiltinLits:  map[*ast.StructLit]string{},
+		PathBuiltin:  map[*ast.Path]string{},
+		CallSigs:     map[ast.Node]*FuncSig{},
+		CallKinds:    map[ast.Node]string{},
+		CallRecv:     map[ast.Node]ast.Node{},
+		CallCallee:   map[ast.Node]ast.Node{},
+		CoroCalls:    map[ast.Node]bool{},
+		BinOperands:  map[ast.Node]types.Type{},
+		TryModes:     map[ast.Node]string{},
+		ErrReturns:   map[*ast.Return]bool{},
+		SelectBinds:  map[*ast.SelectCase]*Symbol{},
+		LayerRefs:    map[*ast.LayerCall]*LayerRef{},
+		StructLits:   map[*ast.StructLit]*types.StructInfo{},
+		VariantLits:  map[*ast.StructLit]variantRef{},
 		ArmVariants:  map[*ast.Arm]variantRef{},
 		MatchResults: map[*ast.Match]types.Type{},
 		ParamSyms:    map[*ast.FuncDecl][]*Symbol{},
@@ -179,8 +201,11 @@ func NewChecker(mod *ast.Module, table *Table, sigs *Sigs, bag *diag.Bag) *Check
 		ArrRefs:      map[*ast.ArrayLit]*ArrayRef{},
 		AllocRefs:    map[*ast.Alloc]*AllocRef{},
 		TryRefs:      map[*ast.TryPropagate]*TryRef{},
-		LenRefs:      map[*ast.Len]types.Type{},
-		DestructRefs: map[*ast.DestructAssign][]*Symbol{},
+		DestructRefs: map[ast.Node][]*Symbol{},
+		FuncDecls:    map[*FuncSig]*ast.FuncDecl{},
+		CallEdges:    map[*ast.FuncDecl][]*FuncSig{},
+		WroteGlobals: map[*ast.FuncDecl]bool{},
+		ConstVals:    map[*Symbol]int64{},
 	}
 }
 
@@ -193,6 +218,44 @@ func (c *Checker) Run() {
 			c.checkFunc(fn)
 		}
 	}
+	c.finishThreads()
+}
+
+// finishThreads 跑线程创建的调用链检查（designs/0001 §10.7）：
+// 线程入口调用链内写模块级可变状态 = E5003。
+// v2：启动点经 `#runtime.spawn(f, args)`（designs/0004 §2.4）。
+func (c *Checker) finishThreads() {
+	for x, ref := range c.LayerRefs {
+		if ref == nil || ref.Kind != "spawn" || ref.Sig == nil {
+			continue
+		}
+		if c.chainTouchesGlobal(ref.Sig, map[*ast.FuncDecl]bool{}) {
+			c.err("E5003", x.Span, "线程入口调用链内写了模块级可变状态",
+				"数据竞争在语言层构造性不可能（B6 无 UB）",
+				"线程共享状态走通道 / atomics；模块级 var 只读放行")
+		}
+	}
+}
+
+// chainTouchesGlobal 沿调用边搜线程入口可达函数是否写模块级可变状态。
+func (c *Checker) chainTouchesGlobal(sig *FuncSig, seen map[*ast.FuncDecl]bool) bool {
+	decl, ok := c.FuncDecls[sig]
+	if !ok {
+		return false // #[c] extern / 跨单元：本单元检查器不掌握，v0 放行
+	}
+	if seen[decl] {
+		return false
+	}
+	seen[decl] = true
+	if c.WroteGlobals[decl] {
+		return true
+	}
+	for _, cs := range c.CallEdges[decl] {
+		if c.chainTouchesGlobal(cs, seen) {
+			return true
+		}
+	}
+	return false
 }
 
 // SetModuleContext 挂上模块图上下文（跨模块名字解析用）。
@@ -298,6 +361,9 @@ func sameType(a, b types.Type) bool {
 	case types.Named:
 		y, ok := b.(types.Named)
 		return ok && x.Info == y.Info
+	case types.ErrorSpace:
+		y, ok := b.(types.ErrorSpace)
+		return ok && x.Info == y.Info
 	case types.Void:
 		_, ok := b.(types.Void)
 		return ok
@@ -327,8 +393,23 @@ func (c *Checker) unify(expected, actual types.Type, span diag.Span, what string
 			}
 			signed := types.IsSigned(expected)
 			if !signed && ui.Value < 0 && !isC32(expected) {
-				c.err("E3204", span, "无符号目标不能承接负数",
-					"`-N` 落在有符号域", "要最大值请写十六进制字面量，如 `0xFF`")
+				if !ui.BitPattern {
+					c.err("E3204", span, "无符号目标不能承接负数",
+						"`-N` 落在有符号域", "要最大值请写十六进制字面量，如 `0xFF`")
+					return
+				}
+				// 位型字面量（≥ 2^63）：只有 64 位无符号能直落
+				if bits < 64 {
+					c.err("E3201", span, "字面量超出目标类型值域", what,
+						"≥ 2^63 的字面量只能直接落 U64 / USize")
+					return
+				}
+				return
+			}
+			if ui.BitPattern {
+				// 有符号 / C32 目标：位型值 ≥ 2^63 落不下
+				c.err("E3201", span, "字面量超出目标类型值域", what,
+					"≥ 2^63 的字面量只能直接落 U64 / USize")
 				return
 			}
 			// 64 位目标：int64 字面量恒可容纳（移位 64 在 Go 里会溢出成 0，必须特判）

@@ -141,6 +141,19 @@ func (t Coro) typeName() string {
 	return "coro " + TypeName(t.Ok)
 }
 
+// CoroState 是协程 resume 的**编译器内部**三态判别和 ≡ { state, Ok, Err }
+// （state：0=仍挂起 / 1=完成 / 2=错误），只用来描述控制块里的布局。
+//
+// 它不再出现在用户类型里（designs/0004 §6 v2）：`resume h` 的表达式形态退役
+// （E5010），select 的 coro 事件在协程完成时才就绪，用户拿到的绑定值只有两态
+// ——`T ! E`（有错误通道）、`T`（只有返回值）或没有产出。因此 `Suspended` /
+// `Done` 两个内建模式也一并不存在了：不可命名、不可 match、不可构造。
+type CoroState struct{ Ok, Err Type }
+
+func (t CoroState) typeName() string {
+	return "resume 内部三态"
+}
+
 // FnPtr 是裸函数指针。
 type FnPtr struct {
 	Params []Type
@@ -191,7 +204,13 @@ type Void struct{}
 func (Void) typeName() string { return "（无返回值）" }
 
 // UntypedInt 是多态整数字面量。
-type UntypedInt struct{ Value int64 }
+// Value 存数学值；≥ 2^63 的字面量没有 int64 数学表示，lexer 以**位型**
+// 记录（0xFFFFFFFFFFFFFFFF → Value=-1）并置 BitPattern——sema 只允许
+// 位型直落 64 位无符号目标，有符号 / 更窄目标一律 E3201。
+type UntypedInt struct {
+	Value      int64
+	BitPattern bool
+}
 
 func (t UntypedInt) typeName() string { return "整数常量" }
 
@@ -223,10 +242,10 @@ type StructInfo struct {
 	// IsPublic 表示壳里写了 `public`（跨包可见，designs/0001 §2.2）
 	IsPublic bool
 	InShell  bool
-	Fields []Field
-	Packed bool
-	Align  int
-	Opaque bool
+	Fields   []Field
+	Packed   bool
+	Align    int
+	Opaque   bool
 }
 
 // TypeInfoName 实现 Info。
@@ -243,15 +262,20 @@ type VariantInfo struct {
 
 // EnumInfo 是 enum 定义。
 type EnumInfo struct {
-	Name    string
-	Module  string
+	Name   string
+	Module string
 	// IsPublic 表示壳里写了 `public`（跨包可见）
 	IsPublic bool
 	InShell  bool
-	Base    Type
-	Payload bool
+	// IsError 表示声明位写了 `#error` 层指令（designs/0004 §3.1）：
+	// 该 enum 参与 `!` 错误通道，成员可 leading-dot 构造。
+	// ErrLayer 记录构造层（compile/comprun/runtime）。
+	IsError  bool
+	ErrLayer string
+	Base     Type
+	Payload  bool
 	Variants []VariantInfo
-	TagType Type
+	TagType  Type
 }
 
 // TypeInfoName 实现 Info。
@@ -273,6 +297,105 @@ func (e *EnumInfo) Variant(name string) (VariantInfo, bool) {
 type Named struct{ Info Info }
 
 func (t Named) typeName() string { return t.Info.TypeInfoName() }
+
+// ErrorSpace 是保留错误空间 `Error` 的超集类型（designs/0004 §3.1）。
+// Info 指向全局聚合的错误成员集合：所有模块 `#error enum Error` 分片声明的
+// 并集，成员名跨分片重复出现 = 同一成员。进程级单例，判等靠 Info 指针同一性。
+type ErrorSpace struct{ Info *EnumInfo }
+
+func (t ErrorSpace) typeName() string { return "Error" }
+
+// globalErrorInfo 是全局错误空间的聚合成员集（编译器单次批处理，无并发访问）。
+var globalErrorInfo = &EnumInfo{Name: "Error", Base: U32, TagType: U32}
+
+// GlobalErrorSpace 返回保留错误空间类型（进程级单例）。
+func GlobalErrorSpace() ErrorSpace { return ErrorSpace{Info: globalErrorInfo} }
+
+// ResetErrorSpace 清空全局错误空间并重新加载。错误成员编号随注册顺序累积
+// （§3.1），逐模块批处理（goldengen 快照）必须与单模块编译（CLI/build）取
+// 同一编号基线——每个入口编译前重置，编号只由本入口的模块加载序决定。
+func ResetErrorSpace() {
+	globalErrorInfo = &EnumInfo{Name: "Error", Base: U32, TagType: U32}
+}
+
+// IsErrorSpace 判断是否保留错误空间超集类型。
+func IsErrorSpace(t Type) bool {
+	_, ok := t.(ErrorSpace)
+	return ok
+}
+
+// RegisterErrorShard 把 `#error enum X` 分片声明的成员并入全局错误空间
+// （designs/0004 §3.1）。Zig 语义：错误值用**全局统一编号**——分片变体的
+// tag 直接改写为全局 tag，同名成员（跨分片重复出现）= 同一成员同一编号。
+// 于是任意具体错误集上抛进 `Error` 超集零重映射（codegen 只做宽度/聚合转换）。
+func RegisterErrorShard(info *EnumInfo) {
+	if info == nil || !info.IsError {
+		return
+	}
+	anyPayload := globalErrorInfo.Payload
+	for i := range info.Variants {
+		v := &info.Variants[i]
+		if gv, exists := globalErrorInfo.Variant(v.Name); exists {
+			v.Tag = gv.Tag
+			continue
+		}
+		v.Tag = int64(len(globalErrorInfo.Variants))
+		globalErrorInfo.Variants = append(globalErrorInfo.Variants, *v)
+		if len(v.Payload) > 0 {
+			anyPayload = true
+		}
+	}
+	globalErrorInfo.Payload = anyPayload
+	var maxTag int64
+	for _, v := range globalErrorInfo.Variants {
+		if v.Tag > maxTag {
+			maxTag = v.Tag
+		}
+	}
+	if globalErrorInfo.Payload {
+		globalErrorInfo.TagType = tagWidthType(maxTag)
+	}
+	// 分片自身布局对齐全局编号：tag 宽度必须容纳全局最大编号
+	if info.Name != "Error" {
+		if info.Payload {
+			info.TagType = tagWidthType(maxTag)
+		} else if info.Base != nil && typesFit(info.Base, maxTag) {
+			info.TagType = info.Base
+		} else {
+			info.TagType = tagWidthType(maxTag)
+		}
+	}
+}
+
+// tagWidthType 按最大判别值取最小无符号整型。
+func tagWidthType(maxTag int64) Type {
+	width := 1
+	for (int64(1) << uint(width*8)) <= maxTag {
+		width *= 2
+	}
+	kinds := map[int]string{1: "u8", 2: "u16", 4: "u32", 8: "u64"}
+	if k, ok := kinds[width]; ok {
+		if p, ok2 := PrimByKind(k); ok2 {
+			return p
+		}
+	}
+	return U32
+}
+
+// typesFit 判断 maxTag 是否落在无符号整型宽度内。
+func typesFit(t Type, maxTag int64) bool {
+	bits := IntWidth(t, 8)
+	return bits > 0 && maxTag < (int64(1)<<uint(bits))
+}
+
+// EnumInfoOf 取 Named 背后的 EnumInfo（非 enum 返回 nil）。
+func EnumInfoOf(t Type) *EnumInfo {
+	if n, ok := t.(Named); ok {
+		en, _ := n.Info.(*EnumInfo)
+		return en
+	}
+	return nil
+}
 
 // TypeName 返回类型的 AILA 拼写。
 func TypeName(t Type) string {

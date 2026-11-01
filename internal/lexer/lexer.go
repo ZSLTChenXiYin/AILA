@@ -25,14 +25,16 @@ const (
 	KindEOF   Kind = "eof"
 )
 
-// Keywords 是保留字（designs/0001 §1.4）。
+// Keywords 是保留字（designs/0001 §1.4；v2 收敛见 designs/0004 §7：
+// as/trunc/len/trap 随层系统与 match v2 退役，并发启动经 #runtime API）。
 var Keywords = map[string]bool{
 	"func": true, "let": true, "var": true, "const": true, "type": true, "struct": true,
 	"enum": true, "state": true, "view": true, "module": true, "hot": true, "import": true,
 	"public": true, "return": true, "if": true, "else": true, "for": true, "in": true,
 	"match": true, "region": true, "defer": true, "unsafe": true, "coroutine": true,
-	"thread": true, "yield": true, "out": true, "trap": true, "move": true, "len": true,
-	"copy": true, "resume": true, "as": true, "trunc": true, "break": true, "continue": true,
+	"thread": true, "yield": true, "out": true, "move": true,
+	"copy": true, "resume": true, "break": true, "continue": true,
+	"select": true, "case": true,
 	"true": true, "false": true,
 }
 
@@ -45,8 +47,11 @@ var TypeWords = map[string]bool{
 	"recv": true, "coro": true,
 }
 
-var builtinVariants = map[string]bool{
-	"Some": true, "None": true, "Ok": true, "Err": true, "Suspended": true, "Done": true,
+// LayerNames 是层系统的语言级保留层名（designs/0004 §2.1）。
+// `#` 之后的标识符必须是三者之一：compile / comprun / runtime。
+// 用户模块不得占用这三个名字。
+var LayerNames = map[string]bool{
+	"compile": true, "comprun": true, "runtime": true,
 }
 
 var punct3 = []string{"<<=", ">>=", "..."}
@@ -272,8 +277,6 @@ func (l *lexer) identOrRaw(startLine, startCol int) {
 		l.add(Kind(word), word, word, startLine, startCol, n)
 	case word == "_":
 		l.add(KindWild, "_", nil, startLine, startCol, 1)
-	case builtinVariants[word]:
-		l.add(KindIdent, word, word, startLine, startCol, n)
 	default:
 		l.add(KindIdent, word, word, startLine, startCol, n)
 	}
@@ -311,7 +314,12 @@ func (l *lexer) number(startLine, startCol int) {
 				"", "例如 `0xFF` / `0b1010` / `0o755`")
 			body = "0"
 		}
-		l.add(KindInt, string(l.runes[begin:l.pos]), parseIntBase(body, base), startLine, startCol, l.pos-begin)
+		v, ok := parseIntBase(body, base)
+		if !ok {
+			l.errAt("E1006", startLine, startCol, l.pos-begin, "整数字面量超出 64 位",
+				"AILA 整数最多 64 位（U64 / I64）", "拆成两段或改用浮点字面量")
+		}
+		l.add(KindInt, string(l.runes[begin:l.pos]), v, startLine, startCol, l.pos-begin)
 		return
 	}
 	for !l.eof() && (isDigit(l.runes[l.pos]) || l.runes[l.pos] == '_') {
@@ -370,7 +378,12 @@ func (l *lexer) number(startLine, startCol int) {
 		l.errAt("E1006", startLine, startCol, len([]rune(text)), "C 式 0 前导八进制被禁用",
 			"AILA 的八进制必须写 `0o`", "把 `"+text+"` 改成 `0o"+clean[1:]+"`，或去掉前导 0")
 	}
-	l.add(KindInt, text, parseIntBase(clean, 10), startLine, startCol, len([]rune(text)))
+	dv, dok := parseIntBase(clean, 10)
+	if !dok {
+		l.errAt("E1006", startLine, startCol, len([]rune(text)), "整数字面量超出 64 位",
+			"AILA 整数最多 64 位（U64 / I64）", "拆成两段或改用浮点字面量")
+	}
+	l.add(KindInt, text, dv, startLine, startCol, len([]rune(text)))
 }
 
 // readEscaped 读取到结束引号为止，返回 (值, 是否闭合)。
@@ -464,7 +477,6 @@ func (l *lexer) charLit(startLine, startCol int) {
 	}
 	l.add(KindChar, value, out, startLine, startCol, length)
 }
-
 
 func (l *lexer) punct(startLine, startCol int) {
 	for _, p := range punct3 {

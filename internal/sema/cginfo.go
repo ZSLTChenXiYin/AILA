@@ -42,8 +42,11 @@ type ArmBinding struct {
 
 // ArmRef 是一个 match 分支的静态信息。
 type ArmRef struct {
-	Wild     bool
-	Builtin  string // "Some" / "None" / "Ok" / "Err"
+	Wild bool
+	// Builtin 是内建情境的分派键（不来自用户写的变体名，designs/0004 §4）：
+	// 类型模式按判别对象侧落 "Some"（`T?` 非空）/ "Ok"（`!` 成功）/ "Err"；
+	// `None` 字面量模式落 "None"；resume 三态落 "Suspended"/"Ok"|"Done"/"Err"。
+	Builtin  string
 	Tag      int64
 	Enum     *types.EnumInfo
 	Variant  types.VariantInfo
@@ -58,14 +61,23 @@ type MatchRef struct {
 	Value types.Type // 取值位置的产出类型（语句位置为 Void）
 }
 
+// LayerRef 是层 API 调用 `#层.API(...)` 的静态解释（designs/0004 §2.4）。
+type LayerRef struct {
+	Kind      string     // "sizeof" / "alignof" / "as" / "len" / "trap" / "atomic" / "checked" / "chan" / "coro" / "spawn"
+	Sig       *FuncSig   // coro / spawn 的目标函数签名
+	Elem      types.Type // chan 元素类型 / as 目标类型 / sizeof 目标类型
+	Src       types.Type // as 源类型
+	At        types.Type // atomic 宽度类型（U8/U16/U32/U64） / checked 操作数类型
+	AtomicFn  string     // atomic 的 C 符号名（aila_rt_atomic_*）
+	CheckedOp string     // checked 的运算（"add" / "sub" / "mul"）
+}
+
 // LitRef 是构造字面量的静态信息。
 type LitRef struct {
 	Struct  *types.StructInfo
 	Enum    *types.EnumInfo
 	Variant types.VariantInfo
 	HasVar  bool
-	Builtin string // "Some" / "Ok" / "Err"
-	Payload types.Type
 }
 
 // AllocRef 是一次区域分配的静态信息。
@@ -81,6 +93,9 @@ type AllocRef struct {
 type TryRef struct {
 	Mode string // "result" / "optional"
 	Ok   types.Type
+	// Err 是操作数原始错误类型：与函数签名 Err 不同时 codegen 需要错误值
+	// 转换（具体错误集 → Error 超集，designs/0004 §3.2）
+	Err types.Type
 }
 
 // --------------------------------------------------------------------------- //
@@ -156,11 +171,11 @@ func (c *Checker) noteArrayElem(x *ast.ArrayLit, elem types.Type, count int64, h
 
 func (c *Checker) noteAlloc(x *ast.Alloc, ref *AllocRef) { c.AllocRefs[x] = ref }
 
-func (c *Checker) noteTry(x *ast.TryPropagate, mode string, ok types.Type) {
-	c.TryRefs[x] = &TryRef{Mode: mode, Ok: ok}
+func (c *Checker) noteTry(x *ast.TryPropagate, mode string, ok, errT types.Type) {
+	c.TryRefs[x] = &TryRef{Mode: mode, Ok: ok, Err: errT}
 }
 
-func (c *Checker) noteLen(x *ast.Len, t types.Type) { c.LenRefs[x] = t }
+func (c *Checker) noteLayer(x *ast.LayerCall, ref *LayerRef) { c.LayerRefs[x] = ref }
 
 func (c *Checker) noteDestruct(d *ast.DestructAssign, syms []*Symbol) { c.DestructRefs[d] = syms }
 

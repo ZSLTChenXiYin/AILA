@@ -10,7 +10,7 @@ import (
 
 // FuncSig 是函数签名（docs/specs/0002 §4 / §6 的承载结构）。
 type FuncSig struct {
-	Name        string
+	Name string
 	// Module 是声明该函数的模块名（跨模块调用的符号修饰要用它）。
 	Module      string
 	Owner       string
@@ -28,10 +28,13 @@ type FuncSig struct {
 	InShell     bool
 	// Impl 是壳里前向声明对应的块内实现（没有前向声明时为空）。
 	// Decl 是签名来自的那条声明（壳内前向声明时就是它）。
-	Decl        *ast.FuncDecl
-	Impl        *ast.FuncDecl
-	Variadic    bool
-	Span        diag.Span
+	Decl     *ast.FuncDecl
+	Impl     *ast.FuncDecl
+	Variadic bool
+	// VariadicElem 是 AILA 原生变参 `rest: ...T` 的元素类型 T（nil = 无原生变参）。
+	// rest 本身作为普通参数留在 Params 末位，类型是 [T] 视图（designs/0002 §6）。
+	VariadicElem types.Type
+	Span         diag.Span
 }
 
 // Param 是一个形参。
@@ -84,7 +87,7 @@ type Sigs struct {
 	Consts  map[string]*ConstInfo
 	// ConstOrder 是 const 的声明顺序（IR 常量池顺序按它走，保证与参考实现一致）。
 	ConstOrder []string
-	Globals map[string]*GlobalInfo
+	Globals    map[string]*GlobalInfo
 }
 
 // BuildSigs 从 AST + 类型表构建签名表。
@@ -154,7 +157,7 @@ func BuildSigs(mod *ast.Module, table *Table, bag *diag.Bag) *Sigs {
 					bag.Error("E3201", x.Span, "`const` 初始化器必须是编译期常量", "这里", "")
 				}
 				s.Consts[x.Name] = &ConstInfo{Name: x.Name, Type: t, Value: v, IsPublic: x.IsPublic, InShell: x.InShell}
-		s.ConstOrder = append(s.ConstOrder, x.Name)
+				s.ConstOrder = append(s.ConstOrder, x.Name)
 				continue
 			}
 			var t types.Type
@@ -172,9 +175,16 @@ func BuildSigs(mod *ast.Module, table *Table, bag *diag.Bag) *Sigs {
 }
 
 func buildFuncSig(x *ast.FuncDecl, table *Table, bag *diag.Bag, module string) *FuncSig {
+	// 无名 `...` 是 C 调用约定变参，只允许 #[c] extern 声明；
+	// AILA 原生变参必须有名字与元素类型（`rest: ...T`，designs/0002 §6）。
+	if x.Variadic && !x.IsExtern {
+		bag.Error("E3201", x.Span, "函数 `"+x.Name+"` 的无名 `...` 只允许出现在 `#[c]` 外部声明上",
+			"AILA 原生变参必须带名字与元素类型",
+			"写成末位参数 `rest: ...T`，体内 `rest` 即 `[T]` 只读视图")
+	}
 	sig := &FuncSig{
 		Module: module,
-		Name: x.Name, Owner: x.OwnerType,
+		Name:   x.Name, Owner: x.OwnerType,
 		IsCoroutine: x.IsCoroutine, IsThread: x.IsThread, IsExtern: x.IsExtern,
 		IsPublic: x.IsPublic, InShell: x.InShell, Variadic: x.Variadic, Span: x.Span,
 	}
@@ -194,6 +204,12 @@ func buildFuncSig(x *ast.FuncDecl, table *Table, bag *diag.Bag, module string) *
 			continue
 		}
 		sig.Params = append(sig.Params, Param{Name: p.Name, Type: table.Resolve(p.Type, bag)})
+	}
+	// AILA 原生变参：末位参数是 rest 视图，记下元素类型供调用点实参检查。
+	if n := len(x.Params); n > 0 && x.Params[n-1].IsVariadic {
+		if v, ok := sig.Params[n-1].Type.(types.View); ok {
+			sig.VariadicElem = v.Elem
+		}
 	}
 	retRaw := types.Type(types.Void{})
 	if x.Ret != nil {
@@ -246,6 +262,14 @@ func buildFuncSig(x *ast.FuncDecl, table *Table, bag *diag.Bag, module string) *
 	for _, n := range append(append([]string{}, sig.Muts...), sig.Moves...) {
 		if sig.ParamIndex(n) < 0 {
 			bag.Error("E4005", x.Span, "`@` 子句引用了不存在的参数 `"+n+"`", "这里", "")
+		}
+	}
+	// 变参 rest 是调用期借用的只读视图，进 @mut/@move 无意义（designs/0002 §6）。
+	if n := len(x.Params); n > 0 && x.Params[n-1].IsVariadic {
+		restName := x.Params[n-1].Name
+		if containsStr(sig.Muts, restName) || containsStr(sig.Moves, restName) {
+			bag.Error("E4005", x.Span, "变参参数 `"+restName+"` 是只读视图，不能进入 `@mut`/`@move`",
+				"变参视图是调用期借用，只读遍历", "")
 		}
 	}
 	return sig

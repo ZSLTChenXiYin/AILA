@@ -214,31 +214,33 @@ func (w *Workspace) Hover(uri string, pos Position) *Hover {
 	return &Hover{Contents: MarkupContent{Kind: "markdown", Value: value}, Range: &wordRange}
 }
 
+// kindNameOf 把符号种类转成中文显示名（hover / 补全文档浮层共用）。
+func kindNameOf(k int) string {
+	switch k {
+	case KindFunction:
+		return "函数"
+	case KindMethod:
+		return "方法"
+	case KindStruct:
+		return "struct"
+	case KindEnum:
+		return "enum"
+	case KindEnumMember:
+		return "枚举变体"
+	case KindField:
+		return "字段"
+	case KindConstant:
+		return "常量"
+	case KindVariable:
+		return "变量"
+	case KindTypeParam:
+		return "类型别名"
+	}
+	return "符号"
+}
+
 // describe 生成 hover 的（种类，明细，来源模块）。
 func (w *Workspace) describe(info *moduleInfo, a *analysis, pos Position, word string) (string, string, string) {
-	kindName := func(k int) string {
-		switch k {
-		case KindFunction:
-			return "函数"
-		case KindMethod:
-			return "方法"
-		case KindStruct:
-			return "struct"
-		case KindEnum:
-			return "enum"
-		case KindEnumMember:
-			return "枚举变体"
-		case KindField:
-			return "字段"
-		case KindConstant:
-			return "常量"
-		case KindVariable:
-			return "变量"
-		case KindTypeParam:
-			return "类型别名"
-		}
-		return "符号"
-	}
 	loc := w.resolve(uriOf(info), pos)
 	if loc != nil {
 		if target := a.ByPath[URI2Path(loc.URI)]; target != nil {
@@ -247,13 +249,13 @@ func (w *Workspace) describe(info *moduleInfo, a *analysis, pos Position, word s
 				if detail == "" {
 					detail = s.Name
 				}
-				return kindName(s.Kind), detail, target.Name
+				return kindNameOf(s.Kind), detail, target.Name
 			}
 		}
 	}
 	// 兜底：光标处本身就是声明
 	if s := symbolAt(info, pos); s != nil {
-		return kindName(s.Kind), s.Detail, info.Name
+		return kindNameOf(s.Kind), s.Detail, info.Name
 	}
 	return "", "", ""
 }

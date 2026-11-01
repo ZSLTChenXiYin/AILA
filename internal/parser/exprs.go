@@ -10,12 +10,37 @@ import (
 // 模式
 // --------------------------------------------------------------------------- //
 
+var layerNames = lexer.LayerNames
+
 func (p *Parser) parsePattern() ast.Node {
 	tok := p.cur()
 	switch {
 	case tok.Kind == lexer.KindWild:
 		p.adv()
 		return &ast.Wildcard{Span: p.spanOf(tok)}
+	case tok.IsKw("let"):
+		// 类型模式 `let 名: 类型 =>`（designs/0004 §4.1）：
+		// 按类型分派并绑定新变量（`!` 结果 / 可空视图的非空分支）。
+		p.adv()
+		name := p.expectKind(lexer.KindIdent, "类型模式绑定名")
+		p.expectPunct(":", "类型模式标注")
+		t := p.parseType()
+		return &ast.TypePattern{Span: p.spanTo(p.spanOf(tok), t.Span), Name: name.Text, Type: t}
+	case tok.IsPunct("."):
+		// leading-dot 变体模式 `.Data { v }` / `.Eof`（designs/0004 §4.1）：
+		// 变体名由判别对象类型的变体集合静态解析。
+		p.adv()
+		first := p.expectKind(lexer.KindIdent, "变体名")
+		names := []string{first.Text}
+		for p.atPunct(".") && p.peek(1).Kind == lexer.KindIdent {
+			p.adv()
+			names = append(names, p.adv().Text)
+		}
+		if p.atPunct("{") {
+			fields := p.parsePatternFields()
+			return &ast.VariantPattern{Span: p.spanTo(p.spanOf(tok), p.spanOf(p.cur())), Path: names, Fields_: fields}
+		}
+		return &ast.PathPattern{Span: p.spanTo(p.spanOf(tok), p.spanOf(first)), Path: names}
 	case tok.Kind == lexer.KindInt:
 		p.adv()
 		return &ast.LitPattern{Span: p.spanOf(tok), Value: tok.Value, KindV: "int"}
@@ -60,6 +85,11 @@ func (p *Parser) parsePattern() ast.Node {
 		}
 		p.expectPunct(")", "")
 		return &ast.PathPattern{Span: p.spanOf(tok), Path: names}
+	case tok.IsWord("None"):
+		// None 字面量模式（designs/0004 §5）：可空视图的「无」分支，
+		// 非变体名—— lowering 是 ptr==0 判零，零 tag 成本。
+		p.adv()
+		return &ast.NonePattern{Span: p.spanOf(tok)}
 	case tok.Kind == lexer.KindIdent:
 		names := []string{p.adv().Text}
 		for p.atPunct(".") && p.peek(1).Kind == lexer.KindIdent {
@@ -67,45 +97,8 @@ func (p *Parser) parsePattern() ast.Node {
 			names = append(names, p.adv().Text)
 		}
 		if p.atPunct("{") {
-			p.adv()
-			var fields []*ast.FieldPat
-			for !p.atPunct("}") && !p.atKind(lexer.KindEOF) {
-				fname := p.expectKind(lexer.KindIdent, "字段名")
-				fp := &ast.FieldPat{Span: p.spanOf(fname), Name: fname.Text}
-				if _, ok := p.eatPunct(":"); ok {
-					if p.atPunct("(") {
-						g := p.adv()
-						var names2 []string
-						for !p.atPunct(")") && !p.atKind(lexer.KindEOF) {
-							if p.atKind(lexer.KindWild) {
-								p.adv()
-								names2 = append(names2, "_")
-							} else {
-								names2 = append(names2, p.expectKind(lexer.KindIdent, "绑定名").Text)
-							}
-							if _, ok := p.eatPunct(","); !ok {
-								break
-							}
-						}
-						p.expectPunct(")", "")
-						fp.Group = &ast.GroupPattern{Span: p.spanOf(g), Names: names2}
-					} else if isLiteralStart(p.cur()) {
-						if lit, ok := p.parsePattern().(*ast.LitPattern); ok {
-							fp.Value = lit
-						}
-					} else {
-						fp.Binding = p.expectKind(lexer.KindIdent, "绑定名").Text
-					}
-				} else {
-					fp.Binding = fname.Text
-				}
-				fields = append(fields, fp)
-				if _, ok := p.eatPunct(","); !ok {
-					break
-				}
-			}
-			p.expectPunct("}", "")
-			return &ast.VariantPattern{Span: p.spanOf(tok), Path: names, Fields_: fields}
+			fields := p.parsePatternFields()
+			return &ast.VariantPattern{Span: p.spanTo(p.spanOf(tok), p.spanOf(p.cur())), Path: names, Fields_: fields}
 		}
 		return &ast.PathPattern{Span: p.spanOf(tok), Path: names}
 	}
@@ -116,6 +109,50 @@ func (p *Parser) parsePattern() ast.Node {
 	p.errAt(tok, "E2001", "此处期望模式，读到 `"+got+"`", "这里", "")
 	p.adv()
 	return &ast.Wildcard{Span: p.spanOf(tok)}
+}
+
+// parsePatternFields 解析变体模式的载荷解构体 `{ 名: 子模式, ... }`
+// （用户 enum 的 `Type.Var { 字段 }` 与 leading-dot 的 `.Var { 字段 }` 共用）。
+func (p *Parser) parsePatternFields() []*ast.FieldPat {
+	p.expectPunct("{", "变体载荷解构")
+	var fields []*ast.FieldPat
+	for !p.atPunct("}") && !p.atKind(lexer.KindEOF) {
+		fname := p.expectKind(lexer.KindIdent, "字段名")
+		fp := &ast.FieldPat{Span: p.spanOf(fname), Name: fname.Text}
+		if _, ok := p.eatPunct(":"); ok {
+			if p.atPunct("(") {
+				g := p.adv()
+				var names2 []string
+				for !p.atPunct(")") && !p.atKind(lexer.KindEOF) {
+					if p.atKind(lexer.KindWild) {
+						p.adv()
+						names2 = append(names2, "_")
+					} else {
+						names2 = append(names2, p.expectKind(lexer.KindIdent, "绑定名").Text)
+					}
+					if _, ok := p.eatPunct(","); !ok {
+						break
+					}
+				}
+				p.expectPunct(")", "")
+				fp.Group = &ast.GroupPattern{Span: p.spanOf(g), Names: names2}
+			} else if isLiteralStart(p.cur()) {
+				if lit, ok := p.parsePattern().(*ast.LitPattern); ok {
+					fp.Value = lit
+				}
+			} else {
+				fp.Binding = p.expectKind(lexer.KindIdent, "绑定名").Text
+			}
+		} else {
+			fp.Binding = fname.Text
+		}
+		fields = append(fields, fp)
+		if _, ok := p.eatPunct(","); !ok {
+			break
+		}
+	}
+	p.expectPunct("}", "变体载荷解构结束")
+	return fields
 }
 
 func isLiteralStart(t lexer.Token) bool {
@@ -166,13 +203,9 @@ func contains(list []string, s string) bool {
 }
 
 func (p *Parser) parseConversion() ast.Node {
-	expr := p.parseUnary()
-	for p.atKw("as", "trunc") {
-		op := p.adv()
-		target := p.parseTypePostfix(p.parseTypeAtom())
-		expr = &ast.Cast{Span: p.spanOf(op), KindV: string(op.Kind), Operand: expr, Target: target}
-	}
-	return expr
+	// v2：显式转换只有 `#compile.as(T, x)` / `#runtime.as(T, x)`（designs/0004 §7），
+	// 旧 `as` / `trunc` 关键字已随层系统退役。
+	return p.parseUnary()
 }
 
 func (p *Parser) parseUnary() ast.Node {
@@ -181,13 +214,6 @@ func (p *Parser) parseUnary() ast.Node {
 		p.adv()
 		operand := p.parseUnary()
 		return &ast.Unary{Span: p.spanOf(tok), Op: tok.Text, Operand: operand}
-	}
-	if tok.IsPunct("?") && p.peek(1).IsPunct("(") {
-		p.adv()
-		p.adv()
-		inner := p.parseExpr()
-		end := p.expectPunct(")", "`?(...)` 检测表达式结束")
-		return &ast.TryDetect{Span: p.spanTo(p.spanOf(tok), p.spanOf(end)), Operand: inner}
 	}
 	if tok.IsPunct("<-") {
 		p.adv()
@@ -219,8 +245,6 @@ func (p *Parser) parseUnary() ast.Node {
 		switch kwTok.Kind {
 		case lexer.Kind("move"):
 			return &ast.Move{Span: p.spanOf(kwTok), Operand: operand}
-		case lexer.Kind("len"):
-			return &ast.Len{Span: p.spanOf(kwTok), Operand: operand}
 		case lexer.Kind("resume"):
 			return &ast.Resume{Span: p.spanOf(kwTok), Operand: operand}
 		default: // copy
@@ -375,13 +399,35 @@ func (p *Parser) parseAtom() ast.Node {
 	case tok.IsPunct("["):
 		return p.parseArrayLit()
 	case tok.IsPunct("#"):
-		return p.parseCompileQuery()
-	case tok.IsWord("chan"):
-		return p.parseChanCreate()
-	case tok.IsKw("coroutine"):
-		return p.parseCoroCreate()
+		return p.parseLayerCall()
 	case tok.IsKw("match"):
 		return p.parseMatch()
+	case tok.IsPunct("."):
+		// leading-dot 构造 `.名` / `.名 { 字段: 值 }`（designs/0004 §3.4）：
+		// 错误成员直接构造，成员名由期待类型的变体集合静态解析。
+		p.adv()
+		name := p.expectKind(lexer.KindIdent, "变体名")
+		var pairs []ast.Pair
+		end := name
+		if p.atPunct("{") && p.noStructLit == 0 {
+			p.adv()
+			for !p.atPunct("}") && !p.atKind(lexer.KindEOF) {
+				fname := p.expectKind(lexer.KindIdent, "字段名")
+				if _, ok := p.eatPunct(":"); !ok {
+					p.errAt(fname, "E2001", "构造字面量必须写全字段名",
+						"构造 = `.变体 { 字段: 值, ... }`",
+						"写成 `"+fname.Text+": 值`")
+				}
+				value := p.parseExpr()
+				pairs = append(pairs, ast.P(fname.Text, value))
+				if _, ok := p.eatPunct(","); !ok {
+					break
+				}
+			}
+			end = p.expectPunct("}", "构造字面量结束")
+		}
+		return &ast.StructLit{Span: p.spanTo(p.spanOf(tok), p.spanOf(end)),
+			TypePath: []string{name.Text}, LeadingDot: true, FieldPairs: pairs}
 	case tok.Kind == lexer.KindIdent:
 		names := []string{p.adv().Text}
 		for p.atPunct(".") && p.peek(1).Kind == lexer.KindIdent {
@@ -449,48 +495,56 @@ func (p *Parser) parseArrayLit() ast.Node {
 	return &ast.ArrayLit{Span: p.spanTo(p.spanOf(start), p.spanOf(end)), Elems: elems}
 }
 
-func (p *Parser) parseCompileQuery() ast.Node {
+// parseLayerCall 解析层 API 调用 `#层.API(...)`（designs/0004 §2.1：
+// 单一形态，无省略写法；`#` 在表达式位只可能是层调用——旧 `#size/#align`
+// 查询与 `chan@`/`coroutine@` 启动形态已随 v2 退役）。类型参数以
+// *TypeRef 进 Args（as / sizeof 等）。
+//
+// API 名按 token 文本读取（层内 API 名落在 KindIdent，无关键字形态）。
+func (p *Parser) parseLayerCall() ast.Node {
 	start := p.adv() // #
-	name := p.adv()
-	p.expectPunct("(", "编译期查询")
-	target := p.parseType()
-	end := p.expectPunct(")", "编译期查询结束")
-	sp := p.spanTo(p.spanOf(start), p.spanOf(end))
-	switch name.Text {
-	case "size":
-		return &ast.SizeOf{Span: sp, Target: target}
-	case "align":
-		return &ast.AlignOf{Span: sp, Target: target}
+	layerTok := p.cur()
+	if layerTok.Kind != lexer.KindIdent || !layerNames[layerTok.Text] {
+		p.errAt(layerTok, "E2001",
+			"`#` 之后必须是层名（compile / comprun / runtime）",
+			"这里", "")
+		if !p.atKind(lexer.KindEOF) {
+			p.adv()
+		}
+		return &ast.LayerCall{Span: p.spanOf(start)}
 	}
-	p.errAt(name, "E3001", "未知的编译期查询 `#"+name.Text+"`",
-		"编译期域只有 `#size(T)` / `#align(T)`", "")
-	return &ast.SizeOf{Span: sp, Target: target}
-}
-
-func (p *Parser) parseChanCreate() ast.Node {
-	start := p.adv() // chan
-	region := ""
-	if p.atPunct("@") && p.peek(1).Kind == lexer.KindIdent {
-		p.adv()
-		region = p.adv().Text
+	p.adv()
+	p.expectPunct(".", "层 API 点号")
+	nameTok := p.cur()
+	if nameTok.Kind == lexer.KindEOF || nameTok.Kind == lexer.KindPunct {
+		p.errAt(nameTok, "E2001", "期望层 API 名", "这里", "")
+		return &ast.LayerCall{Span: p.spanOf(nameTok), Layer: layerTok.Text}
 	}
-	elem := p.parseTypeAtom()
-	p.expectPunct("(", "通道容量")
-	capacity := p.parseExpr()
-	end := p.expectPunct(")", "通道容量结束")
-	return &ast.ChanCreate{Span: p.spanTo(p.spanOf(start), p.spanOf(end)), Elem: elem,
-		Cap: capacity, Region: region}
-}
-
-func (p *Parser) parseCoroCreate() ast.Node {
-	start := p.adv() // coroutine
-	region := ""
-	if p.atPunct("@") && p.peek(1).Kind == lexer.KindIdent {
-		p.adv()
-		region = p.adv().Text
+	p.adv()
+	p.expectPunct("(", "层 API 参数表")
+	var args []ast.Node
+	switch nameTok.Text {
+	case "sizeof", "alignof":
+		args = append(args, p.parseType())
+	case "as":
+		args = append(args, p.parseTypeAtom())
+		p.expectPunct(",", "`#层.as(类型, 值)` 两参形态")
+		args = append(args, p.parseExpr())
+	case "chan":
+		args = append(args, p.parseTypeAtom())
+		p.expectPunct(",", "`#runtime.chan(类型, 容量)` 两参形态")
+		args = append(args, p.parseExpr())
+	default:
+		for !p.atPunct(")") && !p.atKind(lexer.KindEOF) {
+			args = append(args, p.parseExpr())
+			if _, ok := p.eatPunct(","); !ok {
+				break
+			}
+		}
 	}
-	call := p.parseUnary()
-	return &ast.CoroCreate{Span: p.spanOf(start), Call: call, FrameRegion: region}
+	endTok := p.expectPunct(")", "层 API 参数表结束")
+	return &ast.LayerCall{Span: p.spanTo(p.spanOf(start), p.spanOf(endTok)),
+		Layer: layerTok.Text, Name: nameTok.Text, Args: args}
 }
 
 // --------------------------------------------------------------------------- //

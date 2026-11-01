@@ -20,16 +20,17 @@ import (
 
 // Lowerer 生成单个模块的 IR。
 type Lowerer struct {
-	mod     *ast.Module
-	modName string
-	srcPath string
-	table   *sema.Table
-	sigs    *sema.Sigs
-	check   *sema.Checker
-	layout  *types.Layout
-	triple  string
-	entry   string
-	ptrSize int
+	mod        *ast.Module
+	modName    string
+	srcPath    string
+	table      *sema.Table
+	sigs       *sema.Sigs
+	check      *sema.Checker
+	layout     *types.Layout
+	triple     string
+	entry      string
+	ptrSize    int
+	progUsesOS bool // 程序（全模块图）是否 import std.os —— 决定 C 入口是否转存 argc/argv
 
 	globals        []string
 	consts         map[string]constVal
@@ -41,7 +42,12 @@ type Lowerer struct {
 	defined        map[string]bool
 	pendingGlobals []string
 	globalsSeen    map[string]bool
+	// globalInits 是模块级 let/var/state 的初始化表达式（名字 → 语法节点），
+	// 全局变量的 LLVM 初值从它来（字面量才编得出来，其余退化成 0）。
+	globalInits map[string]ast.Node
 	funcs          []string
+	hasCoroutines  bool            // 模块含协程函数 → 需要发 presplitcoroutine 属性组
+	threadThunks   map[string]bool // 线程入口解包 thunk（每签名一份）
 
 	// unsupported 记录本批次尚未实现的构造（Go 侧不静默丢代码）。
 	unsupported []string
@@ -52,26 +58,32 @@ type constVal struct {
 	lit string
 }
 
-// New 构造 Lowerer（entry = 入口模块名，如 "_.main"）。
+// New 构造 Lowerer（entry = 入口模块名，如 "_.main"；progUsesOS = 程序是否
+// import 了 std.os，见 genEntryWrapper）。
 //
 // 陷阱信息里的源文件路径不取调用方传进来的路径，而是由**模块名派生**
 // （`_.main` → `main.aila`，`std.io` → `std/io.aila`）：产物跨机器一致（缺陷 13）。
 func New(mod *ast.Module, modName string, table *sema.Table, sigs *sema.Sigs,
-	check *sema.Checker, layout *types.Layout, triple, entry string) *Lowerer {
+	check *sema.Checker, layout *types.Layout, triple, entry string, progUsesOS bool) *Lowerer {
 	return &Lowerer{
 		mod: mod, modName: modName, srcPath: DisplayPath(modName), table: table, sigs: sigs, check: check,
-		layout: layout, triple: triple, entry: entry, ptrSize: 8,
-		consts:      map[string]constVal{},
-		strSyms:     map[string]string{},
-		declares:    map[string]string{},
-		defined:     map[string]bool{},
-		globalsSeen: map[string]bool{},
+		layout: layout, triple: triple, entry: entry, progUsesOS: progUsesOS,
+		// 指针宽度必须跟目标走：xtensa/32 位目标上 USize 是 4 字节。
+		// 这里曾经写死 8，所有嵌入式目标的 USize/指针都按 64 位出 IR（ABI 直接错）。
+		ptrSize:      layout.PtrSize,
+		consts:       map[string]constVal{},
+		strSyms:      map[string]string{},
+		declares:     map[string]string{},
+		defined:      map[string]bool{},
+		globalsSeen:  map[string]bool{},
+		threadThunks: map[string]bool{},
 	}
 }
 
 // Generate 产出整份 IR 文本。
 func (l *Lowerer) Generate() string {
 	l.collectConsts()
+	l.collectGlobalInits()
 	for _, d := range l.mod.AllDecls() {
 		if fn, ok := d.(*ast.FuncDecl); ok && fn.Body != nil && !fn.IsExtern {
 			l.defined[symbolFor(l.modName, fn.Name, fn.OwnerType)] = true
@@ -106,8 +118,21 @@ func (l *Lowerer) Generate() string {
 		head = append(head, "")
 	}
 	out := strings.Join(append(head, l.funcs...), "\n")
+	if l.hasCoroutines {
+		// 协程函数统一引用属性组 #0（designs/0001 §10.2：无栈协程走 llvm.coro）。
+		// 拼写必须是 unquoted 的 `presplitcoroutine`——引号串属性 coro pass 不识别。
+		out += "\nattributes #0 = { presplitcoroutine }\n"
+	}
 	return strings.TrimRight(out, " \t\r\n") + "\n"
 }
+
+// lenLT 是「长度 / 下标」的 LLVM 整数类型：32 位目标 → i32，64 位 → i64。
+// 视图的 len 字段、#comprun.len 的产出、for-in 的索引都用它——必须和 USize 同宽，
+// 否则 32 位目标上 icmp/gep/实参处处宽度对不上（历史 bug：这里曾写死 i64）。
+func (l *Lowerer) lenLT() string { return "i" + strconv.Itoa(l.ptrSize*8) }
+
+// viewLT 是视图 / Text 的 LLVM 类型（胖指针：数据指针 + 长度）。
+func (l *Lowerer) viewLT() string { return "{ ptr, " + l.lenLT() + " }" }
 
 // Unsupported 返回本批次尚未实现的构造清单（空表示全量覆盖）。
 func (l *Lowerer) Unsupported() []string { return l.unsupported }
@@ -125,8 +150,8 @@ func (l *Lowerer) collectConsts() {
 		case isTextType(t):
 			text := fmt.Sprint(ci.Value)
 			sym := l.stringConst(text)
-			l.consts[name] = constVal{"{ ptr, i64 }",
-				"{ ptr " + sym + ", i64 " + strconv.Itoa(len(text)) + " }"}
+			l.consts[name] = constVal{l.viewLT(),
+				"{ ptr " + sym + ", " + l.lenLT() + " " + strconv.Itoa(len(text)) + " }"}
 		case types.IsFloat(t):
 			l.consts[name] = constVal{l.llty(t),
 				l.llty(t) + " " + floatLit(toFloat(ci.Value), llvmFloatBits(l.llty(t)))}
@@ -234,7 +259,7 @@ func (l *Lowerer) fileConst() string { return l.stringConst(l.srcPath) }
 
 // symbolOf 返回函数符号名：extern 用 C 名，其余用 AILA 修饰名。
 //
-// 跨模块调用要用**声明模块**的名字做修饰（`io.print_text` → `aila_std_io__print_text`）。
+// 跨模块调用要用**声明模块**的名字做修饰（`io.println` → `aila_std_io__println`）。
 func (l *Lowerer) symbolOf(sig *sema.FuncSig) string {
 	if sig.IsExtern {
 		return sig.Name
@@ -258,42 +283,167 @@ func (l *Lowerer) ensureDeclare(sym, sigText string) {
 	l.declareOrder = append(l.declareOrder, sym)
 }
 
+// ensureThreadThunk 产出线程入口的私有解包 thunk（每签名一份，designs/0001 §10.8）：
+// `define internal ptr @<sym>__thunk(ptr %arg)` —— 按编译期布局从打包块解包实参
+// → call 真函数（返回值丢弃，fire-and-forget）→ 释放打包块 → `ret ptr null`。
+// 签名对齐 C 侧 `void* (*)(void*)` 蹦床（runtime aila_rt.c）。
+func (l *Lowerer) ensureThreadThunk(sig *sema.FuncSig) string {
+	sym := l.symbolOf(sig) + "__thunk"
+	if l.threadThunks[sym] {
+		return sym
+	}
+	l.threadThunks[sym] = true
+	var b []string
+	add := func(s string) { b = append(b, "  "+s) }
+	add("define internal ptr @" + sym + "(ptr %arg) {")
+	callArgs := make([]string, 0, len(sig.Regions)+len(sig.Params))
+	for range sig.Regions {
+		callArgs = append(callArgs, "ptr null") // 区域参数禁止进线程（sema E5002），死代码兜底
+	}
+	off := 0
+	for i, p := range sig.Params {
+		plt := l.paramLLType(sig, p.Type)
+		align := l.layout.Align(p.Type)
+		if align < 1 {
+			align = 1
+		}
+		off = (off + align - 1) &^ (align - 1)
+		gp := "%arg"
+		if off > 0 {
+			gp = "%p" + strconv.Itoa(i)
+			add(gp + " = getelementptr i8, ptr %arg, i64 " + strconv.Itoa(off))
+		}
+		lv := "%v" + strconv.Itoa(i)
+		add(lv + " = load " + plt + ", ptr " + gp)
+		callArgs = append(callArgs, plt+" "+lv)
+		off += l.layout.Size(p.Type)
+	}
+	total := off
+	retLt, params := l.funcLLType(sig)
+	callee := l.symbolOf(sig)
+	l.ensureDeclare(callee, retLt+" @"+callee+"("+strings.Join(params, ", ")+")")
+	// C 变参 extern 入口：文本 IR 要求 call 带完整函数类型注解（同 lowerCall）。
+	callTy := ""
+	if sig.Variadic {
+		callTy = retLt + " (" + strings.Join(params, ", ") + ")"
+	}
+	if retLt == "void" {
+		add("call " + callTySep(retLt, callTy, "@"+callee) + "(" + strings.Join(callArgs, ", ") + ")")
+	} else {
+		add("%rv = call " + callTySep(retLt, callTy, "@"+callee) + "(" + strings.Join(callArgs, ", ") + ")")
+	}
+	if total > 0 {
+		l.ensureDeclare("aila_rt_thread_args_free", "void @aila_rt_thread_args_free(ptr)")
+		add("call void @aila_rt_thread_args_free(ptr %arg)")
+	}
+	add("ret ptr null")
+	add("}")
+	l.funcs = append(l.funcs, strings.Join(b, "\n")+"\n")
+	return sym
+}
+
 // ensureGlobal 登记模块级全局变量（每个符号只发一次）。
-func (l *Lowerer) ensureGlobal(sym, lt string, init ast.Node) {
+//
+// 初值取自该全局声明的初始化表达式（`globalInits`，见 Generate 里的收集）：
+// 只有字面量能编成 LLVM 聚合初值，其它情况退化成 zeroinitializer（与旧行为一致）。
+func (l *Lowerer) ensureGlobal(name, sym, lt string) {
 	if l.globalsSeen[sym] {
 		return
 	}
 	l.globalsSeen[sym] = true
 	l.pendingGlobals = append(l.pendingGlobals,
-		sym+" = internal global "+lt+" "+l.constLiteral(lt, init)+", align 8")
+		sym+" = internal global "+lt+" "+l.constLiteral(lt, l.globalInits[name])+", align 8")
+}
+
+// collectGlobalInits 记下模块级 let/var/state 的初始化表达式，供全局初值使用。
+//
+// 之前全局变量一律零初始化、也不生成启动期 store——模块级数据表（字库、命令表）
+// 会在运行期整片为 0。现在把这些初始化表达式带进 IR 的 global 初值。
+func (l *Lowerer) collectGlobalInits() {
+	for _, d := range l.mod.AllDecls() {
+		ld, ok := d.(*ast.LetDecl)
+		if !ok || ld.Init == nil {
+			continue
+		}
+		if l.globalInits == nil {
+			l.globalInits = map[string]ast.Node{}
+		}
+		l.globalInits[ld.Name] = ld.Init
+	}
 }
 
 func (l *Lowerer) constLiteral(lt string, expr ast.Node) string {
 	if expr == nil {
 		return "zeroinitializer"
 	}
-	switch e := expr.(type) {
-	case *ast.IntLit:
-		return strconv.FormatInt(e.Raw, 10)
-	case *ast.BoolLit:
-		return boolLit(e.Value)
-	case *ast.FloatLit:
-		return floatLit(e.Value, llvmFloatBits(lt))
-	case *ast.Unary:
-		if e.Op == "-" {
-			if il, ok := e.Operand.(*ast.IntLit); ok {
-				return strconv.FormatInt(-il.Raw, 10)
-			}
-		}
-	case *ast.ArrayLit:
-		if e.Repeat != nil {
-			return "zeroinitializer"
-		}
+	if e, ok := expr.(*ast.ArrayLit); ok {
+		return l.arrayConstLiteral(lt, e)
+	}
+	if v, ok := l.scalarConstLiteral(lt, expr); ok {
+		return v
 	}
 	if strings.HasPrefix(lt, "i") || lt == "float" || lt == "double" {
 		return "0"
 	}
 	return "zeroinitializer"
+}
+
+// arrayConstLiteral 把定长数组字面量编成 LLVM 聚合初值（`[i8 1, i8 2, …]`）。
+//
+// 之前这里只有 repeat 形态（`[0; N]` → zeroinitializer），显式元素列表会掉到
+// 兜底的 zeroinitializer——字库、命令表这类数据表会被静默清零。现在逐元素编，
+// 编不出来的元素走 unsupported 报告（宁可报错也不静默丢数据）。
+func (l *Lowerer) arrayConstLiteral(lt string, e *ast.ArrayLit) string {
+	if e.Repeat != nil {
+		return "zeroinitializer"
+	}
+	elemLt := arrayElemLLType(lt)
+	if elemLt == "" || len(e.Elems) == 0 {
+		return "zeroinitializer"
+	}
+	parts := make([]string, 0, len(e.Elems))
+	for _, el := range e.Elems {
+		v, ok := l.scalarConstLiteral(elemLt, el)
+		if !ok {
+			l.unsupported = append(l.unsupported,
+				"全局定长数组的初始值含非字面量元素（已退化成 0，请改用字面量或运行期赋值）")
+			return "zeroinitializer"
+		}
+		parts = append(parts, elemLt+" "+v)
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+// arrayElemLLType 从 `[N x T]` 里取元素类型 T；不是定长数组返回空串。
+func arrayElemLLType(lt string) string {
+	if !strings.HasPrefix(lt, "[") || !strings.HasSuffix(lt, "]") {
+		return ""
+	}
+	body := strings.TrimSuffix(strings.TrimPrefix(lt, "["), "]")
+	i := strings.Index(body, " x ")
+	if i < 0 {
+		return ""
+	}
+	return strings.TrimSpace(body[i+3:])
+}
+
+// scalarConstLiteral 编标量常量；不可编返回 false。
+func (l *Lowerer) scalarConstLiteral(lt string, expr ast.Node) (string, bool) {
+	switch e := expr.(type) {
+	case *ast.IntLit:
+		return strconv.FormatInt(e.Raw, 10), true
+	case *ast.BoolLit:
+		return boolLit(e.Value), true
+	case *ast.FloatLit:
+		return floatLit(e.Value, llvmFloatBits(lt)), true
+	case *ast.Unary:
+		if e.Op == "-" {
+			if il, ok := e.Operand.(*ast.IntLit); ok {
+				return strconv.FormatInt(-il.Raw, 10), true
+			}
+		}
+	}
+	return "", false
 }
 
 // --------------------------------------------------------------------------- //
@@ -307,7 +457,7 @@ func (l *Lowerer) llty(t types.Type) string {
 		return "i32"
 	case types.Prim:
 		if x.K == "text" {
-			return "{ ptr, i64 }"
+			return l.viewLT()
 		}
 		if x.K == "usize" || x.K == "isize" {
 			return "i" + strconv.Itoa(l.ptrSize*8)
@@ -317,9 +467,9 @@ func (l *Lowerer) llty(t types.Type) string {
 		}
 		return "i32"
 	case types.View:
-		return "{ ptr, i64 }"
+		return l.viewLT()
 	case types.UnsafeView:
-		return "{ ptr, i64 }"
+		return l.viewLT()
 	case types.Fixed:
 		return "[" + strconv.FormatInt(x.N, 10) + " x " + l.llty(x.Elem) + "]"
 	case types.Optional:
@@ -329,6 +479,17 @@ func (l *Lowerer) llty(t types.Type) string {
 		return "{ i8, " + l.llty(x.Inner) + " }"
 	case types.Result:
 		return "{ i1, " + l.llty(x.Ok) + ", " + l.llty(x.Err) + " }"
+	case types.CoroState:
+		// resume 匿名判别和：{ i8 state, OkT, ErrT }；state 0=Suspended/1=Ok|Done/2=Err，
+		// 与协程控制块状态码一致（§10.5）。二态（Ok==nil）退化成 { i8 }。
+		if x.Ok == nil {
+			return "{ i8 }"
+		}
+		s := "{ i8, " + l.llty(x.Ok)
+		if x.Err != nil {
+			s += ", " + l.llty(x.Err)
+		}
+		return s + " }"
 	case types.Chan, types.Coro, types.FnPtr:
 		return "ptr"
 	case types.Group:
@@ -353,30 +514,42 @@ func (l *Lowerer) llty(t types.Type) string {
 			}
 			return body
 		case *types.EnumInfo:
-			tag := l.llty(info.TagType)
-			if !info.Payload {
-				return tag
-			}
-			best, bestN := "{ }", -1
-			for _, v := range info.Variants {
-				if len(v.Payload) == 0 {
-					continue
-				}
-				parts := make([]string, 0, len(v.Payload))
-				for _, f := range v.Payload {
-					parts = append(parts, l.llty(f.Type))
-				}
-				if len(v.Payload) > bestN {
-					best, bestN = "{ "+strings.Join(parts, ", ")+" }", len(v.Payload)
-				}
-			}
-			return "{ " + tag + ", " + best + " }"
+			return l.enumLL(info)
 		}
 		return "i64"
+	case types.ErrorSpace:
+		// 保留错误空间超集（designs/0004 §3.1）：布局 = 全局聚合错误集 enum
+		return l.enumLL(x.Info)
 	case types.Void, types.Never:
 		return "void"
 	}
 	return "i64"
+}
+
+// enumLL 生成 enum 的 LLVM 聚合布局（tag + 载荷联合）。
+func (l *Lowerer) enumLL(info *types.EnumInfo) string {
+	tag := l.llty(info.TagType)
+	if !info.Payload {
+		return tag
+	}
+	// 载荷联合取字节宽度最大的变体（Text 这类 FatPtr 单字段 16B，
+	// 不能按字段数比——否则宽载荷会被塞进窄槽，store 越界踩栈）
+	best, bestW := "{ }", -1
+	for _, v := range info.Variants {
+		if len(v.Payload) == 0 {
+			continue
+		}
+		parts := make([]string, 0, len(v.Payload))
+		w := 0
+		for _, f := range v.Payload {
+			parts = append(parts, l.llty(f.Type))
+			w += l.layout.Size(f.Type)
+		}
+		if w > bestW {
+			best, bestW = "{ "+strings.Join(parts, ", ")+" }", w
+		}
+	}
+	return "{ " + tag + ", " + best + " }"
 }
 
 var primLL = map[string]string{
@@ -419,7 +592,22 @@ func (l *Lowerer) zero(t types.Type) string {
 	return "zeroinitializer"
 }
 
+// mutsSelf 判断方法的 self 是否带 @mut（就地写语义）。
+func mutsSelf(sig *sema.FuncSig) bool {
+	if len(sig.Params) == 0 || sig.Params[0].Name != "self" {
+		return false
+	}
+	for _, m := range sig.Muts {
+		if m == "self" {
+			return true
+		}
+	}
+	return false
+}
+
 // paramLLType 是 C 边界上的参数类型：视图家族只传 ptr，len 丢弃（designs/0001 §11.3）。
+// 注意 @mut[self] 的 self 不走这里——它按参数下标在 funcLLType / genFunction /
+// 调用点单独判（mutsSelf），避免误伤其余参数。
 func (l *Lowerer) paramLLType(sig *sema.FuncSig, t types.Type) string {
 	if sig.IsExtern {
 		if p, ok := t.(types.Prim); ok && p.K == "bool" {
@@ -457,14 +645,51 @@ func (l *Lowerer) sigRetType(sig *sema.FuncSig) types.Type {
 	return base
 }
 
+// paramByRef 判断某参数是否按「只读指针」传。（AX-9）
+//
+// 背景：按值传大聚合体在 16 寄存器目标（xtensa call0）上会把 backend 直接顶崩——
+// esp-llvm 的 RA 报 "Cannot scavenge register without an emergency spill slot"，
+// 且 -O0..-O3 都一样（designs/0006 §4.1 第 8 条实测：≤32 字节的聚合体没事，
+// 6 字以上的 `{ ... }` 在循环里按值传就崩）。C ABI 对大结构体也是按指针传，
+// 这里与之对齐：**非 extern 函数**的大聚合体参数一律退化成只读指针，
+// 调用点传主名字地址（rvalue 则先落一个临时槽）。
+//
+// 只读性由 sema 保证（非 @mut 参数不可写），所以被调方拿到 ptr 后只做 load 是安全的。
+// extern（`#compile.c`）函数保持 C ABI 原样，不做这条转换。
+func (l *Lowerer) paramByRef(sig *sema.FuncSig, i int, t types.Type) bool {
+	if sig.IsExtern {
+		return false
+	}
+	if i == 0 && mutsSelf(sig) {
+		return false // @mut[self] 已按 ptr 传，走自己那条路
+	}
+	lt := l.llty(t)
+	if !strings.HasPrefix(lt, "{") && !strings.HasPrefix(lt, "[") {
+		return false // 标量 / 视图 / 函数指针照旧按值
+	}
+	return l.layout.Size(t) > 16
+}
+
 // funcLLType 返回（返回类型, 参数类型列表）；区域参数一律 ptr。
+// extern 无名 `...`（C 变参）在参数列表尾部补 `...`——declare 与调用点函数类型注解共用。
 func (l *Lowerer) funcLLType(sig *sema.FuncSig) (string, []string) {
-	params := make([]string, 0, len(sig.Regions)+len(sig.Params))
+	params := make([]string, 0, len(sig.Regions)+len(sig.Params)+1)
 	for range sig.Regions {
 		params = append(params, "ptr")
 	}
-	for _, p := range sig.Params {
+	for i, p := range sig.Params {
+		if i == 0 && mutsSelf(sig) {
+			params = append(params, "ptr")
+			continue
+		}
+		if l.paramByRef(sig, i, p.Type) {
+			params = append(params, "ptr")
+			continue
+		}
 		params = append(params, l.paramLLType(sig, p.Type))
+	}
+	if sig.Variadic {
+		params = append(params, "...")
 	}
 	return l.llty(l.sigRetType(sig)), params
 }
@@ -475,6 +700,10 @@ func (l *Lowerer) funcLLType(sig *sema.FuncSig) (string, []string) {
 
 // enumOf 取 Named 类型背后的 enum 信息。
 func enumOf(t types.Type) *types.EnumInfo {
+	if es, ok := t.(types.ErrorSpace); ok {
+		// v2：保留错误空间超集按聚合错误集 enum 分派（designs/0004 §4.1）
+		return es.Info
+	}
 	n, ok := t.(types.Named)
 	if !ok {
 		return nil

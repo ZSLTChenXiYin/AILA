@@ -37,9 +37,9 @@
 
 | 类别 | 内容 |
 |---|---|
-| 关键字（保留字） | `func let var const type struct enum state view module hot import public return if else for in match region defer unsafe coroutine thread yield out trap move len copy resume as trunc break continue true false` |
+| 关键字（保留字） | `func let var const type struct enum state view module hot import public return if else for in match region defer unsafe coroutine thread yield out move copy resume break continue select case true false` |
 | 内置类型名（非保留字，可作普通标识符？**不可**——`I32` 等由名字解析在类型位识别，普通位撞名报 `E3009` 提示改名） | `I8 I16 I32 I64 U8 U16 U32 U64 F32 F64 Bool C32 Text USize ISize` + `Unsafe chan send recv coro` |
-| 内置变体名（非关键字） | `None Some Ok Err Suspended Done` |
+| 内置变体名 | **不存在**（designs/0004 §7 / §6 v2）：六个内置变体保留名全部退役。`None` 是可空视图的**字面量**（非变体名）；`Some` / `Ok` / `Err` 的构造与模式均报 `E3001`；`Suspended` / `Done` 随 `resume h` 的值形态一起消失——协程等待只走 select 的等完成事件（`resume` 当表达式写报 `E5010`）。对应写法见 §2 下方注记 |
 | 标识符 | `[A-Za-z_][A-Za-z0-9_]*`；`_` 单独出现 = 通配/丢弃 token |
 | 整数 | 十进制、`0x`、`0b`、`0o`；下划线分隔；**无后缀**（§6.1） |
 | 浮点 | `1.0`、`1e9`、`1.5e-3`、`1_000.5`；**`1.` 与 `.5` 均不合法**（`E1006`，要求前导/尾随数字） |
@@ -49,6 +49,14 @@
 | 标点 | `( ) { } [ ] , ; : . @ # -> => = == != < <= > >= + - * / % += -= *= /= %= & &= \| \|= ^ ^= << <<= >> >>= && \|\| ! ~ ? <- ::`（`::` 不合法，`E1007` 提示用 `.`） |
 
 `?` 的三重身份（§6.9）由**语法位置**消解：紧跟 `(` = 陷阱检测前缀；表达式后缀 = 传播；类型后缀 = 可空。词法层不区分，parser 按上下文解释。
+
+> **内置变体名退役（designs/0004 §7，代码侧已收口）**：`Some` / `Ok` / `Err`
+> 既不是关键字也不是保留名——它们是**普通标识符**，用户可自由占用
+> （`enum Mine { Ok, Some }`、`func Err()` 均合法）。但编译器不再把它们当内置
+> 变体：`Some { v: x }` / `Ok { v: x }` / `Err { e: x }` 构造与
+> `Some { v }` / `Ok { v }` / `Err { e }` 模式一律报 `E3001`。对应写法：
+> `T?` 写 `let v: 类型` + `None`；`T ! E` 写 `let v: 类型` + `let e: 错误集`；
+> 成功态/错误态构造写返回位置（`return 值;` / `return .成员;`）。
 
 ---
 
@@ -79,8 +87,9 @@ view_decl   = "view" ident ":" type "=" expr ";" ;             // 语句位
 func_decl   = [ "public" ] [ "coroutine" | "thread" ] "func" cname
               "(" [ params ] ")" { effect } [ "->" type ] body ;
 cname       = ident [ "." ident ] ;                            // 类型前缀式方法/关联函数（§4.4）
-params      = param { "," param } ;
-param       = "self" | ident ":" type ;
+params      = param { "," param } [ "..." ] ;                  // 无名 `...` 仅 #[c] extern 合法（E3201）
+param       = "self" | ident ":" type | ident ":" "..." type ; // 末位 `rest: ...T` = AILA 原生变参：
+                                                               // 体内 rest 即 [T] 只读视图（designs/0002 §6）
 effect      = "@" ( "region" | "mut" | "move" ) "[" ident { "," ident } "]" ;
 body        = block | ";" ;                                    // ";" 仅 #[c] 声明合法
 extern_*    = 同 func_decl/var_decl 但必须带 #[c] 属性且无 body/无初始化器
@@ -160,7 +169,7 @@ expr_stmt   = expr ";" ;
 |---|---|
 | 顶层 | `Module(file, imports, shell_decls, block_decls, is_hot, is_lightweight)`、`Import(path, kind, alias)` |
 | 类型声明 | `StructDecl(name, fields, attrs)`、`EnumDecl(name, base, variants, attrs)`、`Variant(name, discriminant, payload_fields)`、`TypeAlias(name, target)` |
-| 函数 | `FuncDecl(name, owner_type, kind(normal/coroutine/thread), is_public, params, effects, ret, body, attrs, is_extern)`、`Param(name, type, is_self)`、`Effect(kind, names)` |
+| 函数 | `FuncDecl(name, owner_type, kind(normal/coroutine/thread), is_public, params, effects, ret, body, attrs, is_extern, is_variadic)`、`Param(name, type, is_self, is_variadic)`、`Effect(kind, names)` |
 | 绑定 | `LetDecl/VarDecl/ConstDecl/StateDecl(name, type, init)`、`ViewDecl(name, type, init)` |
 | 语句 | `Block(stmts)`、`Return(value_or_err)`、`If(cond, then, elifs, els)`、`ForC(init, cond, step, body)`、`ForIn(idx, var, var_type, iterable, body)`、`Match(head, arms)`、`Arm(pattern, body)`、`Region(name, domain, size, body)`、`Defer(body)`、`Unsafe(body)`、`Trap(msg)`、`Yield`、`ThreadStart(stack_size, call)`、`Break/Continue`、`Assign(target, op, value)`、`DestructAssign(names, value)`、`Discard(value)`、`ExprStmt(expr)` |
 | 模式 | `Wildcard`、`LitPattern(value, neg)`、`PathPattern(path)`、`VariantPattern(path, fields)`、`FieldPat(name, value_or_binding, group)`、`GroupPattern(names)` |
@@ -315,10 +324,8 @@ void*      aila_rt_region_enter(size_t cap_hint);   /* 返回区域实例指针�
 void*      aila_rt_region_alloc(void* region, size_t size, size_t align);
 void       aila_rt_region_leave(void* region);
 void       aila_rt_trap(const char* msg, size_t len, const char* file, size_t line) /* noreturn */;
-void       aila_rt_print_i64(long long);   void aila_rt_print_u64(unsigned long long);
-void       aila_rt_print_f64(double);      void aila_rt_print_str(const char* p, size_t len);
-void       aila_rt_print_char(unsigned);   void aila_rt_print_bool(int);
-void       aila_rt_print_nl(void);         void aila_rt_print_cstr(const char*);
+void       aila_rt_write(const uint8_t* p, int64_t n);   /* 写标准输出；平台 runtime 各自实现（嵌入式按 32 位传 n） */
+void       aila_rt_flush(void);                          /* 冲洗标准输出 */
 ```
 
 - 分配点 `[v; N]@r` → `%p = call ptr @aila_rt_region_alloc(ptr %r, i64 size, i64 align)` + `%v = insertvalue {ptr,i64} {ptr null, i64 0}, ptr %p, 0` + `..., i64 N, 1`；
@@ -337,15 +344,15 @@ void       aila_rt_print_nl(void);         void aila_rt_print_cstr(const char*);
 | `match`（整数族） | `switch`（有 `_` 时 default → 兜底块） |
 | `match`（enum） | 链式 `icmp eq` 于 tag（变体数 > 4 用 `switch`） |
 | `?` 传播 | 判 `is_ok` → 否则构造错误返回值并 `ret` |
-| `?(expr)` | 每个陷阱点改用 `*.with.overflow` / 显式检查，任一失败 → `None`；否则 `Some` |
-| 整数 `+ - *` | `llvm.sadd.with.overflow.*` / `uadd` / `ssub` / `usub` / `smul` / `umul`，溢出 → trap 块 |
+| `?(expr)` | **已退役**（designs/0004 §7）：确定性溢出检查改走 `#runtime.checked_add/sub/mul` 的 `(T, Bool)` 双产出 |
+| 整数 `+ - *` | 回绕语义：`add`/`sub`/`mul`（无溢出检查，designs/0004 §2.4）；确定性检查见上一行的 `#runtime.checked_*` |
 | `/ %` | 除零检查 + `sdiv`/`srem`（有符号另查 `INT_MIN / -1`） |
 | `<< >>` | 计数 `>= 位宽` trap；`>>` 有符号用 `ashr`、无符号 `lshr` |
 | 下标 `v[i]` | `i >= len` trap + `getelementptr` |
-| `trap "msg"` | `call void @aila_rt_trap(ptr @.str, i64 len, ptr @.file, i64 line)` + `unreachable` |
+| `#runtime.trap("msg")` | `call void @aila_rt_trap(ptr @.str, i64 len, ptr @.file, i64 line)` + `unreachable` |
 | `defer` | 每条退出边（`return` / 块尾 / `?` 上抛）前插入延迟体调用；LIFO |
-| `yield` / `resume` / `chan` / `thread` | **M1 不生成**：`E9002`（已定型，待批次） |
-| `std.io.print_*` | `#[c]` 声明直接调用 `aila_rt_print_*` |
+| `yield` / `resume` / `chan` / `thread` | 已生成：协程帧 + `llvm.coro.*`；`resume` 只作为 select 事件（内部三态 `{i8 state, Ok, Err}` 按 state 字节分派，state 0 视为未就绪、不逃到用户代码），chan 由 `aila_rt_chan_*` 承接、`thread func` 走 `#runtime.spawn` |
+| 打印便利层 | `std.io` 的 `print`/`println`/`printf` 是普通 AILA 函数（`FmtVal` tag 分派到 `Writer` 槽位，designs/0002 §4）；OS 边界只有 `#[c]` 的 `aila_rt_write` / `aila_rt_flush` |
 
 ### 7.5 陷阱块形态
 

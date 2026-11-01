@@ -131,7 +131,7 @@
     },
     "E2010": {
       "title": "该位置不接受声明",
-      "explain": "模块壳（块外）只允许纯声明：`import`、类型、`const`、`#[c]` 无体函数、`module` 块。",
+      "explain": "模块壳（块外）只允许纯声明：`import`、类型、`const`、`#compile.c` 无体函数、`module` 块。",
       "fix": [
         "把带运行期对象/带函数体的声明移进 `module { ... }` 块"
       ],
@@ -173,17 +173,17 @@
       "title": "类型不匹配",
       "explain": "AILA 零隐式转换：赋值、传参、返回、运算都不做自动类型提升。",
       "fix": [
-        "显式转换：无损用 `as`（同宽或拓宽），有损用 `trunc`；整数↔浮点一律 `trunc`"
+        "显式转换：`#compile.as(T, x)`（纯重解释）或 `#runtime.as(T, x)`（带检查/trap）"
       ],
       "doc": "designs/0001 §6.3"
     },
     "E3202": {
-      "title": "`as` 判据不满足",
-      "explain": "`as` 只做位型无损解释：同宽互释或拓宽。变窄、跨域（整数↔浮点）都属有损。",
+      "title": "层 API 形态错误",
+      "explain": "`#compile.as(T, x)` 是唯一显式转换入口（v2 后 `as`/`trunc` 关键字已退役）。",
       "fix": [
-        "有损方向改用 `trunc`；需要钳制/失败返回用 `std.math.saturate_*` / `std.math.try_*`"
+        "写成 `#compile.as(目标类型, 值)` 两参形态"
       ],
-      "doc": "designs/0001 §6.3"
+      "doc": "designs/0004 §2.4"
     },
     "E3204": {
       "title": "无符号目标不能承接负字面量",
@@ -232,6 +232,42 @@
         "浮点余数用 `std.math.fmod`；视图操作走函数"
       ],
       "doc": "designs/0001 §6.6"
+    },
+    "E3210": {
+      "title": "#compile.if 的条件不是编译期常量",
+      "explain": "`#compile.if` 承诺在编译期剪掉未选中分支，因此条件必须是 const、字面量、或绑到常量的 let（以及它们的纯运算）。求不出就报错，绝不静默降级成运行时 if。",
+      "fix": [
+        "把条件改成编译期常量（const / 字面量 / `let 名 = <const-expr>`）",
+        "确实需要运行时判断就改用普通 if（同模块内优化器本来能折叠常量）"
+      ],
+      "doc": "designs/0006 §1.3 规则 1"
+    },
+    "E3211": {
+      "title": "#compile.match 的判别式不是编译期常量",
+      "explain": "编译期匹配要求判别值在编译期已知，否则无法决定只生成哪一支。",
+      "fix": [
+        "把判别式换成 const / 字面量 / 绑到常量的 let",
+        "确实需要运行时分派就改用普通 match"
+      ],
+      "doc": "designs/0006 §1.3 规则 1"
+    },
+    "E3212": {
+      "title": "#compile.match 的判别值没有命中任何分支",
+      "explain": "判别值在编译期已知，因此每种可能取值都应有分支；无分支命中说明漏了分支，而不是像运行期 match 那样可以留到运行期兜底。",
+      "fix": [
+        "补上该取值的分支",
+        "在最后加 `_ => ...` 兜底"
+      ],
+      "doc": "designs/0006 §1.3 规则 4"
+    },
+    "E3213": {
+      "title": "#compile.match 的分支模式不是编译期常量",
+      "explain": "编译期匹配只支持字面量、const、以及枚举变体判别值这几种可在编译期求值的模式；解构/绑定/类型模式在编译期没有确定值。",
+      "fix": [
+        "改用 `#compile.if` 直接比较常量",
+        "或把分支模式换成字面量 / const"
+      ],
+      "doc": "designs/0006 §1.2"
     },
     "E3401": {
       "title": "match 不完备",
@@ -393,6 +429,55 @@
       ],
       "doc": "designs/0001 §10.3"
     },
+    "E5005": {
+      "title": "（v2 已退役）嵌入式线程栈必填",
+      "explain": "`thread: 栈` 语法已随 v2 退役；线程启动统一 `#runtime.spawn(f, args)`（层 API 无栈深参数）。",
+      "fix": [
+        "写成 `#runtime.spawn(f, args);`"
+      ],
+      "doc": "designs/0004 §2.4"
+    },
+    "E5006": {
+      "title": "协程启动目标不合法",
+      "explain": "`coroutine@` / `#runtime.coro` 只能启动 `coroutine func`：变参、方法形态、带区域参数的目标都启动不了。",
+      "fix": [
+        "把目标标成 `coroutine func`；变参 / 方法 / 区域参数先包一层固定参数的自由 `coroutine func`"
+      ],
+      "doc": "designs/0001 §10.2"
+    },
+    "E5007": {
+      "title": "通道消息类型必须是值语义类型",
+      "explain": "SPSC 通道的消息所有权随值转移，数据竞争免疫依赖「消息是纯值」：视图 / Text / 含指针字段都不行。",
+      "fix": [
+        "改传纯数据 struct / enum，或把数据放进通道外的区域"
+      ],
+      "doc": "designs/0001 §10.6"
+    },
+    "E5008": {
+      "title": "select 同源事件重复",
+      "explain": "select 的各 case 事件源必须互不相同：同一通道端或同一协程句柄出现两次，try 链语义不成立。",
+      "fix": [
+        "每个事件源只写一个 case；需要多路同源就改成多轮 select"
+      ],
+      "doc": "designs/0004 §6"
+    },
+    "E5010": {
+      "title": "resume 只能作为 select 事件",
+      "explain": "`resume h` 没有独立的表达式形态（designs/0004 §6 v2）：协程等待一律走 select 的就绪事件，绑定值就是完成态（`T ! E` / `T`）；「还要继续等」不再作为用户可以 match 的第三态出现。",
+      "fix": [
+        "改写成 `select { case r = resume h => { ... } }`：完成态用 `let v: T` / `let e: E` 消费",
+        "多路等待把多个事件放进同一个 select（声明序 try 链，全不就绪挂起重试）"
+      ],
+      "doc": "designs/0004 §6"
+    },
+    "E9204": {
+      "title": "未知层 API",
+      "explain": "层内不存在该能力：拼写错误，或 v0 未收录。层 API 是封闭清单（designs/0004 §2.4），不做开放注册。",
+      "fix": [
+        "核对层名与 API 名；能力缺口走对应 std 模块或 `#compile.c` 绑定"
+      ],
+      "doc": "designs/0004 §2.4"
+    },
     "E6001": {
       "title": "变参调用传了禁止类型",
       "explain": "C 变参只能收标量、无载荷 enum、视图（传 ptr）、函数指针；struct / 带载荷 enum / Text 都不行。",
@@ -450,12 +535,13 @@
       "doc": "designs/0001 §2.2"
     },
     "E7006": {
-      "title": "未知 board",
-      "explain": "内置 board 表里没有该名字，且清单也没有给 `arch`/`triple`。",
+      "title": "目标三元组非法",
+      "explain": "`[target] triple` 必须是合法三元组：至少两段、段非空（如 `xtensa-esp8266-elf`）。",
       "fix": [
-        "运行 `aila target list` 看候选；或直接写 `[target] arch = \"...\"`"
+        "对照 `aila target show <triple>` 修正拼写",
+        "不写 [target] = 宿主目标"
       ],
-      "doc": "specs/0001 §2.1"
+      "doc": "specs/0001 §2"
     },
     "E7007": {
       "title": "清单取值越界",
@@ -469,7 +555,7 @@
       "title": "物理域声明非法",
       "explain": "`kind` 必须在内置枚举内；嵌入式 target 的 `size` 必填（形如 `64K`）。",
       "fix": [
-        "照 `aila target show <board>` 的预置域改"
+        "照 `aila target show <triple>` 的预置域改"
       ],
       "doc": "designs/0001 §5.9"
     },
@@ -600,12 +686,13 @@
       "doc": "specs/0001 §4"
     },
     "E8020": {
-      "title": "交叉链接待批次",
-      "explain": "M1 只支持 host board 产出可执行文件；交叉目标停在 `.o`。",
+      "title": "平台尚未随包适配",
+      "explain": "构建嵌入式三元组（-elf/-none/-eabi 后缀）时，aila 会在 `share/aila/runtime/` 下找平台运行时三件套：启动汇编 `startup.S`、平台 C `aila_rt_<家族>.c`、链接脚本 `<家族>.ld`。找到就一路交叉链接并打出可烧录的 `app.bin`；没找到说明该平台家族还没有适配。",
       "fix": [
-        "先 `aila build` 拿 `.o`；交叉链接器在 M2 落地"
+        "换用已适配的平台（当前：esp8266）",
+        "自己适配：在 share/aila/runtime/<家族>/ 下提供上述三个文件，并在 targets 的 chipGCC 表登记芯片别名"
       ],
-      "doc": "plans/0001 §1"
+      "doc": "specs/0003 §1"
     },
     "E9001": {
       "title": "语法已解析，语义待批次",
@@ -617,19 +704,19 @@
     },
     "E9002": {
       "title": "代码生成待批次",
-      "explain": "该构造已通过语义检查，但代码生成尚未在本批次落地（协程/通道/线程/热替换产物）。",
+      "explain": "该构造已通过语义检查，但代码生成尚未在本批次落地（协程 / 通道 / 线程已全量落地，当前仅剩 `?(expr)` 探测表达式与热替换产物等）。",
       "fix": [
-        "看 plans/0001 的 M3/M4；或用当前批次支持的等价写法"
+        "用当前批次支持的等价写法；剩余构造看 plans/0001 里程碑表"
       ],
       "doc": "plans/0001"
     },
     "W3203": {
-      "title": "`trunc` 用于无损场景",
-      "explain": "该转换本身是无损的，用 `as` 更能表达「解释」语义。",
+      "title": "（v2 已退役）`trunc` 用于无损场景",
+      "explain": "v2 后显式转换统一 `#compile.as(T, x)`，`as`/`trunc` 关键字已退役。",
       "fix": [
-        "改用 `as`（本警告不阻断构建）"
+        "改用 `#compile.as(目标类型, 值)`"
       ],
-      "doc": "designs/0001 §6.3"
+      "doc": "designs/0004 §2.4"
     },
     "W7001": {
       "title": "清单含未知键",

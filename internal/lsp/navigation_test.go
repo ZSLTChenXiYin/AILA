@@ -10,9 +10,9 @@ func navProject(t *testing.T) (*Workspace, string) {
 	t.Helper()
 	dir := t.TempDir()
 	mustWrite(t, dir+"/aila.toml",
-		"[package]\nname = \"demo\"\nversion = \"0.1.0\"\nentry = \"_.main\"\n\n[target]\nboard = \"host\"\n")
+		"[package]\nname = \"demo\"\nversion = \"0.1.0\"\nentry = \"_.main\"\n")
 	mustWrite(t, dir+"/main.aila", strings.Join([]string{
-		"import _.sub.util as u;",
+		"import _.sub.util;",
 		"",
 		"public struct Point {",
 		"    x: I32,",
@@ -28,7 +28,7 @@ func navProject(t *testing.T) (*Workspace, string) {
 		"    func main() {",
 		"        let p: Point = Point { x: 1 };",
 		"        let n = twice(p.x);",
-		"        let m = u.double(n);",
+		"        let m = util.double(n);",
 		"        _ = m;",
 		"    }",
 		"}",
@@ -107,7 +107,7 @@ func TestDocumentLinksOnImports(t *testing.T) {
 	if link.Range.Start.Line != 0 || link.Range.End.Line != 0 {
 		t.Fatalf("链接应在 import 那一行：%+v", link.Range)
 	}
-	text := "import _.sub.util as u;"
+	text := "import _.sub.util;"
 	if got := text[link.Range.Start.Character:link.Range.End.Character]; got != "_.sub.util" {
 		t.Fatalf("链接区间应对准路径，实得 %q", got)
 	}

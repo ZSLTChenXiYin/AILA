@@ -1,17 +1,22 @@
 package lsp
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 )
 
 func TestURIRoundTrip(t *testing.T) {
-	path := `C:\work\demo\main.aila`
+	// 用各平台自己的合法路径测（路径形态是平台语义，URI 函数本身两边都对）
+	path := "/work/demo/main.aila"
+	if runtime.GOOS == "windows" {
+		path = `C:\work\demo\main.aila`
+	}
 	if got := URI2Path(Path2URI(path)); got != path {
 		t.Fatalf("往返失败：%q", got)
 	}
 	if !strings.HasPrefix(Path2URI(path), "file:///") {
-		t.Fatalf("Windows 路径应带三个斜杠：%q", Path2URI(path))
+		t.Fatalf("URI 应带三个斜杠：%q", Path2URI(path))
 	}
 }
 
@@ -32,8 +37,8 @@ func TestIdentifierAt(t *testing.T) {
 func TestDiagnosticsAndSymbols(t *testing.T) {
 	dir := t.TempDir()
 	mustDir(t, dir+"/sub")
-	mustWrite(t, dir+"/aila.toml", "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nentry = \"_.main\"\n\n[target]\nboard = \"host\"\n")
-	mustWrite(t, dir+"/main.aila", "import _.sub.util as u;\n\nfunc main() {\n    let v: I32 = u.double(21);\n    _ = v;\n}\n")
+	mustWrite(t, dir+"/aila.toml", "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nentry = \"_.main\"\n")
+	mustWrite(t, dir+"/main.aila", "import _.sub.util;\n\nfunc main() {\n    let v: I32 = util.double(21);\n    _ = v;\n}\n")
 	mustWrite(t, dir+"/sub/util.aila", "public func double(v: I32) -> I32 {\n    return v + v;\n}\n")
 
 	w := NewWorkspace()
@@ -81,7 +86,7 @@ func TestDiagnosticsAndSymbols(t *testing.T) {
 
 func TestDiagnosticsOnSyntaxError(t *testing.T) {
 	dir := t.TempDir()
-	mustWrite(t, dir+"/aila.toml", "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nentry = \"_.main\"\n\n[target]\nboard = \"host\"\n")
+	mustWrite(t, dir+"/aila.toml", "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nentry = \"_.main\"\n")
 	mustWrite(t, dir+"/main.aila", "func main( {\n")
 	w := NewWorkspace()
 	w.SetRoot(dir)

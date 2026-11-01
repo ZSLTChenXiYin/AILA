@@ -115,6 +115,11 @@ class LSPClient implements vscode.Disposable {
   private id = 1;
   private pending = new Map<number, { resolve: (v: Json) => void }>();
   private ready?: Promise<void>;
+  private stopping = false; // dispose 主动停止：不算崩溃
+  private everReady = false; // initialize 完成过：之后的意外退出才算崩溃（启动失败不自动重启）
+
+  // 状态回调：ready=初始化完成；crashed=曾就绪后意外退出；failed=启动失败
+  onState?: (st: "ready" | "crashed" | "failed") => void;
 
   constructor(
     private exe: string,
@@ -131,6 +136,7 @@ class LSPClient implements vscode.Disposable {
       proc.stderr?.on("data", (d: Buffer) => channel().append(d.toString()));
       proc.on("error", (err: Error) => {
         channel().appendLine(`[lsp] 启动失败：${err.message}（用的是 ${this.exe}）`);
+        this.onState?.("failed");
         void vscode.window
           .showWarningMessage(
             `AILA：启动语言服务器失败。找不到 \`${this.exe}\`——请把设置 aila.executable 指向 aila 可执行文件（例如 <仓库>/bin/aila.exe）。`,
@@ -150,6 +156,8 @@ class LSPClient implements vscode.Disposable {
         channel().appendLine(`[lsp] 退出（code=${code}）`);
         this.proc = undefined;
         this.ready = undefined;
+        // 曾就绪过的进程意外退出 = 崩溃，交给外层自动重启；主动停止与启动失败不算
+        if (!this.stopping && this.everReady) this.onState?.("crashed");
       });
       void this.request("initialize", {
         processId: process.pid,
@@ -178,6 +186,8 @@ class LSPClient implements vscode.Disposable {
           },
         },
       }).then(() => {
+        this.everReady = true;
+        this.onState?.("ready");
         this.notify("initialized", {});
         resolve();
       });
@@ -267,6 +277,7 @@ class LSPClient implements vscode.Disposable {
   }
 
   dispose() {
+    this.stopping = true;
     this.notify("shutdown", null);
     this.notify("exit", {});
     this.proc?.kill();
@@ -337,21 +348,92 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const collection = vscode.languages.createDiagnosticCollection("aila");
   ctx.subscriptions.push(collection);
 
+  // ---- 状态栏：启动中 / 运行中 / 重启中 / 已停止 ----
+  const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 60);
+  status.name = "AILA";
+  status.command = "aila.restartLSP";
+  ctx.subscriptions.push(status);
+  const setStatus = (st: "starting" | "ready" | "crashed" | "failed"): void => {
+    switch (st) {
+      case "starting":
+        status.text = "$(sync~spin) AILA";
+        status.tooltip = "AILA 语言服务器启动中…（点击重启）";
+        break;
+      case "ready":
+        status.text = "$(check) AILA";
+        status.tooltip = "AILA 语言服务器运行中（点击重启）";
+        break;
+      case "crashed":
+        status.text = "$(sync~spin) AILA 重启中";
+        status.tooltip = "AILA 语言服务器意外退出，正在自动重启…";
+        break;
+      case "failed":
+        status.text = "$(error) AILA 已停止";
+        status.tooltip = "AILA 语言服务器未运行（点击手动重启，详情见输出面板）";
+        break;
+    }
+    status.show();
+  };
+
   let client: LSPClient | undefined;
+  let crashCount = 0; // 连续崩溃计数（ready 后清零）
+  let restartTimer: ReturnType<typeof setTimeout> | undefined;
+  let crashNoticeShown = false; // 放弃重启的提示只弹一次，防轰炸
+
+  const onServerState = (st: "ready" | "crashed" | "failed"): void => {
+    if (st === "ready") {
+      crashCount = 0;
+      setStatus("ready");
+      return;
+    }
+    if (st === "failed") {
+      // 启动失败（找不到 exe 等）：不自动重启，已有的警告弹窗负责引导
+      setStatus("failed");
+      return;
+    }
+    // 崩溃：自动重启，指数退避，连续 3 次失败后放弃
+    client = undefined;
+    crashCount++;
+    if (crashCount > 3) {
+      setStatus("failed");
+      if (!crashNoticeShown) {
+        crashNoticeShown = true;
+        void vscode.window
+          .showErrorMessage("AILA：语言服务器连续崩溃，已停止自动重启。可从状态栏手动重启。", "查看日志")
+          .then((pick) => {
+            if (pick === "查看日志") channel().show(true);
+          });
+      }
+      return;
+    }
+    setStatus("crashed");
+    restartTimer = setTimeout(() => {
+      restartTimer = undefined;
+      void ensureClient();
+    }, 600 * crashCount);
+  };
 
   const ensureClient = async (): Promise<LSPClient | undefined> => {
-    if (!cfg<boolean>("lsp.enable", true)) return undefined;
+    if (!cfg<boolean>("lsp.enable", true)) {
+      status.hide();
+      return undefined;
+    }
     if (client) return client;
     const root = await workspaceRoot();
     if (!root) return undefined;
-    client = new LSPClient(await resolveExecutable(), root, collection);
-    await client.start();
+    const c = new LSPClient(await resolveExecutable(), root, collection);
+    c.onState = onServerState;
+    client = c;
+    setStatus("starting");
+    await c.start();
     return client;
   };
 
   if (await workspaceRoot()) void ensureClient();
 
-  // ---- 文档同步（全量） ----
+  // ---- 文档同步：didOpen 立即；didChange 300ms 防抖合并 ----
+  // server 每收到一次 didChange 就会全量重算工程，逐键发送会让打字卡顿；
+  // 停顿 300ms 后才发最后一份文本，诊断与补全数据最多滞后一个停顿。
   const syncOpen = (doc: vscode.TextDocument) => {
     if (doc.languageId !== "aila") return;
     void ensureClient().then((c) =>
@@ -364,19 +446,39 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   };
   vscode.workspace.textDocuments.forEach(syncOpen);
 
+  const pendingChange = new Map<string, ReturnType<typeof setTimeout>>();
+  const syncChange = (doc: vscode.TextDocument) => {
+    const key = doc.uri.toString();
+    const prev = pendingChange.get(key);
+    if (prev) clearTimeout(prev);
+    pendingChange.set(
+      key,
+      setTimeout(() => {
+        pendingChange.delete(key);
+        void ensureClient().then((c) =>
+          c?.notify("textDocument/didChange", {
+            textDocument: { uri: doc.uri.toString(), version: doc.version },
+            contentChanges: [{ text: doc.getText() }],
+          }),
+        );
+      }, 300),
+    );
+  };
+
   ctx.subscriptions.push(
     vscode.workspace.onDidOpenTextDocument(syncOpen),
     vscode.workspace.onDidChangeTextDocument((e) => {
       if (e.document.languageId !== "aila") return;
-      void ensureClient().then((c) =>
-        c?.notify("textDocument/didChange", {
-          textDocument: { uri: e.document.uri.toString(), version: e.document.version },
-          contentChanges: [{ text: e.document.getText() }],
-        }),
-      );
+      syncChange(e.document);
     }),
     vscode.workspace.onDidCloseTextDocument((doc) => {
-      void client?.notify("textDocument/didClose", { textDocument: { uri: doc.uri.toString() } });
+      const key = doc.uri.toString();
+      const t = pendingChange.get(key);
+      if (t) {
+        clearTimeout(t);
+        pendingChange.delete(key);
+      }
+      void client?.notify("textDocument/didClose", { textDocument: { uri: key } });
       collection.delete(doc.uri);
     }),
   );
@@ -479,6 +581,12 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
               item.insertText =
                 it.insertTextFormat === 2 ? new vscode.SnippetString(it.insertText) : it.insertText;
             }
+            if (it.documentation) {
+              item.documentation =
+                typeof it.documentation === "string"
+                  ? it.documentation
+                  : new vscode.MarkdownString(it.documentation.value ?? "");
+            }
             if (word) item.range = word;
             return item;
           });
@@ -508,6 +616,12 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           help.signatures = res.signatures.map((s: Json) => {
             const sig = new vscode.SignatureInformation(s.label);
             sig.parameters = (s.parameters ?? []).map((p: Json) => new vscode.ParameterInformation(p.label));
+            if (s.documentation) {
+              sig.documentation =
+                typeof s.documentation === "string"
+                  ? s.documentation
+                  : new vscode.MarkdownString(s.documentation.value ?? "");
+            }
             if (typeof s.activeParameter === "number") sig.activeParameter = s.activeParameter;
             return sig;
           });
@@ -684,6 +798,12 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     }),
 
     vscode.commands.registerCommand("aila.restartLSP", async () => {
+      if (restartTimer) {
+        clearTimeout(restartTimer);
+        restartTimer = undefined;
+      }
+      crashCount = 0;
+      crashNoticeShown = false;
       client?.dispose();
       client = undefined;
       forgetExecutable();
@@ -694,6 +814,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // 改了 `aila.executable` 就重开，别让缓存的可执行文件路径挡住
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (!e.affectsConfiguration("aila.executable")) return;
+      if (restartTimer) {
+        clearTimeout(restartTimer);
+        restartTimer = undefined;
+      }
+      crashCount = 0;
       forgetExecutable();
       client?.dispose();
       client = undefined;

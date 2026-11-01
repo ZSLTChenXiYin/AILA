@@ -63,6 +63,20 @@ func (p *Parser) parseFunc(attrs []*ast.Attr, allowBodyless bool) ast.Node {
 		} else {
 			pname := p.expectKind(lexer.KindIdent, "参数名")
 			p.expectPunct(":", "参数类型")
+			if p.atPunct("...") {
+				// AILA 原生变参 `rest: ...T`：`...` 是类型构造器，体内 rest 即 [T] 视图
+				// （designs/0002 §6）。与 #[c] extern 的无名 `...`（C 调用约定）正交。
+				dotTok := p.adv()
+				elem := p.parseType()
+				params = append(params, &ast.Param{Span: p.spanOf(pname), Name: pname.Text, IsVariadic: true,
+					Type: &ast.TypeRef{Span: p.spanOf(dotTok), KindV: "view", Elem: elem}})
+				if _, ok := p.eatPunct(","); ok {
+					p.errAt(dotTok, "E2001", "变参参数 `"+pname.Text+"` 必须位于参数列表末位",
+						"`...T` 只能出现在参数列表的最后",
+						"把 `"+pname.Text+": ...T` 挪到最后，或去掉其后的参数")
+				}
+				break
+			}
 			params = append(params, &ast.Param{Span: p.spanOf(pname), Name: pname.Text, Type: p.parseType()})
 		}
 		if _, ok := p.eatPunct(","); !ok {
@@ -111,6 +125,10 @@ func (p *Parser) parseBinding(semi bool, allowNoInit bool) ast.Node {
 		return &ast.LetDecl{Span: p.spanTo(p.spanOf(kw), p.spanOf(p.cur())), KindV: string(kw.Kind),
 			Name: name.Text, Type: typ, Init: init, HasInit: true}
 	}
+	if p.atPunct("(") {
+		// `let (a, b) = 多值;`——多值解构绑定（通道双端等）。
+		return p.parseLetGroup(kw, semi)
+	}
 	name := p.expectKind(lexer.KindIdent, "绑定名")
 	var typ *ast.TypeRef
 	if _, ok := p.eatPunct(":"); ok {
@@ -134,6 +152,30 @@ func (p *Parser) parseBinding(semi bool, allowNoInit bool) ast.Node {
 	}
 	return &ast.LetDecl{Span: p.spanTo(p.spanOf(kw), p.spanOf(p.cur())), KindV: string(kw.Kind),
 		Name: name.Text, Type: typ, Init: init, HasInit: hasInit}
+}
+
+// parseLetGroup 解析 `let (a, b) = expr;` 多值解构绑定。
+func (p *Parser) parseLetGroup(kw lexer.Token, semi bool) ast.Node {
+	p.expectPunct("(", "解构绑定")
+	var names []string
+	for !p.atPunct(")") && !p.atKind(lexer.KindEOF) {
+		if p.atKind(lexer.KindWild) {
+			p.adv()
+			names = append(names, "_")
+		} else {
+			names = append(names, p.expectKind(lexer.KindIdent, "绑定名").Text)
+		}
+		if _, ok := p.eatPunct(","); !ok {
+			break
+		}
+	}
+	end := p.expectPunct(")", "解构绑定")
+	p.expectPunct("=", "解构绑定初始化器")
+	init := p.parseExpr()
+	if semi {
+		end = p.expectPunct(";", "解构绑定结束")
+	}
+	return &ast.LetGroup{Span: p.spanTo(p.spanOf(kw), p.spanOf(end)), Names: names, Init: init}
 }
 
 func (p *Parser) parseView() ast.Node {
@@ -312,10 +354,14 @@ func (p *Parser) parseStmt() ast.Node {
 		return p.parseReturn()
 	case tok.Kind == lexer.Kind("if"):
 		return p.parseIf()
+	case p.cur().IsPunct("#") && p.atCompileStmt():
+		return p.parseCompileStmt()
 	case tok.Kind == lexer.Kind("for"):
 		return p.parseFor()
 	case tok.Kind == lexer.Kind("match"):
 		return p.parseMatch()
+	case tok.Kind == lexer.Kind("select"):
+		return p.parseSelect()
 	case tok.Kind == lexer.Kind("region"):
 		return p.parseRegion()
 	case tok.Kind == lexer.Kind("defer"):
@@ -329,11 +375,6 @@ func (p *Parser) parseStmt() ast.Node {
 	case tok.Kind == lexer.Kind("unsafe"):
 		start := p.adv()
 		return &ast.Unsafe{Span: p.spanOf(start), Body: p.parseBlock()}
-	case tok.Kind == lexer.Kind("trap"):
-		start := p.adv()
-		msg := p.parseExpr()
-		p.expectPunct(";", "trap 语句结束")
-		return &ast.Trap{Span: p.spanOf(start), Msg: msg}
 	case tok.Kind == lexer.Kind("yield"):
 		start := p.adv()
 		p.expectPunct(";", "yield 语句结束")
@@ -343,15 +384,6 @@ func (p *Parser) parseStmt() ast.Node {
 		v := p.parseExpr()
 		p.expectPunct(";", "out 语句结束")
 		return &ast.Out{Span: p.spanOf(start), Value: v}
-	case tok.Kind == lexer.Kind("thread"):
-		start := p.adv()
-		var size ast.Node
-		if _, ok := p.eatPunct(":"); ok {
-			size = p.parseExpr()
-		}
-		call := p.parseExpr()
-		p.expectPunct(";", "thread 语句结束")
-		return &ast.ThreadStart{Span: p.spanOf(start), StackSize: size, Call: call}
 	case tok.Kind == lexer.Kind("break"):
 		start := p.adv()
 		p.expectPunct(";", "")
@@ -364,11 +396,24 @@ func (p *Parser) parseStmt() ast.Node {
 		return p.parseAssign()
 	case tok.IsPunct("(") && p.looksLikeDestructAssign():
 		return p.parseDestructAssign()
+	case tok.Kind == lexer.KindIdent && p.peek(1).IsPunct("<-"):
+		// `ch <- v;` 发送语句（designs/0001 §10.6）。`v = <-ch;` 的接收
+		// 表达式由赋值路径处理（peek 是 `=`），此处仅拦发送。
+		return p.parseChanSend()
 	case tok.IsPunct(";"):
 		p.adv()
 		return nil
 	}
 	return p.parseAssign()
+}
+
+func (p *Parser) parseChanSend() ast.Node {
+	start := p.cur()
+	ch := p.parseUnary() // 端表达式（含后缀链）；`<-` 非中缀，表达式在此自然停
+	p.expectPunct("<-", "发送语句")
+	val := p.parseExpr()
+	end := p.expectPunct(";", "发送语句结束")
+	return &ast.ChanSend{Span: p.spanTo(p.spanOf(start), p.spanOf(end)), Chan: ch, Value: val}
 }
 
 func (p *Parser) looksLikeDestructAssign() bool {
@@ -451,7 +496,11 @@ func (p *Parser) parseReturn() ast.Node {
 }
 
 func (p *Parser) parseIf() ast.Node {
-	start := p.adv() // if
+	return p.parseIfTail(p.adv(), false) // if
+}
+
+// parseIfTail 解析 `if`/`#compile.if` 的公共尾部（designs/0006 §1）。
+func (p *Parser) parseIfTail(start lexer.Token, compileTime bool) ast.Node {
 	cond := p.parseExprNoStructLit()
 	then := p.parseBlock()
 	var elifs []ast.Pair
@@ -468,7 +517,7 @@ func (p *Parser) parseIf() ast.Node {
 		break
 	}
 	return &ast.If{Span: p.spanTo(p.spanOf(start), p.spanOf(p.cur())), Cond: cond, Then: then,
-		Elifs: elifs, Els: els}
+		Elifs: elifs, Els: els, CompileTime: compileTime, Prune: -1}
 }
 
 // condPair 只是为了让 Pair.A 是「表达式节点」而不是接口 nil。
@@ -552,7 +601,11 @@ func (p *Parser) parseRegion() ast.Node {
 }
 
 func (p *Parser) parseMatch() ast.Node {
-	start := p.adv() // match
+	return p.parseMatchTail(p.adv(), false) // match
+}
+
+// parseMatchTail 解析 `match`/`#compile.match` 的公共尾部（designs/0006 §1）。
+func (p *Parser) parseMatchTail(start lexer.Token, compileTime bool) ast.Node {
 	head := p.parseExprNoStructLit()
 	if p.atPunct("{") && isPath(head) && p.braceLooksLikeStructLit() {
 		p.errSpan(p.spanTo(p.spanOf(p.cur()), p.spanOf(p.cur())),
@@ -587,7 +640,82 @@ func (p *Parser) parseMatch() ast.Node {
 		}
 	}
 	end := p.expectPunct("}", "match 体结束")
-	return &ast.Match{Span: p.spanTo(p.spanOf(start), p.spanOf(end)), Head: head, Arms: arms}
+	return &ast.Match{Span: p.spanTo(p.spanOf(start), p.spanOf(end)), Head: head, Arms: arms,
+		CompileTime: compileTime, PruneArm: -1}
+}
+
+// parseCompileStmt 解析语句级 `#compile.` 指令（designs/0006 §1）：
+//
+//	#compile.if <const-expr> { … } else { … }
+//	#compile.match <const-expr> { 模式 => …, … }
+//
+// 与表达式级 `#compile.as(...)`、声明级 `#compile.c func …` 同属 `#compile` 层，形态是语句。
+func (p *Parser) parseCompileStmt() ast.Node {
+	start := p.adv() // '#'
+	p.adv()          // 'compile'（parseStmt 已确认是层名）
+	p.expectPunct(".", "层指令点号")
+	name := p.adv()
+	switch name.Kind {
+	case lexer.Kind("if"):
+		return p.parseIfTail(start, true)
+	case lexer.Kind("match"):
+		return p.parseMatchTail(start, true)
+	}
+	p.errAt(name, "E2007", "未知的 `#compile.` 语句指令",
+		"语句级只支持 `#compile.if` / `#compile.match`（designs/0006 §1）",
+		"表达式级转换用 `#compile.as(T, x)`；声明级属性用 `#compile.c func …`")
+	return nil
+}
+
+// atCompileStmt 判断当前位置是不是语句级 `#compile.if` / `#compile.match`；
+// 其余 `#` 开头的是表达式级指令，仍走表达式语句路径。
+func (p *Parser) atCompileStmt() bool {
+	if !p.cur().IsPunct("#") || p.peek(1).Kind != lexer.KindIdent || p.peek(1).Text != "compile" {
+		return false
+	}
+	if !p.peek(2).IsPunct(".") {
+		return false
+	}
+	k := p.peek(3).Kind
+	return k == lexer.Kind("if") || k == lexer.Kind("match")
+}
+
+// parseSelect 解析 `select { case ... => {...}, ... }`（designs/0004 §6）。
+// case 事件两种形态：`<-ch`（chan 可收）与 `resume h`（coro 可 resume）；
+// `名 = 事件` 前缀把就绪产出绑定到名字（chan 事件省绑定时由 sema 隐式注入 v）。
+func (p *Parser) parseSelect() ast.Node {
+	start := p.adv() // select
+	p.expectPunct("{", "select 体")
+	var cases []*ast.SelectCase
+	for !p.atPunct("}") && !p.atKind(lexer.KindEOF) {
+		ctok := p.cur()
+		if ctok.Kind != lexer.Kind("case") {
+			p.errAt(ctok, "E2001", "select 体只能由 `case` 分支组成", "这里", "")
+			if !p.atKind(lexer.KindEOF) {
+				p.adv()
+			}
+			continue
+		}
+		p.adv() // case
+		bind := ""
+		cur := p.cur()
+		if (cur.Kind == lexer.KindIdent || cur.Kind == lexer.KindWild) && p.peek(1).IsPunct("=") {
+			bind = p.adv().Text
+			p.adv() // =
+		}
+		ev := p.parseUnary()
+		p.expectPunct("=>", "select 分支箭头")
+		body := p.parseBlock()
+		cases = append(cases, &ast.SelectCase{
+			Span:  p.spanTo(p.spanOf(ctok), p.spanOf(p.cur())),
+			Bind:  bind,
+			Event: ev,
+			Body:  body,
+		})
+		p.eatPunct(",")
+	}
+	end := p.expectPunct("}", "select 体结束")
+	return &ast.Select{Span: p.spanTo(p.spanOf(start), p.spanOf(end)), Cases: cases}
 }
 
 func isPath(n ast.Node) bool {

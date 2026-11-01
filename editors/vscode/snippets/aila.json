@@ -39,13 +39,13 @@
   },
   "可恢复错误结果": {
     "prefix": "result",
-    "body": ["func ${1:name}(${2}) -> ${3:I32} ! ${4:Err} {", "    if ${5:cond} {", "        return _ ! ${4:Err}.${6:Bad};", "    }", "    return ${0:value};", "}"],
-    "description": "T ! E 错误通道"
+    "body": ["func ${1:name}(${2}) -> ${3:I32} ! ${4:Err} {", "    if ${5:cond} {", "        return .${6:Bad};", "    }", "    return ${0:value};", "}"],
+    "description": "T ! E 错误通道（错误成员在返回位置直接构造）"
   },
   "可空结果": {
     "prefix": "opt",
-    "body": ["let ${1:x}: ${2:[U8]}? = None;", "match ${1:x} {", "    Some { v } => { ${3} },", "    None => { ${0} },", "}"],
-    "description": "T? 的 match 解包"
+    "body": ["let ${1:x}: ${2:Text}? = None;", "match ${1:x} {", "    let ${3:v}: ${2} => { ${4} },", "    None => { ${0} },", "}"],
+    "description": "T? 的 match 解包（类型模式 + None 字面量）"
   },
   "区域块": {
     "prefix": "region",
@@ -79,12 +79,12 @@
   },
   "C 互操作声明": {
     "prefix": "cop",
-    "body": ["#[c] public func ${1:c_func}(${2})${3: -> I32};"],
+    "body": ["#compile.c public func ${1:c_func}(${2})${3: -> I32};"],
     "description": "C 函数绑定声明"
   },
   "清单": {
     "prefix": "toml",
-    "body": ["[package]", "name = \"${1:demo}\"", "version = \"0.1.0\"", "entry = \"_.main\"", "", "[target]", "board = \"${2:host}\""],
+    "body": ["[package]", "name = \"${1:demo}\"", "version = \"0.1.0\"", "entry = \"_.main\"", "", "# [target]", "# triple = \"xtensa-esp32s3-elf\"    # 不写 = 宿主目标"],
     "description": "aila.toml 骨架（在 TOML 文件里手写可用）"
   }
 }

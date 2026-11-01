@@ -23,7 +23,7 @@ version = "0.1.0"
 entry = "_.main"
 
 [target]
-board = "esp32s3"
+triple = "xtensa-esp32s3-elf"
 
 [build]
 opt = 2
@@ -82,9 +82,9 @@ func TestMissingFields(t *testing.T) {
 	}
 }
 
-func TestUnknownBoard(t *testing.T) {
+func TestBadTriple(t *testing.T) {
 	dir := t.TempDir()
-	write(t, dir, "[package]\nname = \"x\"\nversion = \"0.1.0\"\n[target]\nboard = \"nope\"\n")
+	write(t, dir, "[package]\nname = \"x\"\nversion = \"0.1.0\"\n[target]\ntriple = \"esp8266\"\n")
 	bag := &diag.Bag{}
 	Load(dir, bag)
 	codes := map[string]bool{}
@@ -92,7 +92,20 @@ func TestUnknownBoard(t *testing.T) {
 		codes[d.Code] = true
 	}
 	if !codes["E7006"] {
-		t.Fatalf("应报 E7006：%v", bag.Items)
+		t.Fatalf("非法 triple 应报 E7006：%v", bag.Items)
+	}
+}
+
+func TestCPUField(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "[package]\nname = \"x\"\nversion = \"0.1.0\"\n[target]\ntriple = \"xtensa-esp8266-elf\"\ncpu = \"esp8266\"\n")
+	bag := &diag.Bag{}
+	m := Load(dir, bag)
+	if m == nil || bag.HasErrors() {
+		t.Fatalf("清单应加载成功：%s", bag.Render(false))
+	}
+	if m.CPU != "esp8266" || m.PtrSize() != 4 {
+		t.Fatalf("cpu/ptrsize 异常：%s / %d", m.CPU, m.PtrSize())
 	}
 }
 

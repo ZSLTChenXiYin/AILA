@@ -11,7 +11,7 @@ import (
 
 // findClang 返回可用的 clang 路径（随包优先，其次系统 PATH）。
 func findClang() string {
-	t := resolve.ResolveClang()
+	t := resolve.ResolveClang("")
 	if !t.OK() {
 		return ""
 	}
@@ -298,7 +298,7 @@ func emitFunction(node *clangNode, out *[]string, declared map[string]string, ta
 	if !strings.HasPrefix(retMapped, "（") {
 		retPart = " -> " + retMapped
 	}
-	*out = append(*out, "#[c] public func "+ValueName(fname)+"("+strings.Join(parts, ", ")+")"+retPart+";")
+	*out = append(*out, "#compile.c public func "+ValueName(fname)+"("+strings.Join(parts, ", ")+")"+retPart+";")
 }
 
 func emitVar(node *clangNode, out *[]string, declared map[string]string, target Target,
@@ -314,7 +314,7 @@ func emitVar(node *clangNode, out *[]string, declared map[string]string, target 
 			kw = "let"
 		}
 	}
-	*out = append(*out, "#[c] public "+kw+" "+ValueName(vname)+": "+mapped+";")
+	*out = append(*out, "#compile.c public "+kw+" "+ValueName(vname)+": "+mapped+";")
 }
 
 // valueText 把 clang 的 ConstantExpr 值渲染成文本。

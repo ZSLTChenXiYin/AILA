@@ -19,7 +19,6 @@ import (
 
 // Target 是绑定生成需要的目标信息。
 type Target struct {
-	Board   string
 	Triple  string
 	PtrSize int
 }
@@ -36,7 +35,7 @@ type Result struct {
 func (r *Result) Header(cpack string, t Target) string {
 	lines := []string{
 		"// 由 aila bindgen 自动生成，请勿手改",
-		"// cpack: " + cpack + "   backend: " + r.Backend + "   target: " + t.Board + " (" + t.Triple + ")",
+		"// cpack: " + cpack + "   backend: " + r.Backend + "   target: " + t.Triple,
 		"// C 实现本体由 aila build 用 cc 编译并自动链接（共置即关联）",
 	}
 	for _, note := range r.Notes {

@@ -416,6 +416,17 @@ func symbolItem(info *moduleInfo, s *symbol, sortPrefix string) CompletionItem {
 	item := CompletionItem{
 		Label: s.Name, Kind: completionKindOf(s.Kind), Detail: s.Detail, SortText: sortPrefix + s.Name,
 	}
+	// 文档浮层与 hover 同款：种类 + 签名 + 来源，补全列表里就能看到，不用悬停
+	value := "**" + kindNameOf(s.Kind) + "** `" + s.Name + "`"
+	if s.Detail != "" {
+		value += "\n\n```aila\n" + s.Detail + "\n```"
+	}
+	if info.Generated {
+		value += "\n\n来自 C 包 `" + info.Cpack + "` 的绑定"
+	} else {
+		value += "\n\n来自模块 `" + info.Name + "`"
+	}
+	item.Documentation = &MarkupContent{Kind: "markdown", Value: value}
 	if s.Kind == KindMethod {
 		if i := strings.LastIndex(s.Name, "."); i >= 0 {
 			item.Label = s.Name[i+1:]

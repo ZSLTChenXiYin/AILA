@@ -11,6 +11,7 @@ import (
 
 	"aila/internal/bindgen"
 	"aila/internal/diag"
+	"aila/internal/home"
 	"aila/internal/manifest"
 	"aila/internal/project"
 	"aila/internal/resolve"
@@ -25,7 +26,7 @@ import (
 // 平时不需要手跑：`aila build/run/check` 遇到 `import ch _.cpacks.<名字>` 会自动生成并缓存。
 // 这条命令是给「看产物 / 排错 / 预生成」用的（docs/specs/0001 §3.2 §6）。
 func newBindgenCmd() *cobra.Command {
-	var backend, board, out string
+	var backend, triple, out string
 	cmd := &cobra.Command{
 		Use:   "bindgen [目标]",
 		Short: "生成 C 绑定（`.ail`）：把 cpack 的头文件翻成 AILA 声明模块",
@@ -39,13 +40,13 @@ func newBindgenCmd() *cobra.Command {
 				printDiags(bag)
 				return &exitError{ExitDiag}
 			}
-			if board != "" {
-				man.Board = board
+			if triple != "" {
+				man.Triple = triple
 			}
 			prj := project.Discover(root, bag)
-			triple := man.EffectiveTriple(resolve.HostTriple())
+			effTriple := man.EffectiveTriple(resolve.HostTriple())
 			target := bindgen.Target{
-				Board: man.Board, Triple: triple, PtrSize: man.PtrSize(),
+				Triple: effTriple, PtrSize: man.PtrSize(),
 			}
 
 			type job struct {
@@ -106,7 +107,7 @@ func newBindgenCmd() *cobra.Command {
 				return &exitError{ExitDiag}
 			}
 
-			outDir := filepath.Join(root, "build", "bindgen")
+			outDir := filepath.Join(home.BuildDirFor(root), "bindgen")
 			if err := os.MkdirAll(outDir, 0o777); err != nil {
 				bag.Error("E7001", diag.Empty, "建不了输出目录", err.Error(), "")
 				printDiags(bag)
@@ -154,7 +155,7 @@ func newBindgenCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&backend, "backend", "auto", "bindgen 档位：auto | clang | builtin")
-	cmd.Flags().StringVar(&board, "target", "", "目标 board（临时覆盖清单，影响 long/size_t 的映射）")
+	cmd.Flags().StringVar(&triple, "triple", "", "目标三元组（临时覆盖清单，影响 long/size_t 的映射）")
 	cmd.Flags().StringVar(&out, "out", "", "输出文件（单 cpack 时可用）")
 	return cmd
 }

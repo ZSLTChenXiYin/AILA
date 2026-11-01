@@ -7,7 +7,7 @@
 #     share/aila/stdlib/*.aila
 #     share/aila/data/*.json
 #     examples/                     ← 可直接 `aila run examples/hello` 的示例工程
-#     toolchain/<triple>/{bin,lib,VERSION,LICENSE.TXT}
+#     toolchains/{toolchains.json, clang/<ver>/{bin,lib,VERSION,LICENSE.TXT}}
 #     README.md  LICENSE  NOTICE  VERSION  NOTICES.md
 #
 # 用法：assemble-bundle.ps1 -Platform windows-x64 -Version 0.1.0
@@ -47,15 +47,15 @@ New-Item -ItemType Directory -Force -Path (Join-Path $Bundle "share\aila") | Out
 Copy-Item (Join-Path $Root "runtime") (Join-Path $Bundle "share\aila\runtime") -Recurse
 Copy-Item (Join-Path $Root "stdlib") (Join-Path $Bundle "share\aila\stdlib") -Recurse
 Copy-Item (Join-Path $Root "share\aila\data") (Join-Path $Bundle "share\aila\data") -Recurse
-# 给 AI 编程工具的技能包（`aila skill` 读它；也可单独拿 aila-skill-<版本>.zip 分发）
+# 给 AI 编程工具的技能包（纯文本目录，用户直接登记进 AI 工具）
 Copy-Item (Join-Path $Root "share\aila\skills") (Join-Path $Bundle "share\aila\skills") -Recurse
 
-# 3) 随包工具链
-$tc = Join-Path $Root "toolchain"
+# 3) 随包工具链（rfcs/0006 注册表布局：toolchains/{toolchains.json, clang/<ver>/}）
+$tc = Join-Path $Root "toolchains"
 if (Test-Path $tc) {
-    Copy-Item $tc (Join-Path $Bundle "toolchain") -Recurse
+    Copy-Item $tc (Join-Path $Bundle "toolchains") -Recurse
 } else {
-    Write-Warning "没有 toolchain/ 目录：先跑 ci/fetch-llvm.ps1"
+    Write-Warning "没有 toolchains/ 目录：先跑 ci/fetch-llvm.ps1"
 }
 
 # 4) 示例工程（`aila doctor` 的提示与「解压即用」体验都靠它）
@@ -71,13 +71,14 @@ AILA $Version ($Platform)
 
 本发布包内含 llvm-mingw（clang + lld + MinGW-w64 运行时），
 LLVM/Clang 部分按 Apache-2.0 WITH LLVM-exception 再分发，
-许可证原文见 toolchain/<triple>/LICENSE.TXT。AILA 自身同样以 Apache-2.0 发布。
+许可证原文见 toolchains/clang/<版本>/LICENSE.TXT。AILA 自身同样以 Apache-2.0 发布。
 
-工具链解析规则（docs/specs/0003 §2）：默认只使用本包 toolchain/ 下的 clang/llc；
-只有当项目清单显式写 [build.toolchain] cc = "system:..." 时才会去系统里找。
+工具链解析规则（docs/specs/0003 §2，rfcs/0006 注册表布局）：默认只使用本包
+toolchains/ 下的 clang 系（目录名 = 家族/版本）；只有当项目清单显式写
+[build.toolchain] cc = "system:..." 时才会去系统里找。
 
 自检：./aila doctor     编译并运行：./aila run examples/hello
-给 AI 用：./aila skill  （技能包在 share/aila/skills/aila/）
+给 AI 用：把 share/aila/skills/aila/ 登记进你的 AI 工具（技能/规则目录）
 "@
 [System.IO.File]::WriteAllText((Join-Path $Bundle "NOTICES.md"), $notice, [System.Text.Encoding]::UTF8)
 
@@ -86,9 +87,3 @@ $zip = Join-Path $OutDir "aila-$Version-$Platform.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path $Bundle -DestinationPath $zip
 Write-Host "产物：$zip"
-
-# 6) 单独发一份「技能包」zip：不装 AILA 也能把这份技能喂给 AI 工具
-$skillZip = Join-Path $OutDir "aila-skill-$Version-$Platform.zip"
-if (Test-Path $skillZip) { Remove-Item $skillZip -Force }
-Compress-Archive -Path (Join-Path $Root "share\aila\skills\aila") -DestinationPath $skillZip
-Write-Host "产物：$skillZip"

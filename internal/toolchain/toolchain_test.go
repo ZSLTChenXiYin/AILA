@@ -12,7 +12,7 @@ import (
 
 func TestIRToObjectRejectsMissingTool(t *testing.T) {
 	tool := resolve.Tool{Role: resolve.RoleIR2Obj, Source: resolve.SourceMissing, Note: "没有随包 LLVM"}
-	err := IRToObject("target triple = \"x86_64-unknown-linux-gnu\"\n", filepath.Join(t.TempDir(), "a.o"), "x86_64-unknown-linux-gnu", tool)
+	err := IRToObject("target triple = \"x86_64-unknown-linux-gnu\"\n", filepath.Join(t.TempDir(), "a.o"), "x86_64-unknown-linux-gnu", "", tool)
 	if err == nil {
 		t.Fatal("缺后端时应报错")
 	}
@@ -79,14 +79,14 @@ func TestFirstLine(t *testing.T) {
 }
 
 // TestBundledToolchainSmoke 守护「随包工具链能真跑」这条交付判据：
-// 仓库里存在 toolchain/<triple>/ 时，doctor 全项不得有 fail（含链接冒烟测试）；
+// 仓库 toolchains/ 下有安装时，doctor 全项不得有 fail（含链接冒烟测试）；
 // 没有随包工具链的机器上跳过（开发机常态）。
 func TestBundledToolchainSmoke(t *testing.T) {
-	if len(home.InstalledTriples()) == 0 {
-		t.Skip("本机没有随包工具链（toolchain/<triple>/），跳过")
+	if len(home.InstalledClangs()) == 0 && len(home.InstalledGCCs()) == 0 {
+		t.Skip("本机没有随包工具链（toolchains/），跳过")
 	}
-	cc := resolve.ResolveCC("bundled")
-	llvm := resolve.ResolveLLVM("bundled")
+	cc := resolve.ResolveCC("", "bundled")
+	llvm := resolve.ResolveLLVMFor("", "bundled")
 	if !cc.OK() || !llvm.OK() {
 		t.Fatalf("随包工具链不全：cc=%s llvm=%s", cc.Describe(), llvm.Describe())
 	}

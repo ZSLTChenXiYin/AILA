@@ -224,7 +224,7 @@
       "patterns": [
         {
           "name": "keyword.control.aila",
-          "match": "\\b(if|else|for|in|match|return|break|continue|defer|trap|yield|out|resume|copy|move|len|as|trunc)\\b"
+          "match": "\\b(if|else|for|in|match|return|break|continue|defer|yield|out|resume|copy|move|select|case)\\b"
         },
         {
           "name": "keyword.declaration.aila",

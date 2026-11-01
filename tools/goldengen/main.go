@@ -47,7 +47,7 @@ const hostTriple = "x86_64-w64-windows-gnu"
 var irCorpus = []string{"ir_basic", "ir_wide"}
 
 // exampleNames 是全部示例工程。
-var exampleNames = []string{"hello", "control", "region", "struct", "result", "cinterop"}
+var exampleNames = []string{"hello", "control", "region", "struct", "result", "cinterop", "variadic", "stdlib_demo", "os_demo", "concurrency_demo", "display_demo"}
 
 type generator struct {
 	root    string
@@ -195,6 +195,7 @@ func (g *generator) corpus() {
 
 // check 装载单模块并跑语义检查（layout / sigs / bindings / ir 共用）。
 func (g *generator) check1(name string, wantNoErrors bool) (*sema.Program, *sema.Table, *sema.Sigs, *sema.Checker, *types.Layout) {
+	types.ResetErrorSpace() // 错误编号基线与单模块编译（CLI / build）一致
 	rel := filepath.Join("tests", "corpus", name)
 	raw, err := os.ReadFile(filepath.Join(g.root, rel))
 	if err != nil {
@@ -453,7 +454,7 @@ func (g *generator) ir() {
 		prog, table, sigs, check, layout := g.check1(name+".aila", true)
 		u := prog.Unit("_.main")
 		_ = u
-		lw := codegen.New(prog.Unit("_.main").Mod, "_.main", table, sigs, check, layout, hostTriple, "_.main")
+		lw := codegen.New(prog.Unit("_.main").Mod, "_.main", table, sigs, check, layout, hostTriple, "_.main", false)
 		ir := lw.Generate()
 		if bad := lw.Unsupported(); len(bad) > 0 {
 			fmt.Fprintf(os.Stderr, "%s 有未实现构造：%v\n", name, bad)
@@ -466,7 +467,7 @@ func (g *generator) ir() {
 // bindingAil 生成 cpack 的 `.ail` 绑定快照。
 func (g *generator) bindingAil() {
 	cpackDir := filepath.Join(g.root, "examples", "cinterop", "cpacks", "mathkit")
-	target := bindgen.Target{Board: "host", Triple: hostTriple, PtrSize: 8}
+	target := bindgen.Target{Triple: hostTriple, PtrSize: 8}
 	bag := &diag.Bag{}
 	res := bindgen.Run("mathkit", cpackDir, target, bag, "builtin")
 	if bag.HasErrors() {
@@ -480,6 +481,7 @@ func (g *generator) bindingAil() {
 // exampleIR 生成示例工程每个模块的 IR 快照。
 func (g *generator) exampleIR() {
 	for _, name := range exampleNames {
+		types.ResetErrorSpace() // 每个工程独立编号基线（与单工程编译一致）
 		res := build.Load(filepath.Join(g.root, "examples", name), build.Options{})
 		if res.Diags.HasErrors() {
 			fmt.Fprintf(os.Stderr, "%s 装载失败：\n%s", name, res.Diags.Render(false))
@@ -507,8 +509,9 @@ func (g *generator) exampleIR() {
 // --------------------------------------------------------------------------- //
 
 // pyJSON 复刻 Python `json.dumps(v, ensure_ascii=False, indent=n)` 的形态：
-//   n>0：每层换行 + n 空格缩进，键值分隔 `": "`、元素分隔 `","`；
-//   n=0：每层换行但不缩进（参考生成器对 tokens 快照用的就是这个形态）。
+//
+//	n>0：每层换行 + n 空格缩进，键值分隔 `": "`、元素分隔 `","`；
+//	n=0：每层换行但不缩进（参考生成器对 tokens 快照用的就是这个形态）。
 func pyJSON(v any, indent int) string {
 	var b strings.Builder
 	writePyJSON(&b, v, indent, 0)

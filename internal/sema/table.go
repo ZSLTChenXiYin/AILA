@@ -56,8 +56,10 @@ func DeclareTypes(mod *ast.Module, bag *diag.Bag) *Table {
 				bag.Error("E3001", x.Span, "类型 `"+x.Name+"` 重复定义", "这里", "")
 				continue
 			}
+			// v2 错误模型（designs/0004 §3.1）：`#error` 标注 = 参与 `!` 错误通道。
+			// 声明阶段即填（模块内声明序无关，类型位 `Error` 解析不依赖两段式时序）
 			info := &types.EnumInfo{Name: x.Name, Module: mod.Name, IsPublic: x.Attrs.IsPublic, InShell: x.Attrs.InShell,
-				Base: types.U32, TagType: types.U32}
+				Base: types.U32, TagType: types.U32, IsError: x.ErrLayer != "", ErrLayer: x.ErrLayer}
 			t.Types[x.Name] = info
 			t.order = append(t.order, x.Name)
 		case *ast.TypeAlias:
@@ -153,7 +155,7 @@ func (t *Table) buildEnum(x *ast.EnumDecl, bag *diag.Bag) {
 	case x.Base != nil:
 		// 带载荷 + 显式底层类型：作者指定优先，但必须容纳全部判别值
 		info.TagType = info.Base
-		if bits := types.IntWidth(info.Base, 8); bits > 0 && maxTag >= (int64(1) << uint(bits)) {
+		if bits := types.IntWidth(info.Base, 8); bits > 0 && maxTag >= (int64(1)<<uint(bits)) {
 			bag.Error("E3201", x.Span,
 				fmt.Sprintf("判别值 %d 超出底层类型 `%s` 的宽度", maxTag, types.TypeName(info.Base)),
 				"tag 宽度必须容纳全部判别值", "")
@@ -179,6 +181,12 @@ func (t *Table) buildEnum(x *ast.EnumDecl, bag *diag.Bag) {
 				"v0 禁止别名判别值", "改用不同判别值")
 		}
 		tags[v.Tag] = v.Name
+	}
+	// v2 错误模型：`#error` enum 分片声明 → 成员并入全局错误空间（tag 全局
+	// 统一编号，designs/0004 §3.1）。模块自有错误集（如 I2cErr）同样注册，
+	// 其成员可上抛进 `Error` 超集通道。
+	if info.IsError {
+		types.RegisterErrorShard(info)
 	}
 }
 
@@ -215,9 +223,19 @@ func (t *Table) Resolve(ref *ast.TypeRef, bag *diag.Bag) types.Type {
 	case "result":
 		ok := t.Resolve(ref.Inner, bag)
 		errT := t.Resolve(ref.Err, bag)
-		if _, isEnum := errT.(types.Named); !isEnum {
+		// v2（designs/0004 §3.2）：E 必须是 `#error` 标注的错误集（或保留
+		// 错误空间超集 `Error`）——P2 宽容期结束，普通 enum 不再进错误通道
+		if named, isEnum := errT.(types.Named); !isEnum && !types.IsErrorSpace(errT) {
 			bag.Error("E3201", ref.Span, "`T ! E` 的 E 必须是单一 enum 类型", "这里",
 				"错误上下文写在 enum 载荷字段里")
+		} else if isEnum {
+			en, _ := named.Info.(*types.EnumInfo)
+			if en == nil || !en.IsError {
+				bag.Error("E3201", ref.Span,
+					"`T ! E` 的 E 必须是 `#error` 标注的错误集（类型 `"+types.TypeName(errT)+"` 未标注）",
+					"错误通道只收 `#error` enum（designs/0004 §3.1）",
+					"给 enum 加 `#runtime.error` / `#comprun.error` 标注，或改用保留超集 `Error`")
+			}
 		}
 		return types.Result{Ok: ok, Err: errT}
 	case "chan":
@@ -254,6 +272,13 @@ func (t *Table) Resolve(ref *ast.TypeRef, bag *diag.Bag) types.Type {
 		}
 		return types.Group{Items: items}
 	case "name":
+		// `Error` 是保留错误空间名（designs/0004 §3.1）：
+		// `#error enum Error` 分片只注册成员；类型位一律解析为全局超集。
+		// 旧式普通 `enum Error {...}`（未标注）随 v2 收紧——Error 名保留，
+		// 用户不得占用（声名冲突在 enum 声明处报）。
+		if ref.Name == "Error" {
+			return types.GlobalErrorSpace()
+		}
 		if t != nil {
 			if info, ok := t.Types[ref.Name]; ok {
 				return types.Named{Info: info}
@@ -363,12 +388,6 @@ func constInt(n ast.Node) (int64, bool) {
 			return ^v, true
 		}
 		return 0, false
-	case *ast.Cast:
-		v, ok := constInt(x.Operand)
-		if !ok {
-			return 0, false
-		}
-		return v, true
 	case *ast.Binary:
 		a, ok1 := constInt(x.Left)
 		b, ok2 := constInt(x.Right)

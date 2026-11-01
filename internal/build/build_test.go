@@ -21,8 +21,9 @@ func repoRoot(t *testing.T) string {
 	return filepath.Dir(filepath.Dir(filepath.Dir(file)))
 }
 
-// exampleNames 是全部示例（cinterop 覆盖 bindgen + C 侧编译链接）。
-var exampleNames = []string{"hello", "control", "region", "struct", "result", "cinterop"}
+// exampleNames 是全部示例（cinterop 覆盖 bindgen + C 侧编译链接；
+// concurrency_demo 覆盖协程/chan/thread/atomics 并发全家族）。
+var exampleNames = []string{"hello", "control", "region", "struct", "result", "cinterop", "variadic", "stdlib_demo", "os_demo", "concurrency_demo", "display_demo"}
 
 // TestCheckExamples 验证 Go 版能独立完成六示例中五个的「解析 + 多模块语义」。
 func TestCheckExamples(t *testing.T) {
@@ -43,8 +44,29 @@ func TestCheckExamples(t *testing.T) {
 	}
 }
 
+// irComparable 归一化随宿主工具链平台漂移、且不影响 IR 语义的行：
+//
+//	; target: x86_64-w64-windows-gnu        （注释头）
+//	target triple = "x86_64-w64-windows-gnu"
+//
+// 快照在 Windows 宿主生成，Linux/macOS 上 bundled clang 自报的 triple 不同
+// （w64-mingw32 vs w64-windows-gnu）；IR→.o 时 llc/clang 用显式 -mtriple，
+// 不依赖这两行，因此比对时跳过。
+func irComparable(s string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(s, "\n") {
+		t := strings.TrimRight(line, " \t\r")
+		if strings.HasPrefix(t, "; target: ") || strings.HasPrefix(t, "target triple = ") {
+			continue
+		}
+		b.WriteString(t)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
 // TestExampleIRParity 是 G4 的多模块判据：Go 版对每个示例模块产出的 IR，必须与
-// Python 参考实现生成的快照（tests/corpus/examples/）逐字节一致。
+// Python 参考实现生成的快照（tests/corpus/examples/）一致（平台漂移行除外）。
 func TestExampleIRParity(t *testing.T) {
 	root := repoRoot(t)
 	for _, name := range exampleNames {
@@ -80,7 +102,7 @@ func TestExampleIRParity(t *testing.T) {
 				if err != nil {
 					t.Fatalf("读不到快照 %s：%v", e.Name(), err)
 				}
-				if strings.TrimRight(got, " \t\r\n") != strings.TrimRight(string(want), " \t\r\n") {
+				if irComparable(got) != irComparable(string(want)) {
 					t.Fatalf("%s/%s 与参考实现的 IR 不一致", name, e.Name())
 				}
 				checked++
@@ -91,6 +113,7 @@ func TestExampleIRParity(t *testing.T) {
 		})
 	}
 }
+
 // TestExamplesEndToEnd 是 G4 的端到端判据：Go 版从源码一路编到可执行文件，
 // 运行后的 stdout 必须与 `tests/corpus/examples/<名字>/expected.out` 逐字节一致。
 //
@@ -136,6 +159,7 @@ func toolchainMissing(bag *diag.Bag) (string, bool) {
 	}
 	return "", false
 }
+
 // TestCrossProjectDependency 是跨项目依赖的端到端判据（docs/rfcs/0004）：
 // 两个真实项目，根包 import 依赖包的 public 符号，编译并运行出预期输出；
 // 非 public 符号必须被 E7020 拒绝。
@@ -153,17 +177,17 @@ func TestCrossProjectDependency(t *testing.T) {
 		}
 	}
 	mustWrite(filepath.Join(libDir, "aila.toml"),
-		"[package]\nname = \"mylib\"\nversion = \"0.1.0\"\nentry = \"_.main\"\n\n[target]\nboard = \"host\"\n")
+		"[package]\nname = \"mylib\"\nversion = \"0.1.0\"\nentry = \"_.main\"\n")
 	mustWrite(filepath.Join(libDir, "main.aila"), "func main() {}\n")
 	mustWrite(filepath.Join(libDir, "math", "ops.aila"),
 		"public func twice(v: I32) -> I32 {\n    return add(v, v);\n}\n\n"+
 			"func add(a: I32, b: I32) -> I32 {\n    return a + b;\n}\n")
 	mustWrite(filepath.Join(appDir, "aila.toml"),
-		"[package]\nname = \"app\"\nversion = \"0.1.0\"\nentry = \"_.main\"\n\n[target]\nboard = \"host\"\n\n"+
+		"[package]\nname = \"app\"\nversion = \"0.1.0\"\nentry = \"_.main\"\n\n"+
 			"[dependencies]\nmylib = { path = \"../mylib\" }\n")
 	mustWrite(filepath.Join(appDir, "main.aila"),
-		"import std.io;\nimport mylib.math.ops as ops;\n\n"+
-			"func main() {\n    io.print_i32_nl(ops.twice(21));\n}\n")
+		"import std.io;\nimport mylib.math.ops;\n\n"+
+			"func main() {\n    io.println(io.FmtVal.I { v: #compile.as(I64, ops.twice(21)) });\n}\n")
 
 	// ① 正常路径：构建成功、运行输出 42
 	res := Build(appDir, Options{})
@@ -183,7 +207,7 @@ func TestCrossProjectDependency(t *testing.T) {
 
 	// ② 非 public：必须报 E7020
 	mustWrite(filepath.Join(appDir, "main.aila"),
-		"import mylib.math.ops as ops;\n\nfunc main() {\n    _ = ops.add(1, 2);\n}\n")
+		"import mylib.math.ops;\n\nfunc main() {\n    _ = ops.add(1, 2);\n}\n")
 	res2 := Check(appDir, Options{})
 	found := false
 	for _, d := range res2.Diags.Items {
@@ -197,7 +221,7 @@ func TestCrossProjectDependency(t *testing.T) {
 
 	// ③ 未声明的依赖根：E7010
 	mustWrite(filepath.Join(appDir, "main.aila"),
-		"import nomath.calc as calc;\n\nfunc main() {\n    _ = calc.f();\n}\n")
+		"import nomath.calc;\n\nfunc main() {\n    _ = calc.f();\n}\n")
 	res3 := Check(appDir, Options{})
 	found = false
 	for _, d := range res3.Diags.Items {
