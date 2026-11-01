@@ -85,7 +85,7 @@ P0–P5 交付的是主链路（语言剪枝 + 标准库 + 驱动 + 字库 + 构
 | **B1 `cpacks/sw_i2c`** | 新建：C 只剩位时序（`i2c_start/stop/write_byte` + `sw_i2c_begin/write/recover/nack/sent` + `delay.c` 的 `ets_delay_us` 垫片）。**偏离计划**：没有补 `include/sw_i2c.h` 走 bindgen——头文件里的 `const unsigned char *` 会映射成 `[U8]?`，而 v2 退役了 `Some` 构造、也没有隐式包装，**AILA 侧造不出非空的 `[T]?`**（本轮实测）。所以保留手写 `#compile.c` 声明（"视图只传指针 + 显式长度"的既有约定），头文件留待可空视图构造语法收敛后再启用 |
 | **B2 `oled/panel.aila` + 转置搬 AILA** | 协议层（初始化序列 / `page_dirty` / `page_cols` / 页寻址命令 / `present`）在 AILA；**行主序→页格式的位搬运升格为 `std.paint.transpose_page`**（纯数据、任意页寻址控制器可用）。宿主 golden 落地在 `examples/display_demo` 的 `[6]` 段：`nz / fnv64 / 32 字节逐字节` |
 | **B3 `oled_smoke` 切过去** | 上板复验（COM3）：`oled: i2c=1 fonts=292 cells=16x4`、`hb=0 cells=11 pg=2 nz=102` → 逐帧增长，**行为与迁移前完全一致**，说明 AILA 侧的转置/页窗口是对的 |
-| **B4 `esp8266_oled`（SDK 版）迁移** | 代码已迁（页格式帧缓冲 + `draw_glyph`/`fb_scroll_console` → `pixbuf` + `textgrid` + `present`），**构建通过并产出镜像**；但**上板复验被既有阻塞卡住**：SDK 应用的启动链本身没打通（designs/0005 §6.C：`call_user_start` 之后无异常、无输出地挂住，与本轮改动无关）。这一项记为"代码就绪、验收待 SDK 启动链" |
+| **B4 `esp8266_oled`（SDK 版）迁移** | 代码已迁（页格式帧缓冲 + `draw_glyph`/`fb_scroll_console` → `pixbuf` + `textgrid` + `present`）。上板复验原先被 SDK 启动链卡住；**2026-11-02 已定位真根因并修好**（irom 链接地址按槽位对齐 + 自己调 ROM `Cache_Read_Enable` 开 cache），显示栈在板上跑通：`E C F U` → `oled: i2c=1 fonts=292`，无异常无重启；Wi-Fi 仍待 SDK 自举对齐 → 见文末「2026-11-02」执行记录与 `designs/0005 §6.C` |
 
 ### C. 平台能力
 
@@ -116,4 +116,26 @@ P0–P5 交付的是主链路（语言剪枝 + 标准库 + 驱动 + 字库 + 构
 
 - `go vet ./...` / `go build ./...` / `go test ./...` 全绿；`goldengen` 104 份快照与实现一致；`skillgen` 重生成 `cli.md` / `errors.md`（含 `--lto` / `--gc-sections` / `--emit-size-delta`）。
 - 上板证据：`oled: i2c=1 fonts=292 cells=16x4` / `us_check: 1000x100us=102ms` / `hb=0 cells=11 pg=2 nz=102`（裸机 LTO 构建）。
-- 未完成项：B4 的上板验收依赖 designs/0005 §6.C 的 SDK 启动链；C2 只出 RFC。
+- 未完成项：B4 的 Wi-Fi 半依赖 designs/0005 §6.C 的 SDK 自举（显示半已打通）；C2 只出 RFC。
+
+---
+
+## 执行记录（2026-11-02，SDK 启动链：从「必挂」到「显示跑通」）
+
+上一轮把 B4 记为「代码就绪、验收待 SDK 启动链」。这一轮把那条链挖到底，结论是**之前的上板失败
+根本不是我方运行时的锅，而是一个链接地址错误 + 一次漏掉的 cache 打开**。
+
+| 项 | 根因 / 做法 | 实测 |
+|---|---|---|
+| **镜像布局（真根因）** | 应用烧在 user1 槽 flash 0x1000，v2 镜像的 irom 段紧跟 16B 头（flash 0x1010），而 cache 是 flash 0x0 ↔ 0x40200000 的固定线性映射 ⇒ irom 必须链到 **0x40201010**。此前是 `0x40210000`（非 FOTA 老布局，= flash 0x10000），**所有 flash 取指差 0xF000** | 改前 `Fatal exception (0)` `epc1=0x4022fd7c` / 改后同偏移 `0x40220d8c`，反汇编确认该地址正是 `system_partition_table_regist` 的首条指令（`addi a1,a1,-48`），即「地址对、内容不对」 |
+| **`Pack8266SDK` 重写** | 从「v1 头 + 0xFF 填充到 flash 偏移」改成 **FOTA v2 + SDK CRC32 尾**，与 `esptool elf2image --version 2` 同布局；`chip.json` 用 `irom.{origin,slot}` 表达不变量并由打包器校验 | `esptool image-info` 认出 v2/5 段/入口 0x40101170；`Test8266SDKFotaLayout` / `Test8266SDKOriginMustMatchSlot` / `Test8266SDKNeedsIromSegment` |
+| **烧写链收敛** | `tools/esp-flash.ps1 -Mode sdk` 直接烧 `app.bin`，删掉 `esptool elf2image` 那一步（构建产物＝烧写产物） | 三片烧写 + hash 校验通过 |
+| **flash cache 必须自己开** | bootloader 跳过来时 irom 窗口是空的。libmain 的 `Cache_Read_Enable_New()` 走不通：它先 call 一份被链接进 **irom** 的 `user_iram_memory_is_enabled()`，再读 `app_main.o` 的 `.data` 配置字节（SDK 初值 **0xFF**，只有 0/1 才转发到 ROM，否则整段跳过）。改为直接调 ROM `Cache_Read_Enable(0,0,1)` | 串口（74880）`E C F U` → **`oled: i2c=1 fonts=292`**，无异常、无重启 ⇒ **显示栈在 SDK 镜像上跑通** |
+| **仍挡着的** | 官方入口 `call_user_start_local()` 依旧静默挂死（`.bss` 先清零也不变）；`user_pre_init` → `system_partition_table_regist` 挂在 `spi_flash_read`；SDK 堆/事件循环未初始化 ⇒ `os_malloc` 报 `E:M 1208` | B4 的**显示半**已验证，**Wi-Fi 半仍阻塞**；下一步要对齐 `user_start`（见 0005 §6.C） |
+
+遗留说明：
+- SDK 变体 `cpu_hz=80MHz` 的前提是官方自举把 CPU 切到 80MHz；旁路路径下 CPU 仍 52MHz，
+  所以应用输出落在 **74880**（bootloader 日志也在 74880）。
+- `esptool elf2image` 已不是构建/烧写链的一环；它仍可作为**对照**（分段粒度不同：esptool 按
+  ELF section 合并，我们按 PT_LOAD，字节不完全相同但布局语义一致）。
+

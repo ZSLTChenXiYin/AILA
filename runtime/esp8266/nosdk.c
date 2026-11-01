@@ -123,6 +123,54 @@ void user_init(void) {
 }
 
 /* ---------------------------------------------------------------------- */
+/* 自备入口：替代 libmain 的 user_start（SDK 启动链，designs/0005 §6.C）    */
+/* ---------------------------------------------------------------------- */
+/* 为什么需要自己的入口：libmain.a 里 GLOBAL 的 call_user_start_local → 本地
+ * user_start 那条官方自举在本板上静默挂死（实测只剩入口打点 'E'，之后无输出、
+ * 无异常）。挂点在 user_start 内部：它先 phy_get_bb_evm / ets_install_putc1，
+ * 再用 ROM SPIRead 读 flash 头定 map，然后 Cache_Read_Enable_New → 回调
+ * user_rf_pre_init / user_pre_init / user_init。
+ *
+ * 自己写入口时必须自己补上「打开 flash cache」这一步，因为：
+ *   1) boot_v1.x 跳到应用时 irom 窗口（0x40200000+）还是空的——我们的 C 运行时
+ *      与用户在 IRAM（0x4010xxxx），所以入口阶段能跑；但 AILA 的代码在 irom，
+ *      第一条 flash 取指就是 Fatal exception(0) 非法指令（实测
+ *      epc1=0x40220d8c = system_partition_table_regist，断在 addi a1,a1,-48 之前）；
+ *   2) 不能借 libmain 的 Cache_Read_Enable_New()：它先 call 一份**被链接进 irom**
+ *      的 user_iram_memory_is_enabled()（cache 未开就取 flash，必炸），再读
+ *      app_main.o 自己的 `.data` 配置字节（SDK 初值 0xFF，只有 0/1 才转发到 ROM，
+ *      否则整段跳过＝空转）。
+ * 所以直接调 ROM 原语 Cache_Read_Enable(0, 0, 1)（.a 里的 PROVIDE 给到
+ * 0x40004678，驻 ROM/IRAM，不需要 cache）。实测这一句之后 irom 可正常取指：
+ * 依次打出 E → C → U → `oled: i2c=1 fonts=292`，AILA 的显示栈在 SDK 镜像上跑通。
+ *
+ * 仍然挡着的两件事（designs/0005 §6.C，都属于「SDK 闭源初始化链」）：
+ *   - user_pre_init() 里的 system_partition_table_regist() 会挂在 spi_flash_read
+ *     （SPI 读路径在旁路自举下不通），所以分区表注册先跳过；
+ *   - 同理 SDK 自己的堆/事件循环没初始化，os_malloc 报 `E:M 1208`，
+ *     **Wi-Fi / lwIP 在这条路径上不可用**（显示屏纯 GPIO + I2C，不受影响）。
+ * 另外：SDK 变体的 cpu_hz=80MHz 前提是官方自举把 CPU 切到 80MHz；旁路路径下
+ * CPU 仍是 52MHz，所以串口实际落在 74880（不是 115200）。
+ */
+#define AILA_SDK_ENTRY_BYPASS 1
+
+#if AILA_SDK_ENTRY_BYPASS
+/* ROM 符号（eagle.rom.addr.v6.ld: PROVIDE(Cache_Read_Enable = 0x40004678)） */
+void Cache_Read_Enable(uint32_t odd_even, uint32_t mb_count, uint32_t no_aa);
+
+void call_user_start(void) {
+    boot_mark('E');              /* 入口（IRAM，cache 未开也能跑） */
+    Cache_Read_Enable(0, 0, 1);  /* flash 0x0.. 线性映射到 0x40200000 */
+    boot_mark('C');              /* cache 就绪：此后才允许执行 irom 里的代码 */
+    user_rf_pre_init();
+    /* user_pre_init() 跳过：它会挂在 spi_flash_read（见文件头注释） */
+    user_init();                 /* → aila_rt_main → AILA main()，不返回 */
+    for (;;) {
+    }
+}
+#endif
+
+/* ---------------------------------------------------------------------- */
 /* std.wifi 胶水（designs/0003 §5.2）：extern 手抄声明，不 include SDK 头。 */
 /* Xtensa 窄返回 ABI：SDK 的 bool/uint8 返回经寄存器全宽传递，int 接收安全。 */
 /* ---------------------------------------------------------------------- */

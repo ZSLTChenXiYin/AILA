@@ -101,12 +101,13 @@ type SDK struct {
 	FlashMap int `json:"flash_map"`
 	// DRAMLen 是 SDK 布局的 DRAM 段长度（覆盖 Chip.Memory.DRAMLen：SDK 顶部留系统区）。
 	DRAMLen string `json:"dram_len"`
-	// IROM 是 flash 代码映射段：0x40200000 ↔ flash 0x0 固定线性，段数据必须
-	// 落在 flash 绝对偏移 (origin - 0x40200000) 处，由镜像打包 0xFF 填充保证。
+	// IROM 是 flash 代码映射段：cache 把 flash 0x0 线性映射到 0x40200000，
+	// 所以 irom 的虚拟地址必须等于「槽位 flash 偏移 + 镜像头长度」。
+	// FOTA user1 槽（flash 0x1000）+ 16B 镜像头 ⇒ 0x40201010（官方 app1.ld 同值）。
 	IROM struct {
-		Origin      string `json:"origin"`       // irom 段虚拟地址（老布局 0x40210000 → flash 0x10000）
-		Len         string `json:"len"`          // 段长度上限
-		FlashOffset string `json:"flash_offset"` // 镜像内 irom 裸数据的字节偏移
+		Origin string `json:"origin"` // irom 段虚拟地址（= 0x40200000 + Slot + 0x10）
+		Len    string `json:"len"`    // 段长度上限
+		Slot   string `json:"slot"`   // 应用镜像的槽位 flash 偏移（user1 = 0x1000）
 	} `json:"irom"`
 	// AilaHeap 是 AILA bump 堆窗口大小：埋在 _bss_end 与 SDK _heap_start 之间，
 	// 互不侵犯（SDK 堆从 _aila_heap_end 起步）。
@@ -746,17 +747,18 @@ func (c Chip) Pack(elfPath, outPath string) error {
 	}
 }
 
-// PackSDK 打包 SDK 模式镜像：RAM 段进头，irom 段内嵌到其 flash 映射偏移
-// （0x40200000 ↔ flash 0x0 固定线性，flash_offset 由 chip.json 数据提供）。
+// PackSDK 打包 SDK 模式的 FOTA v2 镜像（烧 user1 槽 flash 0x1000 起）：
+// irom 段紧跟 16B 镜像头内嵌，其余 RAM 段随后；irom 的虚拟地址必须与
+// 槽位对齐（0x40200000 ↔ flash 0x0 固定线性），否则上板立刻非法指令。
 func (c Chip) PackSDK(elfPath, outPath string, s *SDK) error {
 	origin, err := hex(s.IROM.Origin)
 	if err != nil {
 		return err
 	}
-	off, err := hex(s.IROM.FlashOffset)
+	slot, err := hex(s.IROM.Slot)
 	if err != nil {
 		return err
 	}
 	return image.Pack8266SDK(elfPath, outPath, c.Image.ModeCode, c.SizeFreq(),
-		uint32(origin), uint32(off))
+		uint32(origin), uint32(slot))
 }

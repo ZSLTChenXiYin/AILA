@@ -54,19 +54,16 @@ switch ($Mode) {
     }
     "sdk" {
         $app = Join-Path $root ".local/build/examples/esp8266_oled/xtensa_esp8266_elf/app.bin"
-        $elf = Join-Path $root ".local/build/examples/esp8266_oled/xtensa_esp8266_elf/app.elf"
-        if (-not (Test-Path $elf)) { throw "先构建：aila build examples/esp8266_oled" }
+        if (-not (Test-Path $app)) { throw "先构建：aila build examples/esp8266_oled" }
         $boot = New-PatchedBoot (Join-Path $sdkBin "boot_v1.7.bin") 4 (Join-Path $tmp "boot_4m.bin")
-        # FOTA 槽位只认 v2(0xEA) 镜像，v1 喂进去 bootloader 会"跳了但什么都不做"
-        $v2 = Join-Path $tmp "app_v2.bin"
-        & $esptool --chip esp8266 elf2image --version 2 --flash-mode dout --flash-freq 40m --flash-size 4MB -o $v2 $elf
-        if ($LASTEXITCODE -ne 0) { throw "elf2image 失败" }
+        # 构建产物本身就是 FOTA v2（0xEA）镜像：irom 紧跟 16B 镜像头，链接地址
+        # 0x40201010 与 user1 槽 flash 0x1000 对齐 —— 不再需要外挂 esptool elf2image。
         Write-Host "[sdk] boot 头 → map 4(4MB, byte3=0x40)；v2 镜像烧 0x1000 与 user2 0x81000"
         Invoke-Esptool @("erase-region", "0xFB000", "0x5000")
         Invoke-Esptool @("--before", "default-reset", "--after", "hard-reset",
                          "write-flash", "-fm", "keep", "-fs", "keep", "-ff", "keep",
-                         "0x0", $boot, "0x1000", $v2, "0x81000", $v2,
+                         "0x0", $boot, "0x1000", $app, "0x81000", $app,
                          "0xFC000", (Join-Path $sdkBin "esp_init_data_default_v08.bin"))
-        Write-Host "[sdk] 注意：应用侧 flash cache 尚未打通（见 docs/designs/0005 §6.C）"
+        Write-Host "[sdk] 完成（串口 115200；ROM/bootloader 自身日志在 74880）"
     }
 }

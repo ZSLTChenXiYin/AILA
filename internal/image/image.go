@@ -16,11 +16,12 @@
 package image
 
 import (
-	"sort"
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"os"
+	"sort"
 )
 
 // Flash 是镜像头里的 flash 参数（默认 DIO / 4MB / 40MHz，兼容绝大多数 ESP8266 模块）。
@@ -95,7 +96,7 @@ func loadSegments(elfPath string) (entry uint32, segs []seg, err error) {
 	return binary.LittleEndian.Uint32(raw[ehEntryOff:]), segs, nil
 }
 
-// appendSegment 把一段写进镜像并累计校验和。
+// appendSegment 把一段写进镜像并累计校验和（fatbin 老路径：8 字节对齐 + 必带校验和）。
 // 段头字节序是 (addr, len)——esptool bin_image.py save_segment 与 SDK
 // gen_appbin.py 一致，与直觉相反（len 在后），照抄官方不得改动。
 //
@@ -104,17 +105,26 @@ func loadSegments(elfPath string) (entry uint32, segs []seg, err error) {
 // 「打完 tail 就静默停住、连 chksum 都不打印」（实测 SDK 镜像 len 8375 → tail 7）。
 // 官方 gen_appbin/bin_image 同样补 0；补的是 0，XOR 校验和不变。
 func appendSegment(out []byte, s seg, checksum *byte) []byte {
+	return appendSegmentN(out, s, checksum, 8)
+}
+
+// appendSegmentN 同 appendSegment，但由调用方指定对齐；checksum 传 nil 表示
+// 该段不计入校验和（FOTA v2 的 irom 段就是这样，bootloader 只校验 RAM 段）。
+// FOTA v2 走 4 字节对齐——esptool 的 save_segment 直接要求段长为 4 的倍数。
+func appendSegmentN(out []byte, s seg, checksum *byte, align int) []byte {
 	var buf [4]byte
 	binary.LittleEndian.PutUint32(buf[:], s.addr)
 	out = append(out, buf[:]...)
-	if pad := (8 - len(s.data)%8) % 8; pad != 0 {
+	if pad := (align - len(s.data)%align) % align; pad != 0 {
 		s.data = append(s.data[:len(s.data):len(s.data)], make([]byte, pad)...) // 三索引切片：强制拷贝，别动 ELF 缓冲
 	}
 	binary.LittleEndian.PutUint32(buf[:], uint32(len(s.data)))
 	out = append(out, buf[:]...)
 	out = append(out, s.data...)
-	for _, b := range s.data {
-		*checksum ^= b
+	if checksum != nil {
+		for _, b := range s.data {
+			*checksum ^= b
+		}
 	}
 	return out
 }
@@ -155,15 +165,28 @@ func Pack8266(elfPath, outPath string, mode, sizeFreq byte) error {
 	return os.WriteFile(outPath, out, 0o666)
 }
 
-// Pack8266SDK 打包 SDK 模式镜像（NonOS SDK 老布局，参考 gen_appbin.py）：
-// RAM 段（paddr < iromOrigin）进 0xE9 头——(addr,len) 段头 + checksum；
-// irom 段（paddr ≥ iromOrigin）不进头：checksum 字节之后 0xFF 填充到
-// iromFlashOff 再放裸数据。ROM loader 只按头部加载 RAM 段并校验 checksum，
-// irom 代码由 flash cache 线性映射（0x40200000 ↔ flash 0x0）直读——所以
-// irom 数据必须落在 flash 绝对偏移 (iromOrigin - 0x40200000) 处。
-// 等价于官方 none 模式的 flash.bin + irom0text.bin 两文件，这里合并成
-// 单文件（仿官方 FOTA 模式的 0xFF 填充手法），烧 0x0 一片搞定。
-func Pack8266SDK(elfPath, outPath string, mode, sizeFreq byte, iromOrigin, iromFlashOff uint32) error {
+// Pack8266SDK 打包 SDK 模式的 **FOTA v2 镜像**（烧 user1 槽 flash 0x1000 或
+// user2 0x81000），布局逐字节对齐 esptool `elf2image --version 2`：
+//
+//	主头 8B：0xEA · 0x04 · flash 模式 · flash 大小/频率 · 入口地址（4B LE）
+//	irom 段：{0, len} 段头 + 数据（补 0 到 16B 对齐；**不计入** checksum）
+//	次头 8B：0xE9 · 段数 · flash 模式 · flash 大小/频率 · 入口（与主头同值）
+//	RAM 段：每段 {addr, len} + 数据，按 ELF 的 program header 顺序
+//	16B 对齐尾：补 0 到「校验和占最后一字节」，再写 checksum（0xEF XOR RAM 段数据）
+//	末尾 4B：esp8266_crc32（SDK bootloader 校验）
+//
+// 两个地址必须自己对上（否则上板就是 Fatal exception / 静默挂死）：
+//   - 链接期 irom0_0_seg 的 org 必须等于 0x40200000 + 槽位 flash 偏移 + 0x10，
+//     user1 槽（flash 0x1000）⇒ 0x40201010（官方 eagle.app.v6.new.512.app1.ld 同值）；
+//   - 烧写必须落在同一槽位。cache 是 flash 0x0 ↔ 0x40200000 的固定线性映射，
+//     irom 数据在镜像里紧跟 16B 头，所以虚拟地址天然是「槽位偏移 + 0x10」。
+//
+// 槽位偏移由 chip.json 的 sdks.*.irom.slot 提供，这里顺带校验 origin 与它一致。
+func Pack8266SDK(elfPath, outPath string, mode, sizeFreq byte, iromOrigin, slotFlashOff uint32) error {
+	if want := 0x40200000 + slotFlashOff + 0x10; iromOrigin != want {
+		return fmt.Errorf("irom 链接地址 %#x 与槽位不符：烧在 flash %#x 的 v2 镜像，irom 必须在 %#x（cache 线性映射 flash 0x0 ↔ 0x40200000，irom 数据紧跟 16B 镜像头）",
+			iromOrigin, slotFlashOff, want)
+	}
 	entry, segs, err := loadSegments(elfPath)
 	if err != nil {
 		return err
@@ -183,46 +206,52 @@ func Pack8266SDK(elfPath, outPath string, mode, sizeFreq byte, iromOrigin, iromF
 	if irom == nil {
 		return fmt.Errorf("SDK 镜像缺 irom 段（paddr ≥ %#x）", iromOrigin)
 	}
-	if len(irom.data)%4 != 0 {
-		return fmt.Errorf("irom 段长度 %#x 不是 4 的倍数", len(irom.data))
-	}
 
-	// RAM 段顺序：IRAM（0x40100000..）必须在最前，DRAM 段按地址升序随后。
-	// 官方镜像就是这个顺序（IRAM → DRAM）；倒过来时 ROM loader 加载完两段后
-	// 不跳转、也不打最后一行 checksum，表现为「烧进去毫无反应」。
-	sort.SliceStable(ram, func(i, j int) bool {
-		ii := ram[i].addr >= 0x40100000
-		ij := ram[j].addr >= 0x40100000
-		if ii != ij {
-			return ii
-		}
-		return ram[i].addr < ram[j].addr
-	})
-
-	out := make([]byte, 0, 8+len(ram)*(8+64)+int(iromFlashOff))
-	out = append(out, 0xE9, byte(len(ram)), mode, sizeFreq)
+	out := make([]byte, 0, 8+8+len(irom.data)+len(ram)*(8+64)+32)
+	out = append(out, 0xEA, imageV2Segment, mode, sizeFreq)
 	var buf [4]byte
 	binary.LittleEndian.PutUint32(buf[:], entry)
 	out = append(out, buf[:]...)
 
+	// irom 段：加载地址在 v2 里固定写 0（真正地址由槽位决定），长度含 16B 对齐填充。
+	// 它不进 checksum——bootloader 只对 RAM 段校验。
+	iromData := irom.data
+	if pad := (16 - len(iromData)%16) % 16; pad != 0 {
+		iromData = append(append([]byte{}, iromData...), make([]byte, pad)...)
+	}
+	out = appendSegmentN(out, seg{addr: 0, data: iromData}, nil, 4)
+
+	// 次头 + RAM 段（顺序照 ELF program header，与 esptool 一致）。
+	out = append(out, 0xE9, byte(len(ram)), mode, sizeFreq)
+	binary.LittleEndian.PutUint32(buf[:], entry)
+	out = append(out, buf[:]...)
 	checksum := byte(0xEF)
 	for _, s := range ram {
-		out = appendSegment(out, s, &checksum)
+		out = appendSegmentN(out, s, &checksum, 4)
 	}
+
+	// 校验和占 16B 块的最后一个字节，再追加 SDK 的 CRC32 尾。
 	for (len(out)+1)%16 != 0 {
-		out = append(out, 0xFF)
+		out = append(out, 0)
 	}
 	out = append(out, checksum)
-
-	if uint32(len(out)) > iromFlashOff {
-		return fmt.Errorf("RAM 段总长 %#x 已越过 irom 的 flash 偏移 %#x", len(out), iromFlashOff)
-	}
-	for uint32(len(out)) < iromFlashOff {
-		out = append(out, 0xFF)
-	}
-	out = append(out, irom.data...)
+	binary.LittleEndian.PutUint32(buf[:], esp8266CRC32(out))
+	out = append(out, buf[:]...)
 
 	return os.WriteFile(outPath, out, 0o666)
+}
+
+// imageV2Segment 是 v2 镜像主头第 2 字节的固定值（esptool IMAGE_V2_SEGMENT）。
+const imageV2Segment = 4
+
+// esp8266CRC32 复刻 SDK bootloader / gen_appbin.py 的 CRC32 变体：
+// CRC32-IEEE 之后，最高位置位就取反，否则 +1。
+func esp8266CRC32(data []byte) uint32 {
+	crc := crc32.ChecksumIEEE(data)
+	if crc&0x80000000 != 0 {
+		return crc ^ 0xFFFFFFFF
+	}
+	return crc + 1
 }
 
 // ESP8266 把 ELF 的 PT_LOAD 段打成 ESP8266 V2 镜像（烧录到 flash 0x0）。

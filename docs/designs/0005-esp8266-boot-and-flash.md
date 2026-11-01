@@ -84,24 +84,43 @@ esptool --chip esp8266 --port COM3 write-flash -fm keep -fs keep -ff keep `
 （`examples/net_console` 的 8266 端口）发送 `你好，OLED`，服务端收到的字节为
 `E4 BD A0 E5 A5 BD EF BC 8C 4F 4C 45 44 0D 0A`（UTF-8 完整）。
 
-**C. AILA 的 SDK 应用（Wi-Fi + OLED，未打通）**
-boot 头 `0x40`（4MB/map 4）+ `esptool elf2image --version 2` 产出的镜像 @0x1000 与 0x81000。
-**已确认到的边界（2026-11-01）**：
-1. 入口必执行：临时覆写 `call_user_start` 打点，`jump to run user1 @ 1000` 之后能看到 `E`。
-2. 之后**无异常、无输出**——是**挂住**而不是跑飞（故意不设 `wsr.vecbase`、让 ROM 异常处理器生效也
-   没打印 `Fatal exception`，说明没触发异常）。
-3. 差异定位：官方 AT 镜像的 crt 是 `l32r → wsr.vecbase → call0 0x4010025C`，该函数
-   `call0 user_start 等价物` 再 `callx0 ets_run`(ROM 0x40000E04)。它的 `user_start`
-   调 `ets_install_putc1`(ROM 0x4000242C) + `__udivsi3`(0x4000E21C)；
-   **我们从 libmain.a 取到的 `user_start` 调的是 `ets_install_putc1` + ROM `SPIRead`(0x40004B1C)**
-   —— 在 cache/flash 尚未就绪时直接走 SPI 读 flash，最可能就是挂点（等待 SPI 返回）。
-4. FOTA 槽位的 irom 虚拟地址：官方 `eagle.app.v6.new.512.app1.ld` 用 `org = 0x40201010`
-   （user1 槽）、`app2.ld` 用 `0x40241010`；我们按 `0x40210000` 链接（自建 PackSDK 的自洽值）。
-   两种 origin 下应用都能进到入口（`E` 打点可见），说明它不是当前挂点的原因，但**要跑通 FOTA
-   最终仍需按槽位对齐 origin**。
+**C. AILA 的 SDK 应用（Wi-Fi + OLED，显示已打通、Wi-Fi 未打通）**
+boot 头 `0x40`（4MB/map 4）+ `aila build` 自产的 FOTA v2 镜像 @0x1000（user2 0x81000 同镜像）。
 
-**结论**：剩下的是 SDK 闭源初始化链内部行为（`user_start` 的内容差异），需要换一份 `libmain.a`
-里的 user_start 对象、或绕过 `user_start` 自己写一份等价启动序列。**这是 SDK 路径最后一个已知缺口。**
+**已确认（2026-11-02，本轮全部修好）**：
+1. **irom 链接地址必须与槽位对齐**——这一条是此前「静默挂死 / Fatal exception」的**真根因**：
+   cache 是 flash 0x0 ↔ 0x40200000 的固定线性映射，v2 镜像的 irom 段紧跟 16B 镜像头
+   （`esptool image-info` 的 seg0 file offs=0x08），所以烧在 user1 槽（flash 0x1000）的
+   应用，其 irom 必须链接到 **0x40201010**（与官方 `eagle.app.v6.new.512.app1.ld` 同值）。
+   此前按非 FOTA 老布局链到 0x40210000（= flash 0x10000）而实际烧在 0x1010，
+   所有 flash 取指差 0xF000 → `Fatal exception (0)` 非法指令 + 重启循环。
+   `chip.json` 现在由 `sdks.*.irom.{origin,slot}` 表达这条不变量，`Pack8266SDK` 会校验。
+2. **构建产物必须就是能烧的那个镜像**：`Pack8266SDK` 从「v1 老布局 + 0xFF 填充」
+   改成 **FOTA v2 + SDK CRC32 尾**（主头 0xEA / irom `{0,len}` / 次头 0xE9 / RAM 段 /
+   校验和占 16B 块末字节 / `esp8266_crc32`），`tools/esp-flash.ps1 -Mode sdk` 直接烧
+   `app.bin`，不再外挂 `esptool elf2image`（少了「构建产物 ≠ 烧写产物」这条暗坑）。
+3. **flash cache 必须由应用自己打开**：bootloader 跳到应用时 irom 窗口是空的。
+   - 不能借 libmain 的 `Cache_Read_Enable_New()`：它先 `call` 一份**被链接进 irom** 的
+     `user_iram_memory_is_enabled()`（cache 未开就取 flash → 必炸），再读 `app_main.o`
+     自己的 `.data` 配置字节（`R_XTENSA_32 .data`，SDK 初值 **0xFF**；只有 0/1 才转发到
+     ROM，否则整段跳过＝空转）。这个字节正是官方 `user_start` 在探测 flash 头后写的。
+   - 现在直接调 ROM 原语 `Cache_Read_Enable(0, 0, 1)`（`PROVIDE 0x40004678`，驻 ROM）。
+     实测之后 irom 可正常取指：串口依次给出 `E C F U` →
+     **`oled: i2c=1 fonts=292`**（OLED 初始化 + 字库就位），无异常、无重启。
+   - 官方入口 `call_user_start_local()`（GLOBAL）在本板上**仍然静默挂死**：只剩入口打点，
+     无输出无异常；`.bss` 先清零也不改变结论。挂点在 `user_start` 内部的 SDK 初始化。
+4. 剩下挡着的（都属于 SDK 闭源初始化链，与显示无关）：
+   - `user_pre_init()` → `system_partition_table_regist()` 挂在 `spi_flash_read`
+     （SPI 读路径在旁路自举下不通），所以分区表注册暂时跳过；
+   - SDK 自己的堆 / 事件循环没初始化 → `os_malloc` 打 `E:M 1208`，**Wi-Fi / lwIP 不可用**。
+
+**串口波特率**：SDK 变体的 `cpu_hz=80MHz` 前提是官方自举把 CPU 切到 80MHz；旁路路径下
+CPU 仍是 52MHz，所以应用的输出落在 **74880**（bootloader 的 `load/chksum` 与
+`Fatal exception` 也是 74880）。
+
+**下一步**（要在真机跑 Wi-Fi，必须对齐 SDK 自举而不是绕开它）：对着官方 AT 镜像的 crt
+把 `user_start` 里挂住的那段（SPIRead 读 flash 头 → 定 map → 装 putc → 事件循环）
+逐条复刻；或在 SDK 里找到等价的可调用初始化序列（堆初始化 + 事件循环）后自建入口。
 
 ## 7. 其它实测硬件事实
 

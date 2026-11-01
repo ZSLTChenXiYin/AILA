@@ -8,7 +8,8 @@
     "cpu_hz": "ESP8266 Tech Ref §5 CPU：REMAP 后 CPU 停在晶振二倍频 52MHz（本板 26MHz XTAL → 52MHz），80MHz 必须软件切（NonOS SDK 在 user_init 前切，裸机 freestanding 不切）。实测印证：本文件的 cpu_hz 若写 80MHz，uart_init 会算 CLKDIV=694，实际输出就是 52MHz/694 = 74880（串口在 115200 上全是乱码、在 74880 上可读）。故顶层 cpu_hz / uart.clk_hz 取裸机真值 52MHz，SDK 构建由 sdks.*.cpu_hz = 80MHz 经 -D 覆盖（见 internal/build 的 linkSDK）。ccount 每周期 +1",
     "image": "esptool esp8266_v2：无扩展头；flash size 表 4M=4（esp32 系是 2），dout=3（实测本板与官方 AT 镜像都是 DOUT；dio=2 时 ROM 二段跳转后读 flash 失败、静默重启），40m=0",
     "boot_flash_map": "flash map 的唯一来源是 *bootloader 镜像头* 的 byte3 高 4 位（size code）：0x00→4Mbit/map0(512KB)、0x20→8Mbit/map2(1MB)、0x40→32Mbit/map4(4MB)；bootloader 经 RTC 把它传给应用，应用编译时的 map（system_partition_table_regist 的 map 参数）必须与它相等，否则启动最早期就 mismatch 报错并重启循环。实测：4MB 板跑官方 map-2 AT 固件必须配 byte3=0x20 的 boot。详见 docs/designs/0005。",
-    "sdk": "NonOS SDK v3.0.5 eagle.app.v6.ld（老布局非 FOTA：irom@0x40210000=flash 0x10000；app 镜像烧在 0x1000，所以镜像内的 irom 填充偏移 = 0xF000）+ gen_appbin.py（irom 内嵌填充）+ Partition Table 说明（map=4：RF_CAL 0x3FB000 / PHY 0x3FC000 / SYS 0x3FD000）"
+    "sdk_origin": "FOTA 槽位对齐（2026-11-02 实测）：应用镜像落在 user1 槽 flash 0x1000，v2 镜像的 irom 段紧跟 8 字节镜像头（esptool image-info 的 seg0 file offs=0x08），所以 irom 数据从 flash 0x1010 起，而 cache 线性映射 flash 0x0 ↔ 0x40200000 ⇒ irom 必须链接到 0x40201010（与官方 eagle.app.v6.new.512.app1.ld 一致）。此前按非 FOTA 老布局链到 0x40210000（=flash 0x10000）而实际烧在 0x1010，所有 irom 取指差 0xF000，表现为 Fatal exception(0) 非法指令 + 重启循环",
+    "sdk": "NonOS SDK v3.0.5 库 + 自建链接脚本（irom0_0_seg org 见 sdks.esp8266-nosdk.irom.origin）+ gen_appbin.py / Partition Table 说明（map=4：RF_CAL 0x3FB000 / PHY 0x3FC000 / SYS 0x3FD000）。注意 user2 槽（flash 0x81000）需要 0x40281010 的另一份链接，当前只验证 user1"
   },
   "family": "esp8266",
   "abi": "call0",
@@ -57,9 +58,9 @@
       "flash_map": 4,
       "dram_len": "0x14000",
       "irom": {
-        "origin": "0x40210000",
+        "origin": "0x40201010",
         "len": "0x5C000",
-        "flash_offset": "0xF000"
+        "slot": "0x01000"
       },
       "aila_heap": "0x2000",
       "rom_ld": "eagle.rom.addr.v6.ld",
