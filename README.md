@@ -16,11 +16,19 @@ aila doctor        # 环境自检（缺什么，直接把要执行的命令打�
 aila run           # 编译 + 链接 + 运行
 ```
 
-从源码构建管理器（无 cgo，可交叉编译）：
+从源码构建管理器（无 cgo，可交叉编译）——产物统一落到 `.local/`，源码树保持干净：
 
 ```bash
-go build -o bin/aila ./cmd/aila
-GOOS=linux GOARCH=amd64 go build -o bin/aila-linux ./cmd/aila
+go build -o .local/bin/aila ./cmd/aila
+GOOS=linux GOARCH=amd64 go build -o .local/bin/aila-linux ./cmd/aila
+```
+
+开发仓库的产物布局（编译输出、工具链、缓存都在 `.local/`，见 [specs/0003 §1.0](docs/specs/0003-distribution-and-toolchain.md)）：
+
+```text
+.local/bin/aila[.exe]          ← 管理器
+.local/build/<工程>/<triple>/   ← IR / .o / 可执行体
+.local/toolchains/             ← `aila toolchain install` 的落点（installed.json + clang/ gcc/ sdk/）
 ```
 
 ## 工具链从哪来（默认：只看随包目录）
@@ -68,15 +76,16 @@ aila version                                        # 三行：版本 + AILA_HOM
 ## 常用命令
 
 ```text
-aila new <目录> [--board host|esp32s3|riscv32|aarch64]
+aila new <目录> [--triple xtensa-esp8266-elf]
 aila doctor [--json] [--cc ...] [--llvm ...]
 aila check [路径]
-aila build [路径] [--emit-ir] [--emit-json] [--out 名字] [--board <board>] [--opt 0-3]
+aila build [路径] [--emit-ir] [--emit-json] [--out 名字] [--triple <三元组>] [--opt 0-3]
+              [--gc-sections] [--emit-size-delta]   # 剪掉未引用模块 / 报体积
 aila run   [路径] [--arg 参数]
 aila parse <文件.aila> [--tokens]      # 语法树 / token 流（排查用）
 aila ir    <文件.aila> [--triple ...]  # 单文件降到 LLVM IR 并打印
-aila toolchain info | list | install <zip>
-aila target list | show <board>
+aila toolchain list | info | install <家族/版本 或 zip>
+aila target list | show <三元组>
 aila explain <错误码>
 aila clean [--cache-only]
 aila version
@@ -86,11 +95,11 @@ aila version
 
 | 命令 | 做什么 | 产物 | 什么时候用 |
 |---|---|---|---|
-| `aila build` | 全流程到产物：IR → `.o` → 链接 | `build/<board>/app[.exe]`（host） | CI、烧录、交叉编译、要给别人的二进制 |
+| `aila build` | 全流程到产物：IR → `.o` → 链接 | `build/<三元组>/app[.exe]`（host） | CI、烧录、交叉编译、要给别人的二进制 |
 | `aila run` | `build` 之后**再执行**一次 | 无（复用 build 产物） | 本地改完就想看结果 |
 
 `build` 不执行程序；`run` = `build` + 执行，并把程序的退出码原样透传。
-`--emit-ir` 落 `.ll` 便于审计，`--emit-json` 写构建报告，`--out` 改名，`--board` 换目标。
+`--emit-ir` 落 `.ll` 便于审计，`--emit-json` 写构建报告，`--out` 改名，`--triple` 换目标。嵌入式三元组（`-elf` 后缀）由 aila 一路交叉链接并打出可烧录的 `app.bin`（平台 runtime 随包分发，无需项目自带链接脚本）。ESP 家族三颗芯片已随包适配：esp8266 单 `app.bin`；esp32/esp32s3 另出 `bootloader.bin`（自研二级 bootloader，无分区表），`aila run` 会打印两段式烧录命令。嵌入式 build 同时支持 cpack 的 C 源交叉编译与 `.a` 透传；要接厂商 SDK（如 ESP8266 NonOS SDK，WiFi 能力）只需在 `aila.toml` 写 `[sdk] name = "esp8266-nosdk"` 并 `aila toolchain install sdk/esp8266-nosdk`。
 
 退出码：`0` 成功 / `1` 有诊断 / `2` 用法错误 / `3` 环境不满足 / `4` 内部错误。
 
@@ -101,10 +110,10 @@ docs/       设计稿（designs）、提案（rfcs）、规格（specs）、计�
 cmd/aila/   管理器 + 编译器前端入口（Go 单文件产物）
 internal/   cli / home / diag / targets / resolve / toolchain / manifest /
             lexer / ast / parser / types / sema / codegen / bindgen / build / project
-share/aila/data/  共享数据表（错误码 `diag_codes.json`、target 表 `targets.json`）
-stdlib/     标准库（**纯 AILA 实现**，当前含 io / math；见 rfcs/0005）
-runtime/    语言运行时（C 薄层：区域账本 + trap 通道 + 打印出口）
-examples/   六个可运行示例（hello / control / region / struct / result / cinterop）
+share/aila/data/  共享数据表（错误码 `diag_codes.json`、编译器全局配置 `compiler.json`）
+stdlib/     标准库（**纯 AILA 实现**；三层规划见 designs/0003）
+runtime/    语言运行时（C 薄层：区域账本 + trap 通道 + 打印出口；三家族芯片实现）
+examples/   六个可运行示例（hello / control / region / struct / result / cinterop / os_demo）
 tests/corpus/  黄金语料与契约快照（token / AST / 布局 / 签名 / 绑定 / IR / 示例输出）
 tools/goldengen/  快照生成器（`go run ./tools/goldengen [-check]`）
 ci/         打包脚本（拉 llvm-mingw 并裁剪到 toolchain/、拼发布目录）
@@ -129,7 +138,7 @@ util  = { git = "https://…/util.git", tag = "v1.2.0" }  # git（tag 或 rev �
 import mylib.math.ops as ops;    // 依赖名 mylib · 子包 math · 模块 ops
 
 func main() {
-    io.print_i32_nl(ops.twice(21));
+    io.println(io.FmtVal.I { v: ops.twice(21) as I64 });
 }
 ```
 
@@ -172,6 +181,40 @@ module {
 输出边界、区域账本、`aila_rt_trap` 陷阱出口。换平台只改运行时，标准库不动。
 **不为它新增语言机制**——`#[c]` 已经够用（曾试过 `#[intrinsic]`，已删除）。
 
+### 标准库模块总览（designs/0003 三层规划）
+
+| 层 | 模块 | 说明 |
+|---|---|---|
+| 通用（宿主 + 嵌入式） | `std.core` | IoErr / FmtVal / 基础类型助手 |
+| | `std.io` | stdout / Writer / `printf`（纯 AILA 十进制、UTF-8） |
+| | `std.math` | 常用数学 |
+| | `std.strconv` | 数值 ↔ 文本 |
+| | `std.strings` | Text 操作 |
+| | `std.utf8` | UTF-8 编解码 |
+| | `std.binary` | 字节序 / 打包 |
+| | `std.sort` | 排序 |
+| 宿主（os 限定） | `std.os` | 文件 / 进程环境 |
+| | `std.time` `std.rand` `std.path` | 时间 / 随机 / 路径 |
+| 嵌入式（三家族） | `std.gpio` | GPIO 方向 / 读 / 写（寄存器直写） |
+| | `std.uart` | UART0 阻塞写 / 非阻塞读（stdout 同路） |
+| 显示栈（designs/0006，任意 target） | `std.pixfmt` | 像素格式（mono1 = 1bpp / 行 4 字节对齐 / MSB 在左） |
+| | `std.pixbuf` | 点阵画布：行主序 + stride，`clear/fill/set_px/get_px` + cell 网格元信息 |
+| | `std.damage` | 脏区（8 个 clip + cell 位图），句柄 + 区域内存，局部刷新是一等公民 |
+| | `std.paint` | 纯绘制 helper：`fill_rect/hline/vline/blit_glyph/text_cells` + 字库 `GlyphSet` |
+| | `std.textgrid` | 文本控制台：内容模型滚动 + cell 级 diff（滚动不重发整屏） |
+| | `std.display` | `Commit`（画布 + 脏区）= 唯一推送通道；驱动侧 `present` 按它算脏页 |
+| | `std.display_host` | 宿主调试出口（PBM(P4) / ASCII 预览）——**不进固件** |
+| esp8266（SDK 限定） | `std.wifi` | station + TCP 同步最小集（`[sdk] = "esp8266-nosdk"`） |
+
+嵌入式示例在 `esp8266/gpio_demo`（LED + 计数）与 `esp8266/wifi_std`（连 AP + HTTP GET）。
+
+显示栈有两个示例：`examples/display_demo`（**宿主**跑完整 L0–L5，输出 golden：全/半角占格、换行截断、
+cell 级 diff、脏页换算、ASCII 预览 + 画布指纹）与 `examples/oled_smoke`（ESP8266 裸机 128×64 OLED 四行
+滚动终端，每帧只刷脏页——实测 2 页 ≈5ms，整屏 8 页 ≈37ms）。
+
+`aila build --gc-sections` 让「`#compile.match` 选中的驱动」之外的一切不进产物（连符号都没有），
+`--emit-size-delta` 打印产物与逐模块目标文件体积——「换驱动 / 关功能」的体积差可以直接量。
+
 ## 编辑器支持
 
 `editors/vscode/` 是 AILA 的 VSCode 扩展。**语义能力来自编译器本体**（`aila lsp` 语言服务器）：
@@ -207,16 +250,11 @@ import cc _.cpacks.legacy;    // 实现导入：只编译链接，不产生声�
 悬停显示「来自 C 包 `mathkit` 的绑定」、`import` 行可点击；cpack 目录缺失会直接在
 `import` 那行标红（`E3001`）。生成的 `.ail` 是只读产物，改名/格式化会被拒绝。
 
-## 给 AI 编程工具的技能包（skill）
+## 给 AI 编程工具的技能包
 
-AILA 自带一份**写给 AI 用的手册**，讲的是「怎么用这个打包好的 `aila`」，不是编译器源码：
-
-```bash
-aila skill                              # 打印入口文档 SKILL.md（管道给 AI 就完事）
-aila skill reference/language.md        # 打某一篇
-aila skill --list                       # 看有哪些
-aila skill --install ~/.claude/skills   # 复制成 <目录>/aila/，登记进你的 AI 工具
-```
+AILA 自带一份**写给 AI 用的手册**（`share/aila/skills/aila/`），讲的是「怎么用这个
+打包好的 `aila`」，不是编译器源码。用法：把该目录登记进你的 AI 工具（Claude Code /
+Cursor 等的技能或规则目录），或直接把文件内容粘进对话。
 
 | 文件 | 讲什么 |
 |---|---|
@@ -227,8 +265,6 @@ aila skill --install ~/.claude/skills   # 复制成 <目录>/aila/，登记进�
 | `reference/cli.md` | 命令 / 参数 / 退出码（**生成物**，从命令树生成） |
 | `reference/errors.md` | 87 条诊断码 → 含义 → 修法（**生成物**，从错误码目录生成） |
 
-技能随发布包分发（`share/aila/skills/aila/`），release 同时产出只含技能文本的
-`aila-skill-<版本>-<平台>.zip`——不装 AILA 也能先把手册交给 AI。
 后两份参考由 `go run ./tools/skillgen` 生成，CI 用 `-check` 保证与实现不漂移。
 
 ## 当前实现范围（M1）

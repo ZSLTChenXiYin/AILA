@@ -1,268 +1,210 @@
-# AILA 语言速查（写给 AI 的精确版）
+# AILA 语言速查（AI 编程工具用）
 
-只写**当前批次真实可用**的写法。凡是这里没出现的能力，先写最小片段跑 `aila check` 确认，
-不要假设它有。
-
----
+> 权威来源是 `docs/designs/0001-language-spec.md`（语义）与各 `docs/designs/000N`（机制）。
+> 本文件是**当前实现**的浓缩版：写法以它为先行，遇到冲突以编译器的行为为准。
+>
+> 复用纪律：标准库已经有的，不要重写（`stdlib/*.aila` 全是 AILA 源码，直接读最快）。
 
 ## 1. 文件与模块
 
-- 一个 `.aila` 文件 = 一个模块；**模块名 = 文件路径**（`sub/format.aila` → `_.sub.format`）。
-- 一个模块 = **壳**（`module { }` 外面）+ **块**（`module { }` 里面）。
-  - 壳只放纯声明：`import`、类型、`const`、`#[c]` 无体函数、有体函数的**前向声明**。
-  - 块放实现：带函数体的 `func`、`var`、`state`、`view`、`region` 等运行期对象。
-  - 顺序固定：`import` → 类型/`const`/`#[c]` 声明 → `module { }` 块（写反会报 E2010 / E2001）。
-- 轻量形态：整个文件**没有** `module { }` 块时，顶层声明按「块」语义处理——
-  顶层 `func` **可以带函数体**，也允许顶层 `var`/`state`。
-- ⚠️ 两种形态不能混：只要文件里出现了 `module { }` 块，块外任何**带函数体**的 `func`
-  都会报 `E2010`。所以要么「全程轻量」（不写 `module`），要么「壳只留声明、实现全进块」。
-- `module hot { }` 是热替换模块：**禁止模块级 `var` 与 `@static` 分配**（E4006），
-  可迁移状态只能放 `state`。
+- 一个文件一个模块，模块名 = `import` 名：根包 `_.<子目录>.<文件>`；标准库 `std.<模块>` → `stdlib/<模块>.aila`。
+- 包根只放 `main.aila`；其它文件必须进子目录（`specs/0001 §1`）。
+- 文件是**整块形态**（壳 + `module { }`）**或**整块放在顶层（无 `module` 块时 `func` 可以直接带体）——**两者不能混**（E2010）。
+- 壳（`module` 块外）只放：`const` / `type` / `struct` / `enum` / 无体 `func` 声明 / `#compile.c func` 外部声明。
+
+```aila
+import std.io;
+import _.font.font16;        // 跨子包
+import cc _.cpacks.ssd1306;  // C 包（ch|cc：按扩展名分派）
+
+public func ping() -> U8;    // 壳：对外可见的实现体声明
+
+module {                     // 实现必须落在 module 块内
+    public func ping() -> U8 { return 1; }
+}
+```
 
 ## 2. 可见性
 
-三级、单向：文件内 ⊂ 子包内 ⊂ 包外；`public` 恒为「提一级」。
-
-| 写在哪 | 默认 | `public` 后 |
-|---|---|---|
-| 块内（`module { }`） | 文件内 | 子包内 |
-| 壳内 | 子包内 | 包外 |
-
-跨子包/跨项目 = 只认「包外」那一级，所以函数要写「壳内前向声明 + 块内实现」：
-
-```aila
-public func twice(v: I32) -> I32;   // 壳：接口
-
-module {
-    func twice(v: I32) -> I32 {     // 块：实现（签名必须一致）
-        return v + v;
-    }
-}
-```
-
-`E7031` = 声明没配到实现；`E7020` = 引用的声明在此不可见（诊断会指明缺哪一级）。
+- 默认**包内可见**；`public` = 包外（含根子包）可见——跨包可见只有这一档，没有逐字段可见性。
+- `import` 不做非限定展开：跨模块引用必须带模块名前缀（`io.printf` / `font16.font_cps` / `core.IoErr`）。
 
 ## 3. 声明
 
-```aila
-const LIMIT: I32 = 100;              // 常量（必须初始化）
-var counter: I32 = 0;                // 模块级可变（仅壳里/顶层）
-state fuel: U32 = 0;                 // 热替换模块的可迁移状态
-let n: I32 = 1;                      // 局部只读（深不可变）
-var m: I32 = 1;                      // 局部可变
-
-struct Point { x: I32, y: I32 };                    // 注意结尾分号
-enum Color { Red, Green, Blue };                     // 无载荷
-enum Err { Bad, Truncated { got: USize } };          // 带载荷变体（花括号）
-
-type Id = U32;                                       // 类型别名
-view bytes: [U8] = text;                             // 视图重标（必须写目标类型）
-```
-
-- `let` 没有类型标注时按初始化器推断；没有初始化器就必须写类型。
-- 名字不能用关键字与内置类型名（`I32`、`Text`、`chan` …）→ E3009。
+| 形态 | 说明 |
+|---|---|
+| `let x: T = v;` | 只读绑定（**深不可变**） |
+| `var x: T = v;` | 读写绑定 |
+| `const NAME: T = 字面量;` | 编译期常量；初始化器**只能是纯字面量表达式**（`const B: U8 = A * 2` 不合法） |
+| `view b: [U8] = text;` | 变型重标视图（**目标类型必须与源不同**；同型用 `let`，E4004） |
+| `struct X { 字段: 类型, };` | 纯数据；字段可内联定长数组 `[T; N]` |
+| `func X.m(self, ...)` | 方法写在 struct 外，类型前缀式 |
 
 ## 4. 函数与方法
 
-```aila
-func f(a: I32, b: I32) -> I32 { return a + b; }   // 有返回值的每条路径都要 return
-func g() { }                                      // 无返回值：不写 `-> T`
-func P.m(self, v: I32) -> I32 { return self.x + v; }  // 方法 = 类型前缀
-func f(v: I32) -> I32 ! Err { ... }               // 可恢复错误通道
-func fill(n: USize) @region[r] -> [U8] { return [0; n]@r; }  // 区域参数
-#[c] func c_add(a: I32, b: I32) -> I32;           // C 绑定声明（无函数体，只能进壳）
-```
-
-- `self` 免标注，类型就是前缀类型。
-- 效果子句顺序固定：`@region[...]` → `@mut[...]` → `@move[...]`；同类多参写 `@mut[a, b]`。
-- 变参：`#[c] func printf(fmt: Text, ...) -> I32;`（只用于 C 边界）。
-- `-> (T1, T2)` 产多值组，`return (1, 2);` 产出，解构赋值要先声明变量：
+签名三段式：**参数 = 数据流、`@` 段 = 效果、`->` = 产出**。
 
 ```aila
-func two() -> (I32, I32) { return (1, 2); }
-
-func main() {
-    var a: I32 = 0;
-    var b: I32 = 0;
-    (a, b) = two();          // 组解构（注意：不是 `let (a, b) = ...`）
-    _ = a + b;
-}
+func fill(dst: [U8], v: U8) @mut[dst];              // 写权
+func make(n: USize) @region[r] -> [U8];             // 分配许可（体内可 @r 分配）
+func consume(m: M) @move[m];                        // 转移
+func mix(a: [U8], b: [U8], n: USize) @region[r] @mut[a] @mut[b] @region[r];  // 顺序固定
 ```
 
-- `-> T ! E` 拆出错误通道（见 §9）。
+- `@` 顺序固定 `@region → @mut → @move`；同一参数不得既 `@mut` 又 `@move`。
+- **效果不传染**：调用不要求调用方具备被调方的效果声明（纯函数天然调不了需要供给的函数）。
+- `@mut[self]` 方法按指针传 self，**写回调用方内存**；但**不要在方法里通过 self 再调本模块的其它方法**（转发写权是已知缺口 → 用自由函数 + 传值兜住）。
+- 大聚合体（>16 字节的纯数据 struct）跨函数**按只读指针**传（实现约定，语义仍是拷贝）；`@mut[x]` 的同型参数同样按指针传，因此大聚合体的写会落回调用方。**≤16 字节的小结构体仍是按值复制**：它的标量字段写不回，可变接口必须用 `@mut[self]` 方法。
+- 大状态建议做成**句柄 + 区域内存**（`struct Damage { raw: [U32] }`），句柄两个机器字，写经 `raw` 切片落地（`std.damage` / `std.textgrid` 就是这么做的）。
+- 变参：`f(args: ...FmtVal)`，末位；`for v in args` 只读迭代。
 
 ## 5. 类型
 
-| 类别 | 拼写 | 备注 |
+- 基元：`I8..I64` `U8..U64` `F32` `F64` `Bool` `C32` `Text` `USize` `ISize` `Unsafe`。
+- 视图家族（同为 `(ptr, len)`）：`[T]` / `Text` / `[Unsafe]`；`[T; N]` 是**内联定长数组**（值语义，不参与区域绑定）。
+- 没有泛型、trait、接口、union、`List<T>`；没有隐式转换。
+- `T?` 仅句柄类（enum / struct 句柄）；`struct` 是唯一自定义复合类型，enum 可带载荷（tagged union）。
+
+## 6. 层系统：`#compile` / `#comprun` / `#runtime`
+
+`#` = 服务请求，三层封闭（层名保留，用户不得占用）；层内不存在的 API = E9204。
+
+| 层 | 语义 | v0 API |
 |---|---|---|
-| 有符号整数 | `I8 I16 I32 I64` | 溢出**默认 trap** |
-| 无符号整数 | `U8 U16 U32 U64` | 同上 |
-| 浮点 | `F32 F64` | 无隐式提升，`F32`/`F64` 混用要转 |
-| 布尔 | `Bool` | `true` / `false` |
-| 码点 | `C32` | 单引号字面量 `'x'` 恰好一个码点 |
-| 文本 | `Text` | 不可变 UTF-8 视图；与 `[U8]` 可等宽重标 |
-| 尺寸 | `USize` / `ISize` | 与平台指针同宽 |
-| 视图（切片） | `[T]` | 只有三条来路：分配、借用、`view` 重标 |
-| 内联数组 | `[T; N]` | 长度是类型的一部分，可直接做字段 |
-| 可空 | `T?` | 仅句柄类（视图/Text/enum/函数指针/协程句柄…） |
-| 错误通道 | `T ! E` | `E` 一般是 enum |
-| 通道 / 协程 | `chan T` / `coro T` | 并发：见 §9 |
-| 不安全 | `Unsafe` | `[Unsafe]` 才可越过安全区 |
-
-- `#size(T)` / `#align(T)` 查布局；视图、opaque、函数指针没有静态布局（E3602）。
-- 算术：`+ - * / %`（`%` 仅整数），比较 `< <= > >= == !=`，
-  逻辑 `&& || !`，位运算 `& | ^ ~ << >>`，复合赋值 `+= -= *= /= %= &= |= ^= <<= >>=`。
-- **比较链 `a < b < c` 非法**（E2004），写 `a < b && b < c`。
-- 视图 / `Text` / struct / 带载荷 enum 没有 `==`（E3205），内容比较自己写函数。
-
-## 6. 转换：`as` 与 `trunc`
-
-- `as`：**只做无损**——同宽互释（`I32 as U32`）或拓宽（`U8 as I64`）。
-- `trunc`：**有损**方向（变窄、整数↔浮点）。名字就提醒你「这里会丢信息」。
-- 没有隐式转换：`let x: I64 = i32_value;` 直接报 E3201。
-- 无符号目标不能承接负字面量（E3204）：写 `0xFF` 而不是 `-1 as U8`。
+| `#compile` | 纯编译期求值（运行时上下文 = E9201） | `sizeof(T)` `alignof(T)` `as(T, x)`（纯重解释）；声明指令 `c` / `inline` / `packed` / `align(N)`；剪枝指令 `if` / `match` |
+| `#comprun` | 编译期可折叠则折叠，否则运行时 | `len(v)`；声明指令 `error` |
+| `#runtime` | 强制运行时执行（常量位 = E9202） | `as(T, x)`（带检查/trap）、`trap(msg)`、`checked_add/sub/mul`、`atomic_*`、`chan(T, n)`、`spawn(f, args)`、`coro(f, args)` |
 
 ```aila
-let a: I32 = 300;
-let b: U8 = a trunc U8;        // 有损
-let c: I64 = a as I64;         // 无损拓宽
-let d: F64 = a trunc F64;      // 整数→浮点属有损
+let n = #compile.sizeof(Dev);
+let l = #comprun.len(buf);
+let (cv, ov) = #runtime.checked_add(a, b);   // (T, Bool)：溢出标志不 trap，调用侧自决
 ```
+
+- **显式转换只有 `#compile.as(T, x)` / `#runtime.as(T, x)`**；`as` / `trunc` / `len` / `trap` 这些关键字已退役。
+- 长度只有 `#comprun.len(v)`：`[T]` = 元素数，Text = 字节数，`[Unsafe]` = 字节长。
+
+### 编译期剪枝：`#compile.if` / `#compile.match`（语句级）
+
+条件是**编译期常量表达式**：字面量、`const`（含 import 进来的）、`#size(T)`/`#align(T)`、函数内一次性
+`let` 绑 const-expr、以及仅由这些构成的纯运算。命中分支正常生成代码，其余分支**只在代码生成阶段被省略**
+（解析 / 类型检查 / 区域与能力分析 / 告警照做，死代码不会腐烂）；求不出常量就**报错不降级**
+（`E3210`–`E3213`）。
+
+```aila
+const DISPLAY: U8 = 1;
+
+func main() {
+    #compile.match DISPLAY {
+        1 => ssd1306_run(),          // 只有这一支进产物
+        2 => st7735_run(),
+        _ => {},
+    }
+}
+```
+
+- 剪枝**不改 ABI / 模块接口指纹**；`#compile.match` 不必穷尽，被剪臂仍完整类型检查；
+- 只依赖源码常量，没有 `-D`、没有 manifest `[cfg]`；
+- 报告：`aila build --emit-json` 的 `compile_time_prunes`；配 `--gc-sections` 连未选中模块的符号都不进产物。
 
 ## 7. 内存：区域、分配、视图、move
 
-AILA 没有 `malloc` / `free` / 析构。内存只有三条来路：
+没有 `malloc` / `free` / 析构。内存三条来路：
 
 ```aila
-region work {                        // ① 体内区域块：出块整块回收
-    var buf: [U8] = [0; 4]@work;     //    分配点写裸区域名
+region work {                              // ① 体内区域块：出块整块回收
+    var buf: [U8] = [0; 16]@work;          //    定长
+    var dyn: [U8] = [0; n]@work;           //    运行期长度
+    let one: [U8] = [0]@work;              //    单值内存（C *U8 对应物）
     buf[0] = 7;
-    let n: USize = len buf;
-    _ = n;
 }
 
-func fill(n: USize, v: U8) @region[r] -> [U8] {   // ② 区域参数：寿命由调用方决定
-    return [v; n]@r;
+func make(n: USize) @region[r] -> [U8] {   // ② 区域参数：寿命由调用方给
+    return [0; n]@r;
 }
 
-var table: [U8] = [0; 16]@static;    // ③ 静态区：寿命无限（hot 模块禁止）
+var table: [U8] = [0; 16]@static;          // ③ 静态区：寿命无限
 ```
 
-```aila
-func main() {
-    region work {
-        var buf: [U8] = fill(8, 1)@[work];   // 区域实参通道：分配落进 work
-        _ = buf;
-    }
-}
-```
-
-- `copy x @[work]` 深拷贝到指定区域；`move x` 把主名字搬走（之后原名字不能再用，E4301）。
-- `view b: [U8] = t;` 等宽零拷贝重标；改宽度必须进 `unsafe { }`。
-- **逃逸**：返回体内 `region` 块里分配的视图 → E4101（块退出即回收）。改用区域参数或 `@static`。
-- `for x in view` 的 `x` 是**元素拷贝**，改 `x` 不影响源；要写就用 `@mut[...]` 参数或下标。
+- 引用的三条来路：分配（`[...]@r`）、同型借用（`let v: [U8] = a;`）、变型重标（`view`）。栈值**绑不成** `[T]`。
+- 逃逸检查位：返回 / 存入更长寿命的位置 / 跨并发捕获。返回 `@static` 或参数视图合法；返回体内 region 块的视图 = 编译错误。
+- `copy x @[r]` 显式深拷贝；`move x` 显式转移主名字（内存不动）。
 
 ## 8. 控制流与 match
 
-```aila
-if cond { } else if cond2 { } else { }      // if 恒为语句，不产出值（E2008）
-
-for var i: I32 = 0; i < n; i = i + 1 { }    // 三段式（首槽只能是一条 var）
-for !done { }                                // 条件循环
-for x in xs { }                              // 元素
-for i, x in xs { }                           // 下标 + 元素
-
-match v {                                    // 取值位置：所有分支同型
-    1 => "one",
-    _ => "other",
-};
-
-match c {                                    // 表达式分支
-    Color.Red => io.print_text("red"),
-    _ => io.print_text("?"),
-}
-
-match e {                                    // 块分支必须在每条非发散路径 out 一个值
-    ParseErr.Truncated { got, need } => {
-        out got;                             // 或 return / trap
-    }
-    _ => { }
-}
-```
-
-- 封闭值域（enum / `T?` / `T ! E`）必须穷尽（E3401）；整数族必须 `_` 且放最后（E3403）。
-- 判别表达式若以「类型名 + 构造字面量」收尾要做括号：`match (Shape.Circle { r: 1.0 }) { }`（E2003）。
-- `break` / `continue` / `return` / `defer { }` / `trap`（不可恢复终止）。
+- **没有 `while`**：`for 条件 { }`；无限循环 `for { }`；`for i in 0..n`（白名单迭代）、`for v in 数组`。
+- `if` 不产出值；需要值用 `match`。裸块 `{ }` 非法（E2002）。
+- `break` / `continue` 是 C 语义；`defer` 块级、LIFO，trap 不触发。
+- `match` 是唯一多路分派与解构手段：`match v { .I { v } => ..., _ => ... }`；判别值域覆盖不全要 `_`。
 
 ## 9. 错误与可空
 
 ```aila
-enum ParseErr { BadMagic, Truncated { got: USize, need: USize } };
+public enum Err { Empty, Invalid { at: USize }, Range };   // 错误集（#runtime.error 定空间）
 
-func parse(buf: [U8]) -> I32 ! ParseErr {
-    if len buf < 8 {
-        return _ ! ParseErr.Truncated { got: len buf, need: 8 };  // 造错
-    }
-    return 0x2A;
+public func parse(t: Text) -> I64 ! Err {                 // T ! E
+    if n == 0 { return .Empty; }                          // 错误臂：只写变体
+    return v;                                             // 成功臂：直接返回值
 }
 
-func caller(buf: [U8]) -> I32 ! ParseErr {
-    let v: I32 = parse(buf)?;    // `?`：错误原样上抛（语言不引入栈展开）
-    return v;
-}
-
-match parse(buf) {               // 接住
-    Ok  { v } => io.print_i32_nl(v),
-    Err { e } => { _ = e; }
-}
+let x: I64 = parse(s)?;                                   // ? 上抛（= 提前 return）
 ```
 
-- **可选 `T?`**：类型存在，但当前批次没有 `Some`/`None` 构造器可用（`E3001`）。
-  要表达「可能没有」就用 `T ! Missing` 这种枚举错误通道，或用 `0`/空视图当哨兵。
-- `_ = f();` 是「显式丢错」的**唯一**豁免口；`let _ = f();` 非法（E2006）。
+- `T?` = `None` / `Some { v: ... }`（句柄类才有）。
+- `#runtime.trap("…")` = 不可恢复终止；算术溢出 / 除零 / 越界 / 移位超宽默认就是 trap（`#runtime.checked_*` 才拿得到标志）。
 
-## 10. 并发（当前批次：仅语法，代码生成未落地）
+## 10. 并发
 
-- 能过 `aila check` 的只有「起线程跑一次调用」：`thread f(args);`（要求本文件是轻量形态，
-  或该 `thread` 语句写在 `module { }` 块内）。
-- `coroutine` / `chan` / `<-` / `yield` 的完整形态还没定型，且**代码生成未落地**（E9002）。
-  真需要并发时：先用 C 边界（`cpacks/`）或等后续批次，不要硬写。
-- 线程里禁止写模块级 `var`（E5003），入口参数白名单见 E5002。
+`#runtime.spawn(f, args)`（thread，fire-and-forget）/ `#runtime.coro(f, args)`（协程句柄 + `resume`）/
+`#runtime.chan(T, n)`（双端 SPSC，`<-` 收发）/ `select` + `case` / `#runtime.atomic_*`（`[Unsafe]` + 偏移，全 seq_cst）。
 
 ## 11. C 互操作
 
-1. 把 C 件放进项目的 `cpacks/<名字>/`：`include/*.h` + 实现 `.c`（同目录即关联）。
-2. 导入：`import ch _.cpacks.<名字>;`（`import cc` 只编译不产生声明）。
-3. 直接用 C 原名：`let r: I32 = mathkit.mathkit_add(1, 2);`
-4. 需要 `.ail` 产物时：`aila bindgen`（默认写 `build/bindgen/<cpack>.ail`）。
+- `#compile.c func name(参数) -> 返回;` 声明外部符号；C 源码/头放 `cpacks/<名字>/`，`import cc _.cpacks.<名字>` 一起编译链接。
+- `[U8]` 跨 C 边界**只传指针**（`(ptr, len)` 里的 len 不展开）：要么把指针绑一次（bind 式），要么形参照抄 `(ptr, len, ...)` 形状。
+- `T*` → `[T]?`，`char*` → `[U8]?`；C 结构体直译成 struct（自然对齐），`union` 永不直译。
 
-注意：
-- 返回值是 C 错误码时，AILA 侧自己判码（语言不抛异常）。
-- 变参只能收标量/无载荷 enum/视图/函数指针（E6001）；`Text` 要转 `[U8]`。
-- union 永不直译（E6002 / W3002）：用 `[U8; N]` + `unsafe` 或写 C shim。
-- 没有 clang 时 bindgen 走 builtin 兜底档，覆盖窄（W3001 会逐条列出没映射的声明）。
+## 12. 标准库现状（三层规划 designs/0003，全部已落地）
 
-## 12. 标准库现状（别假设更多）
+| 层 | 模块 | 提供 |
+|---|---|---|
+| 通用 | `std.core` | fill 引擎（`fill_u64` `fill_i64` `fill_f64`）、`IoErr`（`Closed` `NoSpace{need}` `Timeout` `NotFound` `Denied`） |
+| 通用 | `std.io` | `print/println/printf`（`io.FmtVal.I/U/F/B/C/T { v: ... }` 装箱，`%d %u %f %b %c %s %%`）；vtable `Writer`（`stdout()` + `put_text/put/put_u64/put_i64/put_f64/put_bool/put_char/put_nl`） |
+| 通用 | `std.math` | `wrapping_add_u32` `wrapping_add_i32` `abs_i32` `min_i32` `max_i32` `fmod` |
+| 通用 | `std.strconv` | `format_i64/u64/f64`、`parse_i64/u64/f64`（`! Err`） |
+| 通用 | `std.strings` | `len_runes/contains/index/has_prefix/has_suffix/bounds` + `concat/split/join/replace/upper_ascii/lower_ascii`（写进调用方缓冲） |
+| 通用 | `std.utf8` | `encode` / `rune_len` / `cp_at` / `valid` |
+| 通用 | `std.binary` | U16..U64 / I16..I64 × LE/BE 的 `le_/be_read_*`、`le_/be_write_*` |
+| 通用 | `std.sort` | `sort_i64/u64/f64` + `_by` 版（`cmp(a,b) -> Bool` 函数指针） |
+| 宿主 | `std.time` | `mono_ms()` / `sleep_ms(ms)` |
+| 宿主 | `std.os` | 文件 `open/read/write/close`（`! IoErr`）+ `args_count/args_get` + `env/env_set`；**只有 OS target 可链接** |
+| 宿主 | `std.rand` | `Rand{s}`（`next_u64` / `below(n)`，xorshift） |
+| 宿主 | `std.path` | `base/dir/ext` + `join` |
+| 嵌入式 | `std.gpio` | `MODE_IN/MODE_OUT` + `mode/write/read`（三家族寄存器直写） |
+| 嵌入式 | `std.uart` | `init(id, baud)` / `write` / `read`（stdout 同路 UART0） |
+| 显示栈 | `std.pixfmt` | `mono1()` / `of(code)` / `row_bytes(fmt,w)` / `stride_for(fmt,w)` / `byte_of` / `bit_of`；1bpp、行 4 字节对齐、MSB 在左 |
+| 显示栈 | `std.pixbuf` | `Pixbuf{data,w,h,stride,fmt}` + `new/new_of/cap_bytes/row_bytes/clear/fill/set_px/get_px/cols/rows`；cell = 8×16 像素 |
+| 显示栈 | `std.damage` | 脏区句柄 `Damage{raw}`（`[0; damage.WORDS]@reg`）+ `new/clear/add_rect/add_cell/has_cell/cell_count/clip_count/clip/union_into/bounds`；`Rect{x0,y0,x1,y1}` 半开 |
+| 显示栈 | `std.paint` | `GlyphSet{cps,bits,widths,count,px_h}` + `glyph_index/glyph_width/fill/fill_rect/hline/vline/blit_glyph/text_cells/cell_rect/decode` |
+| 显示栈 | `std.textgrid` | 控制台句柄 `TextGrid{raw}`（`[0; textgrid.words(cols,rows)]@reg`）+ `new/clear/get/set/scroll_by/newline/put_cp/put_text/render/render_all`；滚动 = 内容模型 + cell 级 diff |
+| 显示栈 | `std.display` | `Commit{fb,dmg,enable}` + `new_commit(fb,dmg)` / `set_damage` / `damage_of` / `set_buf` / `enabled`：**唯一推送通道**（驱动侧实现 `present(commit)`） |
+| 显示栈 | `std.display_host` | `sink_host_pbm(commit)` / `sink_host_ascii(commit)`——宿主导出专用，**不进固件** |
+| esp8266 | `std.wifi` | **仅 `[sdk] = "esp8266-nosdk"`**：`mode_station/connect/status/ip` + TCP `tcp_connect/tcp_send/tcp_recv/tcp_close` |
 
-| 模块 | 提供 |
-|---|---|
-| `std.io` | `print_text` `print_bytes` `print_i32` `print_u32` `print_usize` `print_f32` `print_f64` `print_bool` `print_char` `print_nl` `print_i32_nl` `print_u32_nl` |
-| `std.math` | `wrapping_add_u32` `wrapping_add_i32` `abs_i32` `min_i32` `max_i32` `fmod` |
+没有 `std.str` / `std.mem` / `std.vec` / `std.atomics`（原子原语 = `#runtime.atomic_*`）。需要就把实现写进用户项目里。
 
-没有 `std.str` / `std.mem` / `std.vec`。需要就把实现写进用户项目里（它们同样是 AILA 源码）。
-
-## 13. 十三个「别的语言不是这样」的点
+## 13. 「别的语言不是这样」的点
 
 1. `if` 不产出值 → 用 `match` 或「占位 + if 赋值」。
-2. 没有 `while` → `for 条件 { }`。
-3. `len`/`copy`/`move`/`resume` 是**前缀**关键字，没有方法形态（E2005）。
-4. 裸块 `{ }` 非法 → `region 名字 { }`（E2002）。
-5. `::` 不存在 → 点号（E1007）。
-6. 没有隐式数值转换（E3201）。
-7. 算术默认 trap：不写 `wrapping_*` 就会在溢出时终止。
-8. 浮点取余没有 `%` → `std.math.fmod`（E3209）。
-9. 比较链非法（E2004）。
-10. 有返回值函数不能当语句裸调用（E3206）。
-11. 单引号只能是**一个码点**，多字符是字符串（E1003）。
-12. 数字不能带类型后缀（`1u8` 非法，E1006）；八进制写 `0o777`。
-13. `let` 是深不可变；`var` 才可写；跨函数改写要 `@mut[参数]`（E4201）。
+2. 没有 `while` → `for 条件 { }`；裸块 `{ }` 非法 → `region 名字 { }`（E2002）。
+3. `let` 深不可变；`var` 才可写；跨函数改写要 `@mut[参数]`（E4201）。
+4. 零隐式转换：`#compile.as(T, x)` 显式；窄化 / 浮点↔整数走 `#runtime.as`（带检查）。
+5. 算术默认 trap（溢出 / 除零 / 越界 / 移位超宽），要回绕就写 `#runtime.checked_*` 或 `std.math.wrapping_*`。
+6. 保留字：`out` / `copy` / `move` / `view` / `region` / `import` / `module` 都不能当变量名。
+7. 函数实现必须进 `module { }` 块（只要文件里出现了该块）；壳里只放声明。
+8. 模块级 `let X: Text = "…"` 当前是空串 → 文本常量放函数内（`let s: Text = "…"; view b: [U8] = s;`）。
+9. `const` 初始化器必须是纯字面量（不引用别的 const、不做运算）。
+10. `[T; N]` 与 `[T]` 不是一种类型：传参前先 `view` 重标（同型用 `let`）。
+11. trap / 越界 / 溢出都会终止进程（嵌入式上 = 重启），所以**库内一律夹住越界再画/写**。
+12. 跨模块调用不可内联（铁律 7）→ 想让优化器跨模块折叠是白费力气，用 `#compile.if/match` 剪枝。
+13. 没有方法重载、没有默认参数、没有具名实参；同名函数不能重载 → 用 `类型.名` 或不同前缀区分。

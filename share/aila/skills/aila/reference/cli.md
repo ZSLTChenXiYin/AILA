@@ -33,7 +33,7 @@ AILA 是面向嵌入式、以区域内存模型与模块级热替换为核心的
 |---|---|---|---|
 | `--backend` | string | `auto` | bindgen 档位：auto \| clang \| builtin |
 | `--out` | string | `—` | 输出文件（单 cpack 时可用） |
-| `--target` | string | `—` | 目标 board（临时覆盖清单，影响 long/size_t 的映射） |
+| `--triple` | string | `—` | 目标三元组（临时覆盖清单，影响 long/size_t 的映射） |
 
 继承参数：
 
@@ -54,15 +54,17 @@ AILA 是面向嵌入式、以区域内存模型与模块级热替换为核心的
 
 | 参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `--board` | string | `—` | 目标 board（临时覆盖清单） |
 | `--cc` | string | `—` | C 编译器 / 链接器选择（auto / bundled / system:...） |
 | `--deps-update` | bool | `—` | 重新解析跨项目依赖并重写 aila.lock |
 | `--emit-bindings` | bool | `—` | 把生成的 C 绑定 `.ail` 复制到产物目录 |
 | `--emit-ir` | bool | `—` | 额外写出 `.ll` 文本 |
 | `--emit-json` | bool | `—` | 写出构建报告 `aila-build.json` |
+| `--emit-size-delta` | bool | `—` | 构建后报告产物与每个模块目标文件的大小（量化换驱动 / 关功能的体积差） |
+| `--gc-sections` | bool | `—` | 函数/数据分段 + 链接期 --gc-sections：未被引用的模块代码不进产物（配合 #compile.match 选驱动） |
 | `--llvm` | string | `—` | LLVM 后端选择（auto / bundled / system:...） |
 | `--opt` | int | `0` | 优化级别（0-3，临时覆盖清单） |
 | `--out` | string | `—` | 输出文件名（默认 `app` + 平台后缀） |
+| `--triple` | string | `—` | 目标三元组（临时覆盖清单，如 xtensa-esp8266-elf） |
 | `--vendor` | bool | `—` | 把依赖复制到 vendor/（离线构建） |
 
 继承参数：
@@ -84,15 +86,17 @@ AILA 是面向嵌入式、以区域内存模型与模块级热替换为核心的
 
 | 参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `--board` | string | `—` | 目标 board（临时覆盖清单） |
 | `--cc` | string | `—` | C 编译器 / 链接器选择（auto / bundled / system:...） |
 | `--deps-update` | bool | `—` | 重新解析跨项目依赖并重写 aila.lock |
 | `--emit-bindings` | bool | `—` | 把生成的 C 绑定 `.ail` 复制到产物目录 |
 | `--emit-ir` | bool | `—` | 额外写出 `.ll` 文本 |
 | `--emit-json` | bool | `—` | 写出构建报告 `aila-build.json` |
+| `--emit-size-delta` | bool | `—` | 构建后报告产物与每个模块目标文件的大小（量化换驱动 / 关功能的体积差） |
+| `--gc-sections` | bool | `—` | 函数/数据分段 + 链接期 --gc-sections：未被引用的模块代码不进产物（配合 #compile.match 选驱动） |
 | `--llvm` | string | `—` | LLVM 后端选择（auto / bundled / system:...） |
 | `--opt` | int | `0` | 优化级别（0-3，临时覆盖清单） |
 | `--out` | string | `—` | 输出文件名（默认 `app` + 平台后缀） |
+| `--triple` | string | `—` | 目标三元组（临时覆盖清单，如 xtensa-esp8266-elf） |
 | `--vendor` | bool | `—` | 把依赖复制到 vendor/（离线构建） |
 
 继承参数：
@@ -236,8 +240,8 @@ AILA 是面向嵌入式、以区域内存模型与模块级热替换为核心的
 
 | 参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `--board` | string | `host` | 目标 board |
 | `--name` | string | `—` | 包名（默认取目录名） |
+| `--triple` | string | `—` | 目标三元组（写入 [target]；不给 = 宿主） |
 
 继承参数：
 
@@ -280,46 +284,18 @@ AILA 是面向嵌入式、以区域内存模型与模块级热替换为核心的
 | 参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `--arg` | stringArray | `[]` | 传给程序的参数（可重复） |
-| `--board` | string | `—` | 目标 board（临时覆盖清单） |
 | `--cc` | string | `—` | C 编译器 / 链接器选择（auto / bundled / system:...） |
 | `--deps-update` | bool | `—` | 重新解析跨项目依赖并重写 aila.lock |
 | `--emit-bindings` | bool | `—` | 把生成的 C 绑定 `.ail` 复制到产物目录 |
 | `--emit-ir` | bool | `—` | 额外写出 `.ll` 文本 |
 | `--emit-json` | bool | `—` | 写出构建报告 `aila-build.json` |
+| `--emit-size-delta` | bool | `—` | 构建后报告产物与每个模块目标文件的大小（量化换驱动 / 关功能的体积差） |
+| `--gc-sections` | bool | `—` | 函数/数据分段 + 链接期 --gc-sections：未被引用的模块代码不进产物（配合 #compile.match 选驱动） |
 | `--llvm` | string | `—` | LLVM 后端选择（auto / bundled / system:...） |
 | `--opt` | int | `0` | 优化级别（0-3，临时覆盖清单） |
 | `--out` | string | `—` | 输出文件名（默认 `app` + 平台后缀） |
+| `--triple` | string | `—` | 目标三元组（临时覆盖清单，如 xtensa-esp8266-elf） |
 | `--vendor` | bool | `—` | 把依赖复制到 vendor/（离线构建） |
-
-继承参数：
-
-| 参数 | 类型 | 默认 | 说明 |
-|---|---|---|---|
-| `--color` | string | `auto` | auto\|always\|never |
-| `--json` | bool | `—` | 机器可读输出 |
-| `--quiet` | bool | `—` | 少输出 |
-| `--verbose` | bool | `—` | 多输出 |
-
-## `aila skill`
-
-AILA 自带一份写给 AI 编程工具的技能包（SKILL.md + reference/*.md），
-讲的是「怎么用这个打包好的 aila」而不是编译器源码。
-
-  aila skill                          把入口文档 SKILL.md 打到 stdout
-  aila skill reference/language.md    打印其中一篇
-  aila skill --list                   列出全部文件
-  aila skill --path                   打印技能目录
-  aila skill --install <目录>         复制到 <目录>/aila（例如 ~/.claude/skills）
-
-用法：`aila skill [文件]`
-
-参数：
-
-| 参数 | 类型 | 默认 | 说明 |
-|---|---|---|---|
-| `--install` | string | `—` | 把技能复制到指定目录下的 aila/（如 ~/.claude/skills） |
-| `--list` | bool | `—` | 列出技能里的全部文件 |
-| `--path` | bool | `—` | 只打印技能目录 |
 
 继承参数：
 
@@ -332,7 +308,7 @@ AILA 自带一份写给 AI 编程工具的技能包（SKILL.md + reference/*.md�
 
 ## `aila target`
 
-目标与地形表
+目标三元组与已装工具覆盖
 
 用法：`aila target [command]`
 
@@ -347,7 +323,7 @@ AILA 自带一份写给 AI 编程工具的技能包（SKILL.md + reference/*.md�
 
 ## `aila target list`
 
-列出内置 board 表
+概览已装工具链覆盖的架构与宿主三元组
 
 用法：`aila target list [command]`
 
@@ -362,9 +338,9 @@ AILA 自带一份写给 AI 编程工具的技能包（SKILL.md + reference/*.md�
 
 ## `aila target show`
 
-显示某个 board 的细节
+拆解一个三元组并探测哪些已装工具能服务它
 
-用法：`aila target show <board>`
+用法：`aila target show <triple>`
 
 继承参数：
 
@@ -407,16 +383,19 @@ AILA 自带一份写给 AI 编程工具的技能包（SKILL.md + reference/*.md�
 
 ## `aila toolchain install`
 
-把官方 release zip 解到 toolchain/<triple>/
+安装工具链：按 available 清单联网下载，或本地 zip 离线安装
 
-用法：`aila toolchain install <release.zip>`
+用法：`aila toolchain install <family[@version] | gcc/<triple>[@version] | sdk/<名称>[@版本] | 本地zip>`
 
 参数：
 
 | 参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
+| `--family` | string | `—` | 本地 zip 安装时指定家族（clang / esp-clang / gcc） |
 | `--force` | bool | `—` | 覆盖已有目录 |
-| `--triple` | string | `—` | 安装到指定三元组目录 |
+| `--mirror` | string | `—` | 下载镜像前缀（镜像会拼在原 URL 前，可逗号分隔多个） |
+| `--triple` | string | `—` | gcc 家族本地 zip 安装时指定目标三元组 |
+| `--version` | string | `—` | 本地 zip 安装时指定版本（默认 zip 内 VERSION 文件或文件名） |
 
 继承参数：
 
@@ -429,7 +408,7 @@ AILA 自带一份写给 AI 编程工具的技能包（SKILL.md + reference/*.md�
 
 ## `aila toolchain list`
 
-列出已安装的随包工具链
+列出已安装的工具链家族与可下载清单
 
 用法：`aila toolchain list [command]`
 

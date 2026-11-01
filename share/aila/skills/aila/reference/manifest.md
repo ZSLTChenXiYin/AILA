@@ -10,8 +10,7 @@ name = "demo"          # 必填；[A-Za-z_][A-Za-z0-9_-]*
 version = "0.1.0"      # 必填
 entry = "_.main"       # 入口模块名（默认就是 "_.main"）
 
-[target]
-board = "host"         # 默认 host
+# 不写 [target] = 宿主目标
 ```
 
 ## 全字段
@@ -23,14 +22,14 @@ version = "0.1.0"
 entry = "_.main"                 # 入口模块：模块名 = 路径（sub/app.aila → "_.sub.app"）
 
 [target]
-board = "esp32s3"                # 内置 board：host / esp32s3 / riscv32 / aarch64
-# arch = "xtensa"                # board 不在表里时，必须给 arch 或 triple
-# triple = "xtensa-esp32s3-elf"
+triple = "xtensa-esp32s3-elf"    # 目标三元组；不写 = 宿主
+# cpu = "esp32s3"                # 缺省取 triple 第二段（esp 系芯片名即 cpu）
 
 [build]
 opt = 0                          # 0..3（默认 0）
 warnings = "default"             # default | strict | allow
 debug = false
+libs = ["ws2_32"]                # 额外链接的系统库名（-l 形态）；不需要就删掉
 
 [build.toolchain]
 cc = "bundled"                   # auto（默认）| bundled | system:clang | system:gcc
@@ -52,19 +51,20 @@ mylib = { path = "../mylib" }                       # 本地依赖
 | `[package]` | `name` | 必填；包名（依赖别人时它就是导入根） |
 | | `version` | 必填；`aila.lock` 会记录 |
 | | `entry` | 入口模块名，默认 `"_.main"`；该模块里必须有 `func main()`（否则 E7005） |
-| `[target]` | `board` | 默认 `host`；`aila target list` 看候选 |
-| | `arch` / `triple` | board 不在内置表时才需要 |
+| `[target]` | `triple` | 目标三元组（rfcs/0006 §6）；不写 = 宿主；`aila target list` 看已装覆盖 |
+| | `cpu` | `-mcpu` 值；缺省从 triple 第二段推导（`xtensa-esp8266-elf` → `esp8266`） |
 | `[build]` | `opt` | `0..3`，越界 E7007 |
 | | `warnings` | `default`/`strict`/`allow` |
 | | `debug` | 是否带调试信息 |
-| `[build.toolchain]` | `cc` | `auto`/`bundled`/`system:名字`；默认只用随包 clang |
+| | `libs` | 额外链接的**系统库名**（`-l` 形态，如 `ws2_32` / `pthread` / `m`）；只许库名不许路径，cpack 自带的静态库放 `cpacks/<名字>/` 即可 |
+| `[build.toolchain]` | `cc` | `auto`/`bundled`/`system:名字`；默认只用随包工具链 |
 | | `llvm` | 同上 |
 | `[domains]` | `<名>` | `kind` 必须是 `internal-ram`/`external-ram`/`rtc-slow`/`default`；嵌入式 target 的 `size` 必填（形如 `64K`/`8M`） |
 | `[dependencies]` | `<名>` | 名字即导入根；`path` 或 `git`+`tag`/`rev` 二选一（E7021） |
 
 ## 与命令行的关系
 
-- 清单里的值可以被命令行**临时覆盖**（不改文件）：`--board`、`--opt`、`--cc`、`--llvm`。
+- 清单里的值可以被命令行**临时覆盖**（不改文件）：`--triple`、`--opt`、`--cc`、`--llvm`。
 - `aila deps --update` 会按依赖重新生成 `aila.lock`（锁文件记录来源/版本/内容哈希，
   不会自动跟着漂移，不一致就报 E7023）。
 - 未知段/键不会静默忽略，会给你 `W7001`。
