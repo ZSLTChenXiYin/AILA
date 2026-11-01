@@ -42,8 +42,47 @@ public func blit_glyph(pb: pixbuf.Pixbuf, gs: GlyphSet, cp: U32, col: U16, row: 
 public func text_cells(pb: pixbuf.Pixbuf, gs: GlyphSet, bytes: [U8], n: USize, col: U16, row: U16) @mut[pb] -> U16;
 // cell_rect 返回一个 cell 的像素矩形。
 public func cell_rect(col: U16, row: U16) -> damage.Rect;
+// transpose_page 把画面第 page 页（8 行高）的列 [c0, c1) 压成**页格式**字节：
+// dst[i] 的 bit k = 像素 (c0+i, page*8+k)，bit0 在最上。这是 SSD1306 一类页寻址
+// 控制器的显存布局；画布本身永远是行主序（带 stride 对齐），位搬运只在这里发生
+//（designs/0006 §2.3：不做整块转置缓冲，省 1KB RAM）。
+// 纯 AILA + 纯数据 → 能在宿主上 golden 测试，这是把驱动协议从 C 搬回 AILA 的主因。
+public func transpose_page(pb: pixbuf.Pixbuf, page: U16, c0: U16, c1: U16, dst: [U8]) @mut[dst];
 
 module {
+    public func transpose_page(pb: pixbuf.Pixbuf, page: U16, c0: U16, c1: U16, dst: [U8]) @mut[dst] {
+        let rs: USize = #compile.as(USize, pb.stride);
+        let cap: USize = #compile.as(USize, #comprun.len(dst));
+        let fbcap: USize = #compile.as(USize, #comprun.len(pb.data));
+        let y0: U16 = page * #compile.as(U16, pixbuf.CELL_H / 2); // 一页 = 8 行
+        var i: USize = 0;
+        var x: U16 = c0;
+        for x < c1 {
+            if i >= cap {
+                break;
+            }
+            let byte_off: USize = #compile.as(USize, x / 8);
+            let mask: U8 = #compile.as(U8, 0x80) >> #compile.as(U8, x % 8);
+            var acc: U8 = 0;
+            var k: U16 = 0;
+            for k < 8 {
+                let y: U16 = y0 + k;
+                if y < pb.h {
+                    let at: USize = #compile.as(USize, y) * rs + byte_off;
+                    if at < fbcap {
+                        if (pb.data[at] & mask) != 0 {
+                            acc = acc | (#compile.as(U8, 1) << #compile.as(U8, k));
+                        }
+                    }
+                }
+                k = k + 1;
+            }
+            dst[i] = acc;
+            i = i + 1;
+            x = x + 1;
+        }
+    }
+
     public func cell_rect(col: U16, row: U16) -> damage.Rect {
         let cw: U16 = #compile.as(U16, pixbuf.CELL_W);
         let ch: U16 = #compile.as(U16, pixbuf.CELL_H);

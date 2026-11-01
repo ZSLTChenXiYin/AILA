@@ -1,0 +1,239 @@
+// 子包 · panel —— SSD1306 的**协议层**（显示栈 L6 的 AILA 半边）
+//
+// designs/0006 §2.2 的 L6 有两半：
+//   - 传输半边 = `cpacks/sw_i2c`（C：GPIO 位时序、START/STOP、字节+ACK、总线恢复）；
+//   - 协议半边 = **本模块**（AILA：初始化命令序列、页寻址窗口、行主序→页格式搬运）。
+//
+// 协议搬回 AILA 的理由（designs/0006 §4.1 第 13 条）：它是纯数据变换，能用宿主 golden
+// 测试（`std.paint.transpose_page`），而且 `esp8266_oled` / `oled_smoke` 两个工程可以
+// 共用同一份；C 侧只剩真的必须 C 的微秒时序。
+//
+// IoC 方向：本模块 import std.display / std.damage / std.paint 并调用它们；
+// std 侧不知道设备存在，也不知道 I2C 存在。
+import std.pixbuf;
+import std.damage;
+import std.paint;
+import std.display;
+
+// ---- C 边界（cpacks/sw_i2c/sw_i2c.c）----
+// 手写声明而不是 bindgen：头文件里的 `const unsigned char *` 会映射成 `[U8]?`，
+// 而 v2 退役了 Some 构造、也没有隐式包装，AILA 侧**造不出非空的 `[T]?`**（本轮实测，
+// 见 docs/plans/0002 §B1 的记录）——所以这里按「视图只传指针 + 显式长度」的既有约定手写。
+#compile.c func sw_i2c_begin(scl: U32, sda: U32, addr7: U32) -> U32;
+#compile.c func sw_i2c_write(ctrl: U32, bytes: [U8], n: U32) -> I32;
+#compile.c func sw_i2c_recover();
+#compile.c func sw_i2c_nack() -> U32;
+#compile.c func sw_i2c_sent() -> U32;
+#compile.c func board_mark(v: U32);
+
+// ADDR_MAIN / ADDR_ALT = 4 针模块的两种常见 I2C 地址
+public const ADDR_MAIN: U32 = 0x3C;
+public const ADDR_ALT: U32 = 0x3D;
+// PAGE_ROWS = 一页覆盖的行数（SSD1306 页寻址的最小单位）
+public const PAGE_ROWS: U16 = 8;
+// PAGES = 128×64 屏的页数
+public const PAGES: U16 = 8;
+// CTRL_CMD / CTRL_DATA = I2C 事务的控制字节（SSD1306 语义）
+public const CTRL_CMD: U32 = 0x00;
+public const CTRL_DATA: U32 = 0x40;
+
+// init 绑定两根线并下发初始化序列；返回 1 = 屏在线（地址有应答）。
+// 先试 0x3C，不应答再试 0x3D。
+public func init(scl: U32, sda: U32) -> U32;
+// cmd 下发一条 SSD1306 命令
+public func cmd(b: U8);
+// page_dirty 判断第 p 页是否脏（cell 位图折页 ∪ clip 相交）
+public func page_dirty(d: damage.Damage, p: U16) -> Bool;
+// page_cols 返回第 p 页脏区的列范围 (c0, c1)（半开；无脏区 = (0,0)）
+public func page_cols(d: damage.Damage, p: U16) -> (U16, U16);
+// pages 返回脏页数（诊断用）
+public func pages(d: damage.Damage) -> U16;
+// present 按 commit 的 damage 逐脏页下发（唯一推送通道）
+public func present(c: display.Commit);
+// present_all 整屏下发（首次上屏 / 屏被外部改动）
+public func present_all(c: display.Commit);
+// nack / sent 诊断计数：失败事务数 / 累计发送字节数
+public func nack() -> U32;
+public func sent() -> U32;
+// mark 应急打点（写 UART FIFO，不经过 std.io）
+public func mark(v: U32);
+
+module {
+    // 初始化序列（0xAE 关屏 … 0xAF 开屏）。页寻址模式下不需要 0x21/0x22
+    // ——SSD1306 忽略水平寻址（designs/0005 §6），一切窗口都用页寻址指令给。
+    let INIT_CMDS: [U8; 26] = [
+        0xAE, 0xD5, 0x80, 0xA8, 0x3F, 0xD3, 0x00, 0x40, 0x8D, 0x14,
+        0x20, 0x00, 0xA1, 0xC8, 0xDA, 0x12, 0x81, 0xCF, 0xD9, 0xF1,
+        0xDB, 0x40, 0xA4, 0xA6, 0x2E, 0xAF,
+    ];
+
+    public func init(scl: U32, sda: U32) -> U32 {
+        var ok: U32 = sw_i2c_begin(scl, sda, ADDR_MAIN);
+        if ok == 0 {
+            ok = sw_i2c_begin(scl, sda, ADDR_ALT);
+        }
+        if ok == 0 {
+            return 0;
+        }
+        var k: USize = 0;
+        for k < #comprun.len(INIT_CMDS) {
+            cmd(INIT_CMDS[k]);
+            k = k + 1;
+        }
+        return 1;
+    }
+
+    public func cmd(b: U8) {
+        var one: [U8; 1] = [0; 1];
+        one[0] = b;
+        view v: [U8] = one;
+        _ = sw_i2c_write(CTRL_CMD, v, 1);
+    }
+
+    public func page_dirty(d: damage.Damage, p: U16) -> Bool {
+        if p >= PAGES {
+            return false;
+        }
+        // ① 命中该页的 cell（cell 高 16 行 = 2 页）
+        let cell_row: U16 = p / 2;
+        var col: U16 = 0;
+        for col < damage.CELL_GRID_COLS {
+            if damage.has_cell(d, col, cell_row) {
+                return true;
+            }
+            col = col + 1;
+        }
+        // ② 与该页相交的 clip
+        let y0: U16 = p * PAGE_ROWS;
+        let y1: U16 = y0 + PAGE_ROWS;
+        var i: USize = 0;
+        for i < damage.MAX_CLIPS {
+            let r: damage.Rect = damage.clip(d, i);
+            if !r.is_empty() {
+                if r.y0 < y1 && r.y1 > y0 {
+                    return true;
+                }
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+
+    public func page_cols(d: damage.Damage, p: U16) -> (U16, U16) {
+        if !page_dirty(d, p) {
+            return (0, 0);
+        }
+        let cw: U16 = #compile.as(U16, pixbuf.CELL_W);
+        var lo: U16 = 0xFFFF;
+        var hi: U16 = 0;
+        var found: Bool = false;
+        // ① cell 位图：一个 cell 占 8 列
+        let cell_row: U16 = p / 2;
+        var col: U16 = 0;
+        for col < damage.CELL_GRID_COLS {
+            if damage.has_cell(d, col, cell_row) {
+                let a: U16 = col * cw;
+                let b: U16 = a + cw;
+                if a < lo {
+                    lo = a;
+                }
+                if b > hi {
+                    hi = b;
+                }
+                found = true;
+            }
+            col = col + 1;
+        }
+        // ② clip：取与该页相交者
+        let y0: U16 = p * PAGE_ROWS;
+        let y1: U16 = y0 + PAGE_ROWS;
+        var i: USize = 0;
+        for i < damage.MAX_CLIPS {
+            let r: damage.Rect = damage.clip(d, i);
+            if !r.is_empty() {
+                if r.y0 < y1 && r.y1 > y0 {
+                    if r.x0 < lo {
+                        lo = r.x0;
+                    }
+                    if r.x1 > hi {
+                        hi = r.x1;
+                    }
+                    found = true;
+                }
+            }
+            i = i + 1;
+        }
+        if !found || lo > hi {
+            return (0, 0);
+        }
+        return (lo, hi);
+    }
+
+    public func pages(d: damage.Damage) -> U16 {
+        var n: U16 = 0;
+        var p: U16 = 0;
+        for p < PAGES {
+            if page_dirty(d, p) {
+                n = n + 1;
+            }
+            p = p + 1;
+        }
+        return n;
+    }
+
+    public func present(c: display.Commit) {
+        region pg {
+            let d: damage.Damage = c.damage_of();
+            var p: U16 = 0;
+            for p < PAGES {
+                if page_dirty(d, p) {
+                    let (c0, c1) = page_cols(d, p);
+                    if c1 > c0 {
+                        send_page(c.buf(), p, c0, c1)@[pg];
+                    }
+                }
+                p = p + 1;
+            }
+        }
+    }
+
+    public func present_all(c: display.Commit) {
+        region pa {
+            var p: U16 = 0;
+            for p < PAGES {
+                send_page(c.buf(), p, 0, 128)@[pa];
+                p = p + 1;
+            }
+        }
+    }
+
+    // send_page：一页一次事务序列——先给页起始 + 列窗口（3 字节命令），
+    // 再把本页该列段的像素搬成页格式发出去。整块转置缓冲不存在，只有这一行的行缓冲。
+    func send_page(pb: pixbuf.Pixbuf, p: U16, c0: U16, c1: U16) @region[r] {
+        let n: USize = #compile.as(USize, c1 - c0);
+        var line: [U8] = [0; n]@r;
+        paint.transpose_page(pb, p, c0, c1, line);
+
+        // 页寻址窗口：0xB0|page、列地址低 4 位、0x10|列地址高 3 位
+        var win: [U8; 3] = [0; 3];
+        win[0] = #compile.as(U8, 0xB0) | #compile.as(U8, p & 0x07);
+        win[1] = #compile.as(U8, c0 & 0x0F);
+        win[2] = #compile.as(U8, 0x10) | #compile.as(U8, (c0 >> 4) & 0x07);
+        view wv: [U8] = win;
+        _ = sw_i2c_write(CTRL_CMD, wv, 3);
+
+        _ = sw_i2c_write(CTRL_DATA, line, #compile.as(U32, n));
+    }
+
+    public func nack() -> U32 {
+        return sw_i2c_nack();
+    }
+
+    public func sent() -> U32 {
+        return sw_i2c_sent();
+    }
+
+    public func mark(v: U32) {
+        board_mark(v);
+    }
+}

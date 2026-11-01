@@ -30,8 +30,8 @@ import std.paint;
 import std.textgrid;
 import std.display;
 import _.font.font16;              // 点阵字库（tools/genfont.ps1：ASCII 半角 + 汉字全角）
-import _.panel.panel;             // SSD1306 驱动胶水（L6）
-import cc _.cpacks.ssd1306;       // 软件 I2C + 页寻址写（C 侧薄边界）
+import _.oled.panel;              // SSD1306 协议层（AILA：命令序列 + 页窗口 + 位搬运）
+import cc _.cpacks.sw_i2c;        // 软件 I2C 传输（C：位时序 / ACK / 总线恢复）
 
 const PIN_SCL: U32 = 5;           // D1
 const PIN_SDA: U32 = 4;           // D2
@@ -47,13 +47,6 @@ const DISPLAY: U8 = 1;
 const VERBOSE: Bool = true;
 
 module {
-    // SSD1306 初始化序列（0xAE 关屏 … 0xAF 开屏）
-    let INIT_CMDS: [U8; 26] = [
-        0xAE, 0xD5, 0x80, 0xA8, 0x3F, 0xD3, 0x00, 0x40, 0x8D, 0x14,
-        0x20, 0x00, 0xA1, 0xC8, 0xDA, 0x12, 0x81, 0xCF, 0xD9, 0xF1,
-        0xDB, 0x40, 0xA4, 0xA6, 0x2E, 0xAF,
-    ];
-
     func u(v: USize) -> io.FmtVal {
         return io.FmtVal.U { v: #compile.as(U64, v) };
     }
@@ -97,12 +90,7 @@ module {
     }
 
     func run_panel() {
-        let ok: U32 = panel.init(PIN_SCL, PIN_SDA);
-        var k: USize = 0;
-        for k < #comprun.len(INIT_CMDS) {
-            panel.cmd(INIT_CMDS[k]);
-            k = k + 1;
-        }
+        let ok: U32 = panel.init(PIN_SCL, PIN_SDA);   // 绑线 + 探地址 + 下发初始化序列
         let gs: paint.GlyphSet = paint.new_glyph_set(
             font16.font_cps(), font16.font_bits(), font16.font_widths(),
             font16.font_count(), font16.font_px_h());
@@ -115,19 +103,33 @@ module {
             var g: textgrid.TextGrid = textgrid.new(grid_buf, GRID_COLS, GRID_ROWS);
             var d: damage.Damage = damage.new(dmg_buf);
             var c: display.Commit = display.new_commit(pb, d);
-            panel.bind(fbdata, #compile.as(U32, pb.stride));
+            
 
             io.printf("oled: i2c=%u fonts=%u cells=%ux%u\n",
                 io.FmtVal.U { v: #compile.as(U64, ok) },
                 u(gs.count), u(#compile.as(USize, textgrid.cols_of(g))),
                 u(#compile.as(USize, textgrid.rows_of(g))));
 
+            // 自证第 0 关：µs 延时精度（sleep_us 的换算基准 = chip.json 的 cpu_hz）。
+            // 1000 × 100µs 应≈100ms；明显偏大/偏小说明 cpu_hz 与实测主频不符。
+            #compile.if VERBOSE {
+                let t_us0: U64 = time.mono_ms();
+                var k_us: U32 = 0;
+                for k_us < 1000 {
+                    time.sleep_us(100);
+                    k_us = k_us + 1;
+                }
+                let t_us1: U64 = time.mono_ms();
+                io.printf("us_check: 1000x100us=%ums (expect ~100)\n",
+                    io.FmtVal.U { v: t_us1 - t_us0 });
+            }
+
             // 自证第一关：整屏全白 → 全黑（I2C + 页寻址 + 位搬运整条链通）
             paint.fill(pb, true);
-            panel.present_all();
+            panel.present_all(c);
             time.sleep_ms(500);
             paint.fill(pb, false);
-            panel.present_all();
+            panel.present_all(c);
             time.sleep_ms(200);
 
             // 第二关：4 行滚动终端，逐帧局部刷新
